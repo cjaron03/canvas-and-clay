@@ -6,3 +6,13 @@ python-dotenv==1.0.0
 pytest==7.4.2
 pytest-cov==4.1.0
 flake8==6.0.0
+
+# TODO(security, JC): Adding these security packages evenually:
+# Flask-Login==0.6.2           # User session management
+# Flask-Bcrypt==1.0.1          # Password hashing
+# Flask-CORS==4.0.0            # Cross-origin resource sharing
+# Flask-Limiter==3.5.0         # Rate limiting
+# Flask-WTF==1.1.1             # CSRF protection
+# PyJWT==2.8.0                 # JWT token authentication
+# python-magic==0.4.27         # File type validation
+# Pillow==10.0.0               # Image validation and processing
