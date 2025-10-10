@@ -8,5 +8,17 @@ module.exports = {
     browser: true,
     es2017: true,
     node: true
-  }
+  },
+  overrides: [
+    {
+      files: ['**/*.svelte'],
+      parser: 'svelte-eslint-parser',
+      parserOptions: {
+        parser: {
+          js: 'espree',
+          ts: '@typescript-eslint/parser'
+        }
+      }
+    }
+  ]
 };
