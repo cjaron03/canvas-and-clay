@@ -18,8 +18,7 @@
     "eslint-plugin-svelte": "^2.0.0",
     "svelte": "^4.0.5",
     "vite": "^4.4.2",
-    "vitest": "^0.34.0",
-    "@sveltejs/eslint-config": "^2.0.0"
+    "vitest": "^0.34.0"
   },
   "dependencies": {
     "svelte": "^4.0.5"

@@ -1,5 +1,5 @@
 module.exports = {
-  extends: ['eslint:recommended', '@sveltejs'],
+  extends: ['eslint:recommended'],
   parserOptions: {
     ecmaVersion: 2020,
     sourceType: 'module'
@@ -8,14 +8,5 @@ module.exports = {
     browser: true,
     es2017: true,
     node: true
-  },
-  overrides: [
-    {
-      files: ['**/*.svelte'],
-      parser: 'svelte-eslint-parser',
-      parserOptions: {
-        parser: '@typescript-eslint/parser'
-      }
-    }
-  ]
+  }
 };
