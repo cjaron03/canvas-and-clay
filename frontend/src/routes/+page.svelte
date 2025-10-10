@@ -1,2 +1,2 @@
-<h1>Welcome to Canvas and Clay</h1>
-<p>This is a placeholder frontend page.</p>
+<h1>welcome to the frontend</h1>
+<p>so cool</p>
