@@ -16,7 +16,7 @@ Simple Architecture diagram should be added to '/docs/arch.png'
 1. **Install Docker Desktop** from [docker.com](https://www.docker.com/products/docker-desktop/)
 2. **Clone the repository**
    ```bash
-   git clone https://github.com/tanC00kie/canvas-and-clay.git
+   git clone https://github.com/cjaron03/canvas-and-clay.git
    cd canvas-and-clay
    ```
 3. **Copy environment file** (adjust values if needed)
