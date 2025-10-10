@@ -138,7 +138,7 @@
 9. Session security configuration
 10. Security logging
 
-## Useful Resources
+## sources
 
 - Flask-Login: https://flask-login.readthedocs.io/
 - Flask-Bcrypt: https://flask-bcrypt.readthedocs.io/
