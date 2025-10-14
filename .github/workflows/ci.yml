@@ -131,6 +131,10 @@ jobs:
         cd frontend
         docker build -t canvas-frontend:test .
 
+    - name: Create .env from example
+      run: |
+        cp backend/.env.example backend/.env
+
     - name: Test Docker Compose
       run: |
         cd infra
