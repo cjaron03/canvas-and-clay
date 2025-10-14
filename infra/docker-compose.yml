@@ -2,7 +2,6 @@ services:
   backend: 
     build:
       context: ../backend
-      #TODO: create a Dockerfile for the backend
     container_name: canvas_backend
     command: flask run --host=0.0.0.0 --port=5000
     ports: 
@@ -17,7 +16,6 @@ services:
   frontend: 
     build:
       context: ../frontend
-      #TODO: create a Dockerfile for the frontend
     container_name: canvas_frontend
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
     ports: 
