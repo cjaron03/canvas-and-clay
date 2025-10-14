@@ -129,14 +129,20 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build backend Docker image
-      uses: docker/build-push-action@v5
+    - name: Cache Docker layers
+      uses: actions/cache@v3
       with:
-        context: ./backend
-        push: false
-        tags: canvas-backend:test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
+    - name: Build backend Docker image
+      run: |
+        cd backend
+        docker build -t canvas-backend:test \
+          --cache-from type=local,src=/tmp/.buildx-cache \
+          --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max .
 
     - name: Build frontend Docker image
       uses: docker/build-push-action@v5
@@ -146,6 +152,18 @@ jobs:
         tags: canvas-frontend:test
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+    - name: Create .env from example
+      run: |
+        cd frontend
+        docker build -t canvas-frontend:test \
+          --cache-from type=local,src=/tmp/.buildx-cache \
+          --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max .
+    
+    - name: Move cache
+      run: |
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
     - name: Create .env from example
       run: |
