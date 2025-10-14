@@ -13,12 +13,13 @@ venv/
 infra/postgres_data/
 infra/test_postgres_data/
 
-# Environment files
+# Environment files (keep .env.example)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+!.env.example
 
 # IDE files
 .vscode/
