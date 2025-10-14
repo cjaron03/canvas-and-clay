@@ -1,6 +1,7 @@
 from flask import Flask, jsonify
 import os
 from dotenv import load_dotenv
+from flask_sqlalchemy import SQLAlchemy
 
 load_dotenv()
 
@@ -10,6 +11,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize database
+db = SQLAlchemy(app)
 
 
 
@@ -29,9 +33,27 @@ def home():
 
 @app.route('/health')
 def health():
+    """Health check endpoint that verifies database connection"""
+    try:
+        # Try to execute a simple query to check DB connection
+        db.session.execute(db.text('SELECT 1'))
+        db_status = 'connected'
+    except Exception as e:
+        db_status = f'error: {str(e)}'
+    
     return jsonify({
         'status': 'healthy',
-        'service': 'canvas-clay-backend'
+        'service': 'canvas-clay-backend',
+        'database': db_status
+    })
+
+@app.route('/api/hello')
+def api_hello():
+    """Simple API endpoint that returns a greeting"""
+    return jsonify({
+        'message': 'Hello from Canvas and Clay!',
+        'endpoint': '/api/hello',
+        'method': 'GET'
     })
 
 # TODO(security, JC): Create /auth/login endpoint with password hashing (bcrypt)
