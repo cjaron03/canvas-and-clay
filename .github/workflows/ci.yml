@@ -145,6 +145,15 @@ jobs:
           --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max .
 
     - name: Build frontend Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        push: false
+        tags: canvas-frontend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Create .env from example
       run: |
         cd frontend
         docker build -t canvas-frontend:test \
