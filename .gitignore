@@ -38,6 +38,7 @@ logs/
 dist/
 build/
 *.egg-info/
+.svelte-kit/
 
 # Coverage reports
 coverage/
