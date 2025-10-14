@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Cancel in-progress runs when a new run is triggered
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: '20'
   PYTHON_VERSION: '3.12'
@@ -53,9 +58,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         cd backend
-        python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov flake8
 
     - name: Lint backend code
       run: |
@@ -72,6 +75,7 @@ jobs:
 
     - name: Upload backend coverage
       uses: codecov/codecov-action@v3
+      if: github.event_name == 'push'
       with:
         file: ./backend/coverage.xml
         flags: backend
@@ -88,11 +92,13 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
 
     - name: Install frontend dependencies
       run: |
         cd frontend
-        npm install
+        npm ci
 
     - name: Lint frontend code
       run: |
@@ -111,6 +117,8 @@ jobs:
 
   # docker Build and test 
   docker-test:
+    # Only run on main/develop pushes, skip PRs to save time
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
     needs: [backend-test, frontend-test]
     
@@ -121,15 +129,32 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
     - name: Build backend Docker image
       run: |
         cd backend
-        docker build -t canvas-backend:test .
+        docker build -t canvas-backend:test \
+          --cache-from type=local,src=/tmp/.buildx-cache \
+          --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max .
 
     - name: Build frontend Docker image
       run: |
         cd frontend
-        docker build -t canvas-frontend:test .
+        docker build -t canvas-frontend:test \
+          --cache-from type=local,src=/tmp/.buildx-cache \
+          --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max .
+    
+    - name: Move cache
+      run: |
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
     - name: Create .env from example
       run: |
