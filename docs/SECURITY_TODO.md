@@ -113,10 +113,10 @@
 - [ ] 2FA recovery process
 
 ### Security Headers
-- [ ] X-Frame-Options: DENY
-- [ ] X-Content-Type-Options: nosniff
-- [ ] Referrer-Policy: no-referrer
-- [ ] Permissions-Policy
+- [x] X-Frame-Options: DENY
+- [x] X-Content-Type-Options: nosniff
+- [x] Referrer-Policy: no-referrer
+- [x] Permissions-Policy
 
 ### Penetration Testing
 - [ ] SQL injection testing

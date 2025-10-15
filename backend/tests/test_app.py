@@ -25,3 +25,24 @@ def test_health_endpoint(client):
     data = response.get_json()
     assert data['status'] == 'healthy'
     assert data['service'] == 'canvas-clay-backend'
+
+def test_security_headers(client):
+    """Test that security headers are set on all responses."""
+    response = client.get('/')
+    
+    # Check for required security headers
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('Referrer-Policy') == 'no-referrer'
+    assert response.headers.get('Permissions-Policy') == 'geolocation=(), microphone=(), camera=()'
+    assert response.headers.get('X-XSS-Protection') == '1; mode=block'
+
+def test_security_headers_on_all_endpoints(client):
+    """Test that security headers are applied to all endpoints."""
+    endpoints = ['/', '/health', '/api/hello']
+    
+    for endpoint in endpoints:
+        response = client.get(endpoint)
+        assert response.headers.get('X-Frame-Options') == 'DENY', f"Missing X-Frame-Options on {endpoint}"
+        assert response.headers.get('X-Content-Type-Options') == 'nosniff', f"Missing X-Content-Type-Options on {endpoint}"
+        assert response.headers.get('Referrer-Policy') == 'no-referrer', f"Missing Referrer-Policy on {endpoint}"

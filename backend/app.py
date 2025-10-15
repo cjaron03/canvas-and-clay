@@ -15,6 +15,27 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Initialize database
 db = SQLAlchemy(app)
 
+# Security Headers - Protect against common web vulnerabilities
+@app.after_request
+def set_security_headers(response):
+    """Add security headers to all responses"""
+    # Prevent clickjacking attacks
+    response.headers['X-Frame-Options'] = 'DENY'
+    
+    # Prevent MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Control referrer information
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    
+    # Restrict browser features and APIs
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    
+    # Additional security headers
+    # XSS Protection (legacy, but helps older browsers)
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    return response
 
 
 # TODO(security, JC): Add Flask-Login for user authentication
