@@ -2,7 +2,7 @@
 
 ## Context
 - Current dev setup: Flask backend served on port 5000 and SvelteKit frontend consuming APIs via `fetch`.
-- Tooling: Cursor for AI pair programming, Vite dev server for frontend, pytest for backend tests.
+
 
 ## Problem Statement
 Frontend `fetch` targets `http://localhost:5001/api/hello`, while the Flask app defaults to port 5000. Result: the primary integration button fails in development. Additionally, `/health` always reports `"status": "healthy"` even if the database probe throws, hiding real outages from monitoring.

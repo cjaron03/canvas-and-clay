@@ -19,9 +19,10 @@ Simple Architecture diagram should be added to '/docs/arch.png'
    git clone https://github.com/cjaron03/canvas-and-clay.git
    cd canvas-and-clay
    ```
-3. **Copy environment file** (adjust values if needed)
+3. **Copy environment files** (adjust values if needed)
    ```bash
    cp backend/.env.example backend/.env
+   cp frontend/.env.example frontend/.env
    ```
 4. **Run**
    ```bash
@@ -51,6 +52,7 @@ docker compose down
 ### Backend (Flask)
 ```bash
 cd backend
+cp .env.example .env  # Copy environment file
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -60,9 +62,15 @@ python app.py
 ### Frontend (SvelteKit)
 ```bash
 cd frontend
+cp .env.example .env  # Copy environment file
 npm install
 npm run dev
 ```
+
+**Environment Configuration:**
+- Backend `.env`: Configure database connection and Flask settings
+- Frontend `.env`: Configure API base URL (default: `http://localhost:5001`)
+  - `PUBLIC_API_BASE_URL`: Points to the backend API (must be prefixed with `PUBLIC_` for SvelteKit)
 
 ## Docker Optimization
 
