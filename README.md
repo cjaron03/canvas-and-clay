@@ -74,10 +74,48 @@ npm run dev
 
 ## Docker Optimization
 
-This project uses **alpine linux** base images for optimized performance:
-- **75% smaller** container sizes
-- **Faster** build and startup times
-- **Lower memory** footprint (~200MB vs ~800MB)
+This project uses **multi-stage builds** and **BuildKit** for optimized Docker performance:
+
+### Features
+- **Multi-stage builds**: Separate build and runtime stages for smaller images
+- **BuildKit cache mounts**: Persistent pip/npm caches across builds
+- **Alpine base**: Frontend uses `node:20-alpine` for minimal footprint
+- **Slim base**: Backend uses `python:3.12-slim` for faster wheel installs
+- **Layer caching**: Optimized Dockerfile instruction order
+
+### Enabling BuildKit Locally
+
+BuildKit provides significant performance improvements through parallel builds and advanced caching.
+
+**Check if BuildKit is enabled:**
+```bash
+docker info | grep BuildKit
+```
+
+**Enable BuildKit (one-time setup):**
+```bash
+# Option 1: Set environment variable (per-command)
+export DOCKER_BUILDKIT=1
+docker build ...
+
+# Option 2: Enable globally in Docker config
+mkdir -p ~/.docker
+echo '{ "features": { "buildkit": true } }' > ~/.docker/config.json
+
+# Option 3: Docker Desktop users (Mac/Windows)
+# BuildKit is enabled by default in recent versions
+```
+
+**Verify BuildKit is working:**
+```bash
+DOCKER_BUILDKIT=1 docker build backend/
+# You should see output like: "[internal] load build definition from Dockerfile"
+```
+
+### Build Performance
+- **First build**: ~2-3 minutes (downloads all dependencies)
+- **Subsequent builds**: ~10-30 seconds (uses cache mounts)
+- **CI/CD caching**: GitHub Actions cache reduces build time by ~60%
 
 ## CI/CD Pipeline
 
