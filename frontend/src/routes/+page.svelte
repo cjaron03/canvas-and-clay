@@ -1,6 +1,9 @@
 <script>
+  import { PUBLIC_API_BASE_URL } from '$env/static/public';
+
   const testAPI = async () => {
-    const response = await fetch('http://localhost:5001/api/hello');
+    const apiUrl = `${PUBLIC_API_BASE_URL}/api/hello`;
+    const response = await fetch(apiUrl);
     const data = await response.json();
     alert(JSON.stringify(data, null, 2));
   };

@@ -54,19 +54,28 @@ def home():
 
 @app.route('/health')
 def health():
-    """Health check endpoint that verifies database connection"""
+    """Health check endpoint that verifies database connection
+    
+    Returns:
+        - 200 OK: Service is healthy and database is connected
+        - 503 Service Unavailable: Database connection failed
+    """
     try:
         # Try to execute a simple query to check DB connection
         db.session.execute(db.text('SELECT 1'))
         db_status = 'connected'
+        status = 'healthy'
+        http_status = 200
     except Exception as e:
         db_status = f'error: {str(e)}'
+        status = 'degraded'
+        http_status = 503
     
     return jsonify({
-        'status': 'healthy',
+        'status': status,
         'service': 'canvas-clay-backend',
         'database': db_status
-    })
+    }), http_status
 
 @app.route('/api/hello')
 def api_hello():

@@ -1,8 +1,9 @@
 import pytest
 import sys
 import os
+from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import app
+from app import app, db
 
 @pytest.fixture
 def client():
@@ -18,13 +19,30 @@ def test_home_endpoint(client):
     assert data['message'] == 'Welcome to Canvas and Clay API'
     assert data['status'] == 'running'
 
-def test_health_endpoint(client):
-    """Test the health endpoint returns correct response."""
+def test_health_endpoint_success(client):
+    """Test the health endpoint returns correct response when DB is healthy."""
     response = client.get('/health')
     assert response.status_code == 200
     data = response.get_json()
     assert data['status'] == 'healthy'
     assert data['service'] == 'canvas-clay-backend'
+    assert data['database'] == 'connected'
+
+def test_health_endpoint_database_failure(client):
+    """Test the health endpoint returns degraded status when DB connection fails."""
+    # Mock the database session to raise an exception
+    with patch.object(db.session, 'execute') as mock_execute:
+        mock_execute.side_effect = Exception('Connection refused')
+        
+        response = client.get('/health')
+        
+        # Should return 503 Service Unavailable
+        assert response.status_code == 503
+        data = response.get_json()
+        assert data['status'] == 'degraded'
+        assert data['service'] == 'canvas-clay-backend'
+        assert 'error' in data['database']
+        assert 'Connection refused' in data['database']
 
 def test_security_headers(client):
     """Test that security headers are set on all responses."""
