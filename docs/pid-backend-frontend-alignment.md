@@ -23,27 +23,27 @@ Frontend `fetch` targets `http://localhost:5001/api/hello`, while the Flask app 
 
 ## Workstreams
 
-### 1. **Frontend base URL fix** ✅ COMPLETED
-   - ✅ Introduced `PUBLIC_API_BASE_URL` environment variable (SvelteKit requirement for browser-exposed vars)
-   - ✅ Updated `frontend/src/routes/+page.svelte` to use `$env/static/public` for API calls
-   - ✅ Created `frontend/.env.example` with sensible defaults for local dev
-   - ✅ Created `frontend/.env` for local development (gitignored)
-   - ✅ Documented configuration in `README.md` with copy commands and env variable explanation
+### 1. **Frontend base URL fix**  COMPLETED
+   -  Introduced `PUBLIC_API_BASE_URL` environment variable (SvelteKit requirement for browser-exposed vars)
+   -  Updated `frontend/src/routes/+page.svelte` to use `$env/static/public` for API calls
+   -  Created `frontend/.env.example` with sensible defaults for local dev
+   -  Created `frontend/.env` for local development (gitignored)
+   -  Documented configuration in `README.md` with copy commands and env variable explanation
    - **Commit:** `026c34d` - "feat: implement environment-driven API base URL for frontend"
 
-### 2. **Backend health endpoint hardening** ✅ COMPLETED
-   - ✅ Updated `/health` endpoint to return HTTP 503 + `"status": "degraded"` on database failure
-   - ✅ Maintained HTTP 200 + `"status": "healthy"` for successful connections
-   - ✅ Added `test_health_endpoint_success()` to verify healthy state
-   - ✅ Added `test_health_endpoint_database_failure()` with mocked database exception
-   - ✅ Improved endpoint documentation with return value specifications
+### 2. **Backend health endpoint hardening** COMPLETED
+   -  Updated `/health` endpoint to return HTTP 503 + `"status": "degraded"` on database failure
+   -  Maintained HTTP 200 + `"status": "healthy"` for successful connections
+   -  Added `test_health_endpoint_success()` to verify healthy state
+   -  Added `test_health_endpoint_database_failure()` with mocked database exception
+   -  Improved endpoint documentation with return value specifications
    - **Commit:** `8f25a5b` - "feat: harden health endpoint to reflect database failures"
 
-### 3. **Documentation & DX** ✅ COMPLETED
-   - ✅ Updated `README.md` Quick Start to include frontend `.env.example` copy step
-   - ✅ Added "Environment Configuration" section explaining both backend and frontend env files
-   - ✅ Documented `PUBLIC_` prefix requirement for SvelteKit
-   - ✅ Updated this PID with completion status and commit references
+### 3. **Documentation & DX**  COMPLETED
+   -  Updated `README.md` Quick Start to include frontend `.env.example` copy step
+   -  Added "Environment Configuration" section explaining both backend and frontend env files
+   -  Documented `PUBLIC_` prefix requirement for SvelteKit
+   -  Updated this PID with completion status and commit references
 
 ## Branching & Workflow
 1. Ensure you are back on the latest main:
