@@ -36,7 +36,6 @@ RUN --mount=type=cache,target=/root/.npm \
 
 # Copy built application from builder
 COPY --from=builder /usr/src/app/.svelte-kit ./.svelte-kit
-COPY --from=builder /usr/src/app/build ./build
 
 # Copy necessary source files for preview server
 COPY svelte.config.js vite.config.js ./
