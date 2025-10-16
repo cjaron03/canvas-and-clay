@@ -1,5 +1,4 @@
 <script>
-  import { env } from '$app/environment';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
 
   const testAPI = async () => {
