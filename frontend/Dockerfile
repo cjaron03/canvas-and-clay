@@ -41,7 +41,7 @@ COPY --from=builder /usr/src/app/build ./build
 # Copy necessary source files for preview server
 COPY svelte.config.js vite.config.js ./
 COPY src ./src
-COPY static ./static 2>/dev/null || true
+# Note: static directory not needed for preview server
 
 # Set the API base URL for runtime
 ARG PUBLIC_API_BASE_URL=http://localhost:5001
