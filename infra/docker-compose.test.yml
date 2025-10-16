@@ -14,10 +14,12 @@ services:
   frontend:
     build:
       context: ../frontend
+      target: builder
     container_name: canvas_frontend_test
-    command: sh -c "npm install && npm run test"
+    command: npm run test
     volumes:
       - ../frontend:/usr/src/app
+      - /usr/src/app/node_modules
     depends_on:
       - backend
 
