@@ -71,11 +71,11 @@ Frontend `fetch` targets `http://localhost:5001/api/hello`, while the Flask app 
 - **Risk:** Health endpoint change could break monitoring dashboards expecting `"healthy"`.  
   **Mitigation:** Communicate the change and update alert rules to watch for `"degraded"`/HTTP 503.
 
-## Deliverables ✅ ALL COMPLETED
-- ✅ Updated frontend fetch logic driven by `PUBLIC_API_BASE_URL` configuration
-- ✅ Hardened `/health` endpoint with HTTP 503 responses and `"degraded"` status on DB failures
-- ✅ Comprehensive test coverage for both success and failure paths
-- ✅ Documentation updates: README.md, frontend/.env.example, and this PID
+## Deliverables  ALL COMPLETED
+-  Updated frontend fetch logic driven by `PUBLIC_API_BASE_URL` configuration
+-  Hardened `/health` endpoint with HTTP 503 responses and `"degraded"` status on DB failures
+-  Comprehensive test coverage for both success and failure paths
+-  Documentation updates: README.md, frontend/.env.example, and this PID
 
 ## Implementation Summary
 **Branch:** `docs/pid-alignment`  
