@@ -8,7 +8,6 @@ WORKDIR /app
 # Note: psycopg2-binary includes its own libpq, but we need build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    libc6-dev \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
