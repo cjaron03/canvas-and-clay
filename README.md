@@ -161,6 +161,85 @@ This project includes a comprehensive CI/CD pipeline with:
 - **Push to `develop`**: Full pipeline + staging deployment  
 - **Pull Requests**: Full pipeline validation
 
+## Authentication & Security
+
+This project implements comprehensive authentication and session security.
+
+### Features Implemented
+
+**User Authentication:**
+- User registration with email validation
+- Secure password hashing with bcrypt (12 rounds)
+- Login/logout with session management
+- Remember-me functionality (14-day token expiration)
+- Account status management (active/disabled)
+
+**Password Security:**
+- Minimum 8 characters
+- Must contain uppercase, lowercase, and digits
+- Bcrypt hashing with salt
+
+**Session Security:**
+- HTTP-only cookies (prevents XSS access)
+- SameSite=Lax (CSRF protection)
+- Secure flag for HTTPS (configurable via `SESSION_COOKIE_SECURE` env var)
+- 30-minute session timeout
+- Session regeneration on login (prevents fixation attacks)
+- Strong session protection enabled
+
+**Role-Based Access Control (RBAC):**
+- Two roles: `admin` and `visitor`
+- `@login_required` decorator for protected routes
+- `@admin_required` decorator for admin-only routes
+- Role-based access control for sensitive operations
+
+**API Endpoints:**
+- `POST /auth/register` - Create new user account
+- `POST /auth/login` - Authenticate and create session
+- `POST /auth/logout` - End session and clear cookies
+- `GET /auth/me` - Get current user info
+- `GET /auth/protected` - Example protected route
+- `GET /auth/admin-only` - Example admin-only route
+
+### Environment Configuration
+
+Create `backend/.env` from `backend/.env.example`:
+
+```bash
+# Session Security Settings
+SESSION_COOKIE_SECURE=True  # Set to True in production with HTTPS
+```
+
+For local development without HTTPS, set `SESSION_COOKIE_SECURE=False`.
+
+### Database Migrations
+
+Initialize the database and apply migrations:
+
+```bash
+# In backend directory or Docker container
+flask db init        # First time only
+flask db migrate -m "Add user model"
+flask db upgrade
+```
+
+### Testing Authentication
+
+Run the comprehensive test suite:
+
+```bash
+cd backend
+pytest tests/test_auth.py -v
+```
+
+Tests cover:
+- User registration validation
+- Login/logout flows
+- Password security requirements
+- Session security (httponly, samesite)
+- RBAC (role-based access control)
+- Account status management
+
 ## Project Structure
 ```
 ├── backend/           # Flask API
