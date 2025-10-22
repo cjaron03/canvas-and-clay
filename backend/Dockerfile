@@ -4,6 +4,9 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
+# Avoid flaky http mirror responses that can trigger Hash Sum mismatch errors
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
+
 # Install system dependencies for psycopg2-binary
 # Note: psycopg2-binary includes its own libpq, but we need build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -23,6 +26,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM python:3.12-slim
 
 WORKDIR /app
+
+# Avoid flaky http mirror responses that can trigger Hash Sum mismatch errors
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
 
 # Install runtime dependencies only (libpq for psycopg2)
 RUN apt-get update && apt-get install -y --no-install-recommends \
