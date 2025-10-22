@@ -1,21 +1,64 @@
 from flask import Flask, jsonify
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from flask_login import LoginManager
+from flask_bcrypt import Bcrypt
+from flask_migrate import Migrate
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
+CORS(app, resources={
+    r"/api/*": {"origins": "http://localhost:5173", "supports_credentials": True},
+    r"/auth/*": {"origins": "http://localhost:5173", "supports_credentials": True}
+})
 
 # Basic configuration
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Initialize database
+# Session security configuration
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+
+# Remember-Me configuration
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=14)
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+
+# Initialize extensions
 db = SQLAlchemy(app)
+bcrypt = Bcrypt(app)
+migrate = Migrate(app, db)
+login_manager = LoginManager(app)
+login_manager.login_view = 'auth.login'
+login_manager.session_protection = 'strong'
+
+# Return 401 instead of redirect for unauthorized API requests
+@login_manager.unauthorized_handler
+def unauthorized():
+    """Return 401 for unauthorized API requests instead of redirecting."""
+    return jsonify({'error': 'Authentication required'}), 401
+
+# Initialize models
+from models import init_models
+User = init_models(db)
+
+# User loader for Flask-Login
+@login_manager.user_loader
+def load_user(user_id):
+    """Load user by ID for Flask-Login."""
+    return User.query.get(int(user_id))
+
+# Register blueprints
+from auth import auth_bp
+app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
 @app.after_request
@@ -40,12 +83,9 @@ def set_security_headers(response):
     return response
 
 
-# TODO(security, JC): Add Flask-Login for user authentication
-# TODO(security): Implement CORS policy for frontend access
-# TODO(security): Add rate limiting to prevent brute force attacks
-# TODO(security): Configure secure session cookies (httponly, secure, samesite)
-# TODO(security): Add input validation middleware
-# TODO(security): Implement CSRF protection
+# TODO(security): Add rate limiting to prevent brute force attacks (Flask-Limiter)
+# TODO(security): Implement CSRF protection for state-changing operations (Flask-WTF)
+# TODO(security): Add input validation middleware for all endpoints
 
 @app.route('/')
 def home():
@@ -88,11 +128,7 @@ def api_hello():
         'method': 'GET'
     })
 
-# TODO(security, JC): Create /auth/login endpoint with password hashing (bcrypt)
-# TODO(security, JC): Create /auth/register endpoint with input validation
-# TODO(security, JC): Create /auth/logout endpoint with session cleanup
-# TODO(security, JC): Add role-based access control (RBAC) decorators
-# TODO(security, JC): Implement JWT token authentication for API endpoints
+# TODO(security, JC): Implement JWT token authentication for API endpoints (optional)
 # TODO(security, JC): Add file upload endpoint with security checks (file type, size, virus scan)
 
 if __name__ == '__main__':
