@@ -222,9 +222,18 @@ def logout():
         401: No active session
     """
     logout_user()
-    session.clear()
     
-    return jsonify({'message': 'Logout successful'}), 200
+    # Clear all session data and mark as modified
+    for key in list(session.keys()):
+        session.pop(key)
+    session.modified = True
+    
+    response = jsonify({'message': 'Logout successful'})
+    
+    # Clear the session cookie by setting it to expire
+    response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+    
+    return response, 200
 
 
 @auth_bp.route('/me', methods=['GET'])
