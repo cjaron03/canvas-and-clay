@@ -1,17 +1,45 @@
 # Security Implementation TODO List For JC
 
-## Recent Updates
+## Security Audit Results (October 2025) !!!!
 
-**Completed in feat/auth-session-hardening branch:**
-- User authentication system with registration, login, and logout
-- Bcrypt password hashing with strong password requirements
-- Secure session management with HttpOnly, Secure, and SameSite cookies
-- Role-based access control (RBAC) with @login_required and @admin_required decorators
-- Remember-me functionality with secure token management
-- Comprehensive test suite for authentication and session security
-- API input validation for authentication endpoints
+**overall grade: C** - authentication system implemented but critical vulnerabilities found
 
-See the Authentication & Security section in README.md for full details.
+### CRITICAL - must fix before production
+- [ ] **privilege escalation via self-service admin role** (`backend/auth.py:96-142`)
+  - registration endpoint trusts client-supplied role parameter
+  - anyone can pass `"role": "admin"` during signup to gain full admin access
+  - **fix**: remove role from registration input, force all new users to 'visitor', create admin promotion endpoint requiring existing admin auth
+
+- [ ] **csrf protection missing** (`backend/app.py:86-88`, `backend/auth.py:72-210`)
+  - Flask-WTF installed but not configured
+  - session-based auth endpoints vulnerable to cross-site request forgery
+  - **fix**: enable Flask-WTF CSRF protection, add tokens to all POST/PUT/DELETE requests, configure exemptions only for truly stateless endpoints
+
+- [ ] **insecure cookie defaults** (`backend/app.py:25-33`)
+  - SESSION_COOKIE_SECURE and REMEMBER_COOKIE_SECURE default to False
+  - cookies will ride over plain HTTP unless env var manually set in prod
+  - **fix**: flip defaults to secure=true, require explicit opt-out for local dev only, add startup validation
+
+- [ ] **information disclosure in error responses** (`backend/auth.py:132-148`)
+  - registration failures echo `str(e)` to client, leaking database/stack details
+  - **fix**: replace with generic error messages, log detailed errors server-side only
+
+### major issues
+- [ ] **rate limiting not implemented** - unlimited login attempts possible, brute force attacks viable
+- [ ] **hardcoded cors origins** - `http://localhost:5173` won't work in production
+- [ ] **no account lockout mechanism** - no protection against repeated failed login attempts
+- [ ] **no audit logging** - cannot detect or investigate security breaches
+
+### completed in feat/auth-session-hardening branch
+- [x] user authentication system with registration, login, and logout
+- [x] bcrypt password hashing with strong password requirements
+- [x] secure session management with HttpOnly, Secure, and SameSite cookies (defaults need fixing)
+- [x] role-based access control (RBAC) with @login_required and @admin_required decorators (role assignment broken)
+- [x] remember-me functionality with secure token management
+- [x] comprehensive test suite for authentication and session security
+- [x] api input validation for authentication endpoints (needs length limits)
+
+see the Authentication & Security section in README.md for full details.
 
 ---
 
@@ -55,26 +83,31 @@ See the Authentication & Security section in README.md for full details.
   - [x] Add session regeneration on login
 
 ### CSRF Protection
-- [ ] **Cross-Site Request Forgery**
+- [ ] **Cross-Site Request Forgery** - CRITICAL (see audit section above)
   - [ ] Implement CSRF tokens for all POST/PUT/DELETE requests
   - [ ] Configure Flask-WTF CSRF protection
   - [ ] Add CSRF token to frontend forms
+  - [ ] Configure CSRF exemptions only for truly stateless API endpoints
 
 ### CORS Configuration
-- [ ] **Cross-Origin Resource Sharing**
-  - [ ] Configure allowed origins (localhost:5173 for dev)
+- [ ] **Cross-Origin Resource Sharing** - MAJOR (hardcoded origins won't work in production)
+  - [ ] Move origins from hardcoded `http://localhost:5173` to environment variable
+  - [ ] Support multiple origins (dev, staging, prod)
   - [ ] Set appropriate CORS headers
   - [ ] Restrict to specific HTTP methods
-  - [ ] Configure credentials policy
+  - [ ] Configure credentials policy (currently supports_credentials=True for /api/* and /auth/*)
 
 ## Medium Priority (Additional Security)
 
 ### Rate Limiting
-- [ ] **Brute Force Protection**
-  - [ ] Add rate limiting to login endpoint (5 attempts per 15 min)
+- [ ] **Brute Force Protection** - MAJOR (unlimited login attempts currently possible)
+  - [ ] Add Flask-Limiter dependency to requirements.txt
+  - [ ] Add rate limiting to login endpoint (5 attempts per 15 min per IP)
+  - [ ] Implement account lockout after 5 failed attempts (15 min lockout)
   - [ ] Rate limit registration endpoint
   - [ ] Rate limit file uploads
   - [ ] Add IP-based blocking for repeated violations
+  - [ ] Log failed login attempts for security monitoring
 
 ### Database Security
 - [ ] **SQL Injection Prevention**
@@ -102,12 +135,15 @@ See the Authentication & Security section in README.md for full details.
   - [ ] Validate tokens on protected endpoints
 
 ### Logging & Monitoring
-- [ ] **Security Audit Logging**
-  - [ ] Log all authentication attempts
-  - [ ] Log failed login attempts with IP
-  - [ ] Log admin actions
+- [ ] **Security Audit Logging** - MAJOR (cannot detect or investigate security breaches currently)
+  - [ ] Implement structured audit logging (JSON format recommended)
+  - [ ] Log all authentication attempts (success and failure)
+  - [ ] Log failed login attempts with IP address and user agent
+  - [ ] Log admin actions and role changes
+  - [ ] Log sensitive operations (password resets, account modifications)
   - [ ] Log file uploads
-  - [ ] Set up log rotation
+  - [ ] Set up log rotation and aggregation
+  - [ ] Configure alerting for suspicious patterns
 
 ## Low Priority (Enhanced Security)
 
@@ -142,16 +178,30 @@ See the Authentication & Security section in README.md for full details.
 
 ## Implementation Priority Order
 
-1. User authentication (login/register/logout)
-2. Password hashing with bcrypt
-3. Input validation and sanitization
-4. CSRF protection
-5. Rate limiting on auth endpoints
-6. File upload security
-7. CORS configuration
-8. RBAC implementation
-9. Session security configuration
-10. Security logging
+### phase 1 (completed - feat/auth-session-hardening branch)
+1. ~~user authentication (login/register/logout)~~ completed
+2. ~~password hashing with bcrypt~~ completed
+3. ~~input validation and sanitization~~ completed (needs improvements)
+4. ~~RBAC implementation~~ completed (role assignment broken)
+5. ~~session security configuration~~ completed (defaults need fixing)
+
+### phase 2 (CRITICAL - must fix before production)
+1. **fix privilege escalation** - remove client-controlled role assignment
+2. **implement CSRF protection** - add Flask-WTF CSRF tokens
+3. **fix insecure cookie defaults** - flip secure flags to true by default
+4. **fix information disclosure** - remove str(e) from error responses
+5. **add rate limiting** - prevent brute force attacks
+6. **implement audit logging** - detect security breaches
+7. **fix CORS configuration** - move to environment variables
+8. **add account lockout** - protect against credential stuffing
+9. **add input length validation** - prevent DoS via long inputs
+
+### phase 3 (future enhancements)
+10. file upload security
+11. JWT token implementation
+12. two-factor authentication
+13. penetration testing
+14. HTTPS/TLS in production
 
 ## sources
 
