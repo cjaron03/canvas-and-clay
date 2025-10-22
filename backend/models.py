@@ -2,7 +2,7 @@
 
 Import db from this module after initializing it in app.py.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from flask_login import UserMixin
 
 
@@ -32,7 +32,7 @@ def init_models(database):
         id = database.Column(database.Integer, primary_key=True)
         email = database.Column(database.String(120), unique=True, nullable=False, index=True)
         hashed_password = database.Column(database.String(128), nullable=False)
-        created_at = database.Column(database.DateTime, nullable=False, default=datetime.utcnow)
+        created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
         role = database.Column(database.String(20), nullable=False, default='visitor')
         remember_token = database.Column(database.String(255), unique=True, nullable=True)
         is_active = database.Column(database.Boolean, nullable=False, default=True)

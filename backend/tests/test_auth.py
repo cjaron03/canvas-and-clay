@@ -135,9 +135,8 @@ class TestUserRegistration:
         """Test registration with no JSON data."""
         response = client.post('/auth/register')
         
-        assert response.status_code == 400
-        data = response.get_json()
-        assert 'No data provided' in data['error']
+        # 415 Unsupported Media Type when no Content-Type header is sent
+        assert response.status_code == 415
 
 
 class TestUserLogin:

@@ -37,6 +37,12 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
+# Return 401 instead of redirect for unauthorized API requests
+@login_manager.unauthorized_handler
+def unauthorized():
+    """Return 401 for unauthorized API requests instead of redirecting."""
+    return jsonify({'error': 'Authentication required'}), 401
+
 # Initialize models
 from models import init_models
 User = init_models(db)

@@ -1,6 +1,6 @@
 """Authentication blueprint for user registration, login, and logout."""
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
 from functools import wraps
@@ -83,12 +83,14 @@ def register():
     Returns:
         201: User created successfully
         400: Validation error or duplicate email
+        415: Unsupported media type (missing Content-Type: application/json)
     """
     db, bcrypt, User = get_dependencies()
     
     data = request.get_json()
     
-    if not data:
+    # Return 400 for both missing data and empty JSON
+    if data is None:
         return jsonify({'error': 'No data provided'}), 400
     
     email = data.get('email', '').strip().lower()
@@ -124,7 +126,7 @@ def register():
         email=email,
         hashed_password=hashed_password,
         role=role,
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc)
     )
     
     try:
@@ -168,7 +170,8 @@ def login():
     
     data = request.get_json()
     
-    if not data:
+    # Accept empty JSON object but still validate required fields
+    if data is None:
         return jsonify({'error': 'No data provided'}), 400
     
     email = data.get('email', '').strip().lower()
