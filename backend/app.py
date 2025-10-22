@@ -11,7 +11,10 @@ from flask_migrate import Migrate
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
+CORS(app, resources={
+    r"/api/*": {"origins": "http://localhost:5173", "supports_credentials": True},
+    r"/auth/*": {"origins": "http://localhost:5173", "supports_credentials": True}
+})
 
 # Basic configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
