@@ -1,5 +1,26 @@
 # Multi-stage build for optimized frontend image
-# Stage 1: Builder - Install dependencies and build
+# Stage 1: Development - Full dependencies for hot reload
+FROM node:20-alpine AS development
+
+WORKDIR /usr/src/app
+
+# Copy package files
+COPY package*.json ./
+
+# Install ALL dependencies (including dev dependencies for vite, etc.)
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit
+
+# Set default API base URL for development
+ARG PUBLIC_API_BASE_URL=http://localhost:5001
+ENV PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
+
+EXPOSE 5173
+
+# Development server with hot reload
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+
+# Stage 2: Builder - Install dependencies and build for production
 FROM node:20-alpine AS builder
 
 WORKDIR /usr/src/app
@@ -21,7 +42,7 @@ ENV PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
 # Build the application
 RUN npm run build
 
-# Stage 2: Runtime - Minimal production preview server
+# Stage 3: Production - Minimal production preview server
 FROM node:20-alpine
 
 WORKDIR /usr/src/app
