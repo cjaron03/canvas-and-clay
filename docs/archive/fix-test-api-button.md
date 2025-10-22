@@ -1,6 +1,8 @@
-# Fixing the “Test API” Button
+# Fixing the "Test API" Button - COMPLETED
 
-Use this guide when the frontend “Test API” button silently fails after a fresh setup. The underlying issue is that the Flask backend does not expose the permissive CORS headers needed by the SvelteKit frontend when running on different ports.
+**Status**: Fixed in commit 3480546 - "Enable CORS for API routes and document Test API fix (#30)"
+
+Use this guide when the frontend "Test API" button silently fails after a fresh setup. The underlying issue is that the Flask backend does not expose the permissive CORS headers needed by the SvelteKit frontend when running on different ports.
 
 ## Prerequisites
 - You can run the project with `docker compose up` from `infra/`.
