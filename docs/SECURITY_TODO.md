@@ -2,7 +2,7 @@
 
 ## Security Audit Results (October 2025) !!!!
 
-**overall grade: C** - authentication system implemented but critical vulnerabilities found
+## authentication system implemented but critical vulnerabilities found
 
 ### CRITICAL - must fix before production
 - [ ] **privilege escalation via self-service admin role** (`backend/auth.py:96-142`)
