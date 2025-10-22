@@ -117,6 +117,34 @@ DOCKER_BUILDKIT=1 docker build backend/
 - **Subsequent builds**: ~10-30 seconds (uses cache mounts)
 - **CI/CD caching**: GitHub Actions cache reduces build time by ~60%
 
+### Docker Build Context Optimization
+
+Each service includes a `.dockerignore` file to exclude unnecessary files from the Docker build context, significantly reducing build time and image size.
+
+**Backend `.dockerignore`** excludes:
+- Python cache files (`__pycache__/`, `*.pyc`)
+- Virtual environments (`venv/`, `.venv/`)
+- Test files and coverage reports (`tests/`, `.pytest_cache/`, `.coverage`)
+- Development tools (`.vscode/`, `.idea/`)
+- Documentation (`docs/`, `*.md`)
+- Environment files (`.env` - use `.env.example` instead)
+- Git and CI/CD metadata (`.git/`, `.github/`)
+
+**Frontend `.dockerignore`** excludes:
+- Node modules (`node_modules/` - installed fresh in container)
+- Build outputs (`.svelte-kit/`, `build/`, `dist/`)
+- Test files (`**/*.test.ts`, `tests/`)
+- Development tools (`.vscode/`, `.idea/`)
+- Documentation (`docs/`, `*.md`)
+- Environment files (`.env` - use `.env.example` instead)
+- Git and CI/CD metadata (`.git/`, `.github/`)
+
+**Why this matters:**
+- Smaller build context = faster uploads to Docker daemon
+- Cleaner images without unnecessary development files
+- Prevents accidental inclusion of sensitive files (`.env`, credentials)
+- Reduces security surface area in production images
+
 ## CI/CD Pipeline
 
 This project includes a comprehensive CI/CD pipeline with:

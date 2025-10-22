@@ -29,10 +29,12 @@ WORKDIR /usr/src/app
 # Set production environment
 ENV NODE_ENV=production
 
-# Copy package files and install only production dependencies
+# Copy package files for reference
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --prefer-offline --no-audit
+
+# Copy node_modules from builder (includes all dependencies)
+# This avoids reinstalling and is faster
+COPY --from=builder /usr/src/app/node_modules ./node_modules
 
 # Copy built application from builder
 COPY --from=builder /usr/src/app/.svelte-kit ./.svelte-kit
