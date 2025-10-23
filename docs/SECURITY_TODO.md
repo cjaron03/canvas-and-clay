@@ -2,11 +2,19 @@
 
 ## current sprint plan (phase 2 - security hardening)
 
-### immediate priorities
-1. **fix critical security issues** (privilege escalation, cookie defaults, information disclosure)
-2. **add csrf protection** (Flask-WTF already installed, needs configuration)
-3. **enable rate limiting** (Flask-Limiter ready to uncomment)
-4. **build authentication UI** (login/register forms in SvelteKit)
+### immediate priorities (critical fixes)
+1. **fix privilege escalation** - remove client-controlled role assignment in registration
+2. **fix insecure cookie defaults** - flip SESSION_COOKIE_SECURE to true by default
+3. **fix information disclosure** - remove str(e) from error responses
+4. **add csrf protection** - enable Flask-WTF, add tokens to all state-changing requests
+5. **enable rate limiting** - uncomment Flask-Limiter, add to login/register endpoints
+6. **fix hardcoded cors origins** - move to environment variables for prod deployment
+7. **build authentication UI** - login/register forms in SvelteKit
+
+### secondary priorities (major issues)
+- account lockout mechanism after failed login attempts
+- audit logging for security events
+- input length validation to prevent dos attacks
 
 ### scaffolding status
 
