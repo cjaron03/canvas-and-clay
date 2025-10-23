@@ -225,7 +225,7 @@ flask db upgrade
 
 ### Testing Authentication
 
-Run the comprehensive test suite:
+**Run the comprehensive test suite:**
 
 ```bash
 cd backend
@@ -239,6 +239,37 @@ Tests cover:
 - Session security (httponly, samesite)
 - RBAC (role-based access control)
 - Account status management
+
+**Manual testing from browser console** (visit http://localhost:5173 first):
+
+```javascript
+// Register a new user
+await fetch('http://localhost:5001/auth/register', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  credentials: 'include',
+  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123', role: 'visitor'})
+}).then(r => r.json())
+
+// Login
+await fetch('http://localhost:5001/auth/login', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  credentials: 'include',
+  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
+}).then(r => r.json())
+
+// Access protected route
+await fetch('http://localhost:5001/auth/protected', {
+  credentials: 'include'
+}).then(r => r.json())
+
+// Logout
+await fetch('http://localhost:5001/auth/logout', {
+  method: 'POST',
+  credentials: 'include'
+}).then(r => r.json())
+```
 
 ## Project Structure
 ```
