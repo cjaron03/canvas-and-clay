@@ -17,3 +17,8 @@ flake8==6.0.0
 # PyJWT==2.8.0                 # JWT token authentication
 # python-magic==0.4.27         # File type validation
 # Pillow==10.0.0               # Image validation and processing
+
+# TODO (MK)
+# add SQLAlchemy
+# psycopg
+# alembic
