@@ -1,8 +1,32 @@
 # Security Implementation TODO List For JC
 
-## Security Audit Results (October 2025) !!!!
+## current sprint plan (phase 2 - security hardening)
 
-## authentication system implemented but critical vulnerabilities found
+### immediate priorities
+1. **fix critical security issues** (privilege escalation, cookie defaults, information disclosure)
+2. **add csrf protection** (Flask-WTF already installed, needs configuration)
+3. **enable rate limiting** (Flask-Limiter ready to uncomment)
+4. **build authentication UI** (login/register forms in SvelteKit)
+
+### scaffolding status
+
+**ready to implement (scaffolding exists):**
+- csrf protection - Flask-WTF already installed, tests already disable it, TODOs marked (~45-60 min)
+- rate limiting - Flask-Limiter commented out in requirements.txt, ready to uncomment (~30 min)
+- authentication system - fully built (login/logout/register, password hashing, sessions, RBAC)
+
+**requires building from scratch (no scaffolding):**
+- two-factor authentication (2FA) - no TOTP library, no database fields, starting from scratch
+- JWT tokens - PyJWT commented out, would need refactoring from session-based auth
+- file upload security - no endpoints, no validation libraries, no virus scanning
+- penetration testing - no tooling, manual security testing work
+- audit logging - no structured logging infrastructure beyond Flask defaults
+
+---
+
+## Security Audit Results (October 2025)
+
+### authentication system implemented but critical vulnerabilities found
 
 ### CRITICAL - must fix before production
 - [ ] **privilege escalation via self-service admin role** (`backend/auth.py:96-142`)
