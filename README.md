@@ -29,6 +29,8 @@ Simple Architecture diagram should be added to '/docs/arch.png'
    cd infra
    docker compose up --build
    ```
+   
+   Database migrations will run automatically on startup.
 
 **Ports**
 - **Frontend**: http://localhost:5173
@@ -214,13 +216,35 @@ For local development without HTTPS, set `SESSION_COOKIE_SECURE=False`.
 
 ### Database Migrations
 
-Initialize the database and apply migrations:
+**Automated Migrations (Docker):**
+
+When using Docker Compose, database migrations run automatically on container startup. No manual intervention required!
+
+**Manual Migration Commands:**
+
+If you need to run migrations manually or create new ones:
 
 ```bash
-# In backend directory or Docker container
-flask db init        # First time only
-flask db migrate -m "Add user model"
-flask db upgrade
+# Run migrations manually in running container
+docker exec canvas_backend flask db upgrade
+
+# Create a new migration after model changes
+docker exec canvas_backend flask db migrate -m "description of changes"
+
+# Check current migration status
+docker exec canvas_backend flask db current
+
+# Rollback last migration (if needed)
+docker exec canvas_backend flask db downgrade
+```
+
+**Without Docker (local development):**
+
+```bash
+# In backend directory
+flask db init        # first time only - creates migrations folder
+flask db migrate -m "add user model"  # generate migration after model changes
+flask db upgrade     # apply pending migrations
 ```
 
 ### Testing Authentication
