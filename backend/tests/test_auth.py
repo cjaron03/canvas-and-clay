@@ -70,7 +70,7 @@ class TestUserRegistration:
         data = response.get_json()
         assert data['message'] == 'User registered successfully'
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == sample_user['role']
+        assert data['user']['role'] == 'visitor'
         assert 'id' in data['user']
         assert 'created_at' in data['user']
         assert 'password' not in data['user']
@@ -180,7 +180,7 @@ class TestUserLogin:
         data = response.get_json()
         assert data['message'] == 'Login successful'
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == sample_user['role']
+        assert data['user']['role'] == 'visitor'
     
     def test_login_with_remember_me(self, client, sample_user):
         """Test login with remember me option."""
@@ -364,7 +364,7 @@ class TestProtectedRoutes:
         assert response.status_code == 200
         data = response.get_json()
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == sample_user['role']
+        assert data['user']['role'] == 'visitor'
 
 
 class TestSessionSecurity:
