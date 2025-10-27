@@ -336,6 +336,96 @@ await fetch('http://localhost:5001/auth/logout', {
 }).then(r => r.json())
 ```
 
+### Testing Security Fixes
+
+**Test 1: Privilege Escalation Prevention**
+```javascript
+const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+});
+const { csrf_token } = await csrfResp.json();
+
+await fetch('http://localhost:5001/auth/register', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'attacker@example.com', password: 'SecurePass123', role: 'admin'})
+}).then(r => r.json())
+```
+
+**Test 2: Bootstrap Admin Login**
+```javascript
+const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+});
+const { csrf_token } = await csrfResp.json();
+
+await fetch('http://localhost:5001/auth/login', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'admin@canvas-clay.local', password: 'ChangeMe123'})
+}).then(r => r.json())
+
+await fetch('http://localhost:5001/auth/admin-only', {
+  credentials: 'include'
+}).then(r => r.json())
+```
+
+**Test 3: CSRF Protection Enforcement**
+```javascript
+await fetch('http://localhost:5001/auth/register', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'nocsrf@example.com', password: 'SecurePass123'})
+}).then(r => r.json())
+```
+
+**Test 4: Admin-Only Route Access Control**
+```javascript
+const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+});
+const { csrf_token } = await csrfResp.json();
+
+await fetch('http://localhost:5001/auth/register', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
+}).then(r => r.json())
+
+const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+}).then(r => r.json());
+
+await fetch('http://localhost:5001/auth/login', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': loginCsrf.csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
+}).then(r => r.json())
+
+await fetch('http://localhost:5001/auth/admin-only', {
+  credentials: 'include'
+}).then(r => r.json())
+```
+
 ## Project Structure
 ```
 ├── backend/           # Flask API
