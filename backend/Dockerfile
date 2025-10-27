@@ -48,7 +48,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Copy application code
 COPY . .
 
+# Copy entrypoint script and make executable
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 5000
+
+# Use entrypoint to handle migrations
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Run Flask development server
 CMD ["python", "app.py"]

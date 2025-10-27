@@ -154,32 +154,37 @@ def ensure_bootstrap_admin():
     if not bootstrap_email:
         return
     
-    with app.app_context():
-        user = User.query.filter_by(email=bootstrap_email).first()
-        
-        if user:
-            # ensure existing bootstrap admin has admin role
-            if user.role != 'admin':
-                user.role = 'admin'
+    try:
+        with app.app_context():
+            user = User.query.filter_by(email=bootstrap_email).first()
+            
+            if user:
+                # ensure existing bootstrap admin has admin role
+                if user.role != 'admin':
+                    user.role = 'admin'
+                    db.session.commit()
+                    print(f"promoted {bootstrap_email} to admin role")
+            else:
+                # bootstrap admin doesn't exist - create with default password
+                # admin should change this on first login
+                default_password = os.getenv('BOOTSTRAP_ADMIN_PASSWORD', 'ChangeMe123')
+                hashed_password = bcrypt.generate_password_hash(default_password).decode('utf-8')
+                
+                admin_user = User(
+                    email=bootstrap_email,
+                    hashed_password=hashed_password,
+                    role='admin',
+                    created_at=datetime.now(timezone.utc)
+                )
+                
+                db.session.add(admin_user)
                 db.session.commit()
-                print(f"promoted {bootstrap_email} to admin role")
-        else:
-            # bootstrap admin doesn't exist - create with default password
-            # admin should change this on first login
-            default_password = os.getenv('BOOTSTRAP_ADMIN_PASSWORD', 'ChangeMe123')
-            hashed_password = bcrypt.generate_password_hash(default_password).decode('utf-8')
-            
-            admin_user = User(
-                email=bootstrap_email,
-                hashed_password=hashed_password,
-                role='admin',
-                created_at=datetime.now(timezone.utc)
-            )
-            
-            db.session.add(admin_user)
-            db.session.commit()
-            print(f"created bootstrap admin: {bootstrap_email}")
-            print("warning: default password in use - change immediately!")
+                print(f"created bootstrap admin: {bootstrap_email}")
+                print("warning: default password in use - change immediately!")
+    except Exception as e:
+        # silently fail if database isn't ready yet (e.g., during migrations)
+        # this is expected during initial setup
+        pass
 
 # ensure bootstrap admin exists on startup (skip in test mode)
 if not app.config.get('TESTING', False):
