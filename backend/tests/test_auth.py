@@ -5,11 +5,11 @@ from app import app, db, User
 
 @pytest.fixture
 def client():
-    """Create a test client with a fresh database."""
+    """Create a test client with a fresh database and CSRF disabled for convenience."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    app.config['WTF_CSRF_ENABLED'] = False
-    app.config['SESSION_COOKIE_SECURE'] = False  # Allow testing without HTTPS
+    app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
+    app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
     
     with app.test_client() as client:
         with app.app_context():
@@ -20,22 +20,42 @@ def client():
 
 
 @pytest.fixture
+def csrf_client():
+    """Create a test client with CSRF protection enabled."""
+    app.config['TESTING'] = True
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
+    app.config['SESSION_COOKIE_SECURE'] = False
+    
+    with app.test_client() as client:
+        with app.app_context():
+            db.create_all()
+            yield client
+            db.session.remove()
+            db.drop_all()
+
+
+def get_csrf_token(client):
+    """helper function to get csrf token from the server."""
+    response = client.get('/auth/csrf-token')
+    return response.get_json()['csrf_token']
+
+
+@pytest.fixture
 def sample_user():
     """Sample user data for testing."""
     return {
         'email': 'test@example.com',
-        'password': 'SecurePass123',
-        'role': 'visitor'
+        'password': 'SecurePass123'
     }
 
 
 @pytest.fixture
 def admin_user():
-    """Sample admin user data for testing."""
+    """Sample admin user data for testing (must be manually promoted to admin)."""
     return {
         'email': 'admin@example.com',
-        'password': 'AdminPass123',
-        'role': 'admin'
+        'password': 'AdminPass123'
     }
 
 
@@ -122,14 +142,16 @@ class TestUserRegistration:
         data = response.get_json()
         assert 'digit' in data['error']
     
-    def test_register_invalid_role(self, client, sample_user):
-        """Test registration with invalid role."""
-        sample_user['role'] = 'hacker'
+    def test_register_ignores_role_parameter(self, client, sample_user):
+        """test that role parameter is ignored and all users are created as visitor (security fix)."""
+        # try to register as admin (should be ignored)
+        sample_user['role'] = 'admin'
         response = client.post('/auth/register', json=sample_user)
         
-        assert response.status_code == 400
+        assert response.status_code == 201
         data = response.get_json()
-        assert 'Invalid role' in data['error']
+        # verify user was created as visitor, not admin
+        assert data['user']['role'] == 'visitor'
     
     def test_register_no_data(self, client):
         """Test registration with no JSON data."""
@@ -289,8 +311,16 @@ class TestProtectedRoutes:
     
     def test_admin_route_as_admin(self, client, admin_user):
         """Test admin route access with admin role."""
-        # Register and login as admin
+        # Register user (will be visitor by default)
         client.post('/auth/register', json=admin_user)
+        
+        # Manually promote to admin (simulating admin promotion endpoint)
+        with app.app_context():
+            user = User.query.filter_by(email=admin_user['email']).first()
+            user.role = 'admin'
+            db.session.commit()
+        
+        # Login as admin
         client.post('/auth/login', json={
             'email': admin_user['email'],
             'password': admin_user['password']
@@ -386,4 +416,74 @@ class TestSessionSecurity:
         response = client.get('/auth/protected')
         
         assert response.status_code == 401
+
+
+class TestCSRFProtection:
+    """tests for csrf protection on state-changing endpoints."""
+    
+    def test_csrf_token_endpoint(self, csrf_client):
+        """test that csrf token endpoint returns a valid token."""
+        response = csrf_client.get('/auth/csrf-token')
+        
+        assert response.status_code == 200
+        data = response.get_json()
+        assert 'csrf_token' in data
+        assert len(data['csrf_token']) > 0
+    
+    def test_registration_requires_csrf_token(self, csrf_client, sample_user):
+        """test that registration endpoint requires csrf token when csrf is enabled."""
+        # try to register without csrf token
+        response = csrf_client.post('/auth/register', json=sample_user)
+        
+        # should fail with 400 (csrf validation error)
+        assert response.status_code == 400
+    
+    def test_registration_with_valid_csrf_token(self, csrf_client, sample_user):
+        """test that registration succeeds with valid csrf token."""
+        # get csrf token
+        csrf_token = get_csrf_token(csrf_client)
+        
+        # register with csrf token in header
+        response = csrf_client.post('/auth/register', 
+                                    json=sample_user,
+                                    headers={'X-CSRFToken': csrf_token})
+        
+        assert response.status_code == 201
+        data = response.get_json()
+        assert data['message'] == 'User registered successfully'
+    
+    def test_login_requires_csrf_token(self, csrf_client, sample_user):
+        """test that login endpoint requires csrf token."""
+        # first register with csrf (setup)
+        csrf_token = get_csrf_token(csrf_client)
+        csrf_client.post('/auth/register',
+                        json=sample_user,
+                        headers={'X-CSRFToken': csrf_token})
+        
+        # try to login without csrf token
+        response = csrf_client.post('/auth/login', json={
+            'email': sample_user['email'],
+            'password': sample_user['password']
+        })
+        
+        # should fail with 400
+        assert response.status_code == 400
+    
+    def test_logout_requires_csrf_token(self, csrf_client, sample_user):
+        """test that logout endpoint requires csrf token."""
+        # register and login with csrf (setup)
+        csrf_token = get_csrf_token(csrf_client)
+        csrf_client.post('/auth/register',
+                        json=sample_user,
+                        headers={'X-CSRFToken': csrf_token})
+        csrf_token = get_csrf_token(csrf_client)  # get fresh token
+        csrf_client.post('/auth/login',
+                        json={'email': sample_user['email'], 'password': sample_user['password']},
+                        headers={'X-CSRFToken': csrf_token})
+        
+        # try to logout without csrf token
+        response = csrf_client.post('/auth/logout')
+        
+        # should fail with 400
+        assert response.status_code == 400
 

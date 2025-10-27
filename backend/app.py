@@ -1,12 +1,13 @@
 from flask import Flask, jsonify
 import os
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_login import LoginManager
 from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
+from flask_wtf.csrf import CSRFProtect
 
 load_dotenv()
 
@@ -14,8 +15,8 @@ app = Flask(__name__)
 CORS(app, 
      origins=["http://localhost:5173"],
      supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     expose_headers=["Content-Type"],
+     allow_headers=["Content-Type", "Authorization", "X-CSRFToken"],
+     expose_headers=["Content-Type", "X-CSRFToken"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # Basic configuration
@@ -34,10 +35,19 @@ app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=14)
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
 
+# CSRF protection configuration
+app.config['WTF_CSRF_ENABLED'] = True
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # token doesn't expire (session-based)
+app.config['WTF_CSRF_SSL_STRICT'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+app.config['WTF_CSRF_CHECK_DEFAULT'] = True
+# accept csrf token from header (for API requests) and form field (traditional forms)
+app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']
+
 # Initialize extensions
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 migrate = Migrate(app, db)
+csrf = CSRFProtect(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
@@ -132,6 +142,47 @@ def api_hello():
 
 # TODO(security, JC): Implement JWT token authentication for API endpoints (optional)
 # TODO(security, JC): Add file upload endpoint with security checks (file type, size, virus scan)
+
+def ensure_bootstrap_admin():
+    """ensure the bootstrap admin user exists and has admin role.
+    
+    this function should be called on application startup to guarantee
+    at least one admin user exists in the system.
+    """
+    bootstrap_email = os.getenv('BOOTSTRAP_ADMIN_EMAIL', 'admin@canvas-clay.local').strip().lower()
+    
+    if not bootstrap_email:
+        return
+    
+    with app.app_context():
+        user = User.query.filter_by(email=bootstrap_email).first()
+        
+        if user:
+            # ensure existing bootstrap admin has admin role
+            if user.role != 'admin':
+                user.role = 'admin'
+                db.session.commit()
+                print(f"promoted {bootstrap_email} to admin role")
+        else:
+            # bootstrap admin doesn't exist - create with default password
+            # admin should change this on first login
+            default_password = os.getenv('BOOTSTRAP_ADMIN_PASSWORD', 'ChangeMe123')
+            hashed_password = bcrypt.generate_password_hash(default_password).decode('utf-8')
+            
+            admin_user = User(
+                email=bootstrap_email,
+                hashed_password=hashed_password,
+                role='admin',
+                created_at=datetime.now(timezone.utc)
+            )
+            
+            db.session.add(admin_user)
+            db.session.commit()
+            print(f"created bootstrap admin: {bootstrap_email}")
+            print("warning: default password in use - change immediately!")
+
+# ensure bootstrap admin exists on startup
+ensure_bootstrap_admin()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

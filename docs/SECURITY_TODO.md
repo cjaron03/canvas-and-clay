@@ -5,24 +5,28 @@
 ## authentication system implemented but critical vulnerabilities found
 
 ### CRITICAL - must fix before production
-- [ ] **privilege escalation via self-service admin role** (`backend/auth.py:96-142`)
-  - registration endpoint trusts client-supplied role parameter
-  - anyone can pass `"role": "admin"` during signup to gain full admin access
-  - **fix**: remove role from registration input, force all new users to 'visitor', create admin promotion endpoint requiring existing admin auth
+- [x] **privilege escalation via self-service admin role** - FIXED (fix-privilege-escalation-csrf branch)
+  - removed role parameter from registration endpoint
+  - all new users are forced to 'visitor' role
+  - bootstrap admin created via environment variable on startup
+  - migration added to downgrade existing admins to visitor except bootstrap admin
+  - admin promotion endpoint deferred to future implementation
 
-- [ ] **csrf protection missing** (`backend/app.py:86-88`, `backend/auth.py:72-210`)
-  - Flask-WTF installed but not configured
-  - session-based auth endpoints vulnerable to cross-site request forgery
-  - **fix**: enable Flask-WTF CSRF protection, add tokens to all POST/PUT/DELETE requests, configure exemptions only for truly stateless endpoints
+- [x] **csrf protection missing** - FIXED (fix-privilege-escalation-csrf branch)
+  - Flask-WTF CSRF protection enabled globally
+  - added `/auth/csrf-token` endpoint for frontend to fetch tokens
+  - csrf tokens required in X-CSRFToken header for all POST/PUT/DELETE requests
+  - comprehensive csrf tests added to test suite
 
 - [ ] **insecure cookie defaults** (`backend/app.py:25-33`)
   - SESSION_COOKIE_SECURE and REMEMBER_COOKIE_SECURE default to False
   - cookies will ride over plain HTTP unless env var manually set in prod
   - **fix**: flip defaults to secure=true, require explicit opt-out for local dev only, add startup validation
 
-- [ ] **information disclosure in error responses** (`backend/auth.py:132-148`)
-  - registration failures echo `str(e)` to client, leaking database/stack details
-  - **fix**: replace with generic error messages, log detailed errors server-side only
+- [x] **information disclosure in error responses** - FIXED (fix-privilege-escalation-csrf branch)
+  - registration failures now return generic 'Failed to create user' message
+  - internal error details no longer exposed to client
+  - detailed errors should be logged server-side only
 
 ### major issues
 - [ ] **rate limiting not implemented** - unlimited login attempts possible, brute force attacks viable

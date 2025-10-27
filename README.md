@@ -194,12 +194,38 @@ This project implements comprehensive authentication and session security.
 - Role-based access control for sensitive operations
 
 **API Endpoints:**
-- `POST /auth/register` - Create new user account
-- `POST /auth/login` - Authenticate and create session
-- `POST /auth/logout` - End session and clear cookies
+- `GET /auth/csrf-token` - Get CSRF token for frontend requests
+- `POST /auth/register` - Create new user account (requires CSRF token)
+- `POST /auth/login` - Authenticate and create session (requires CSRF token)
+- `POST /auth/logout` - End session and clear cookies (requires CSRF token)
 - `GET /auth/me` - Get current user info
 - `GET /auth/protected` - Example protected route
 - `GET /auth/admin-only` - Example admin-only route
+
+**CSRF Protection:**
+All POST/PUT/DELETE endpoints require a CSRF token. Frontend must:
+1. Fetch token from `GET /auth/csrf-token`
+2. Include token in subsequent requests via `X-CSRFToken` header
+
+Example:
+```javascript
+// fetch csrf token
+const csrfResponse = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+});
+const { csrf_token } = await csrfResponse.json();
+
+// use token in request
+await fetch('http://localhost:5001/auth/register', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'user@example.com', password: 'SecurePass123'})
+});
+```
 
 ### Environment Configuration
 
@@ -208,9 +234,17 @@ Create `backend/.env` from `backend/.env.example`:
 ```bash
 # Session Security Settings
 SESSION_COOKIE_SECURE=True  # Set to True in production with HTTPS
+
+# Bootstrap Admin Configuration
+BOOTSTRAP_ADMIN_EMAIL=admin@canvas-clay.local
+BOOTSTRAP_ADMIN_PASSWORD=ChangeMe123  # change immediately after first login
 ```
 
-For local development without HTTPS, set `SESSION_COOKIE_SECURE=False`.
+**Important Notes:**
+- For local development without HTTPS, set `SESSION_COOKIE_SECURE=False`
+- The bootstrap admin user is automatically created/promoted on application startup
+- All new user registrations are forced to 'visitor' role (security fix)
+- Admin role can only be granted by existing admins (future admin promotion endpoint)
 
 ### Database Migrations
 
@@ -239,34 +273,65 @@ Tests cover:
 - Session security (httponly, samesite)
 - RBAC (role-based access control)
 - Account status management
+- CSRF protection for state-changing endpoints
 
 **Manual testing from browser console** (visit http://localhost:5173 first):
 
+**Note:** CSRF protection is disabled by default in test mode. For production testing, enable it in `.env`:
+```bash
+WTF_CSRF_ENABLED=True
+```
+
 ```javascript
-// Register a new user
+// get csrf token first
+const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+});
+const { csrf_token } = await csrfResp.json();
+
+// register a new user (all users are created as 'visitor' role)
 await fetch('http://localhost:5001/auth/register', {
   method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  credentials: 'include',
-  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123', role: 'visitor'})
-}).then(r => r.json())
-
-// Login
-await fetch('http://localhost:5001/auth/login', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf_token
+  },
   credentials: 'include',
   body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
 }).then(r => r.json())
 
-// Access protected route
+// get fresh csrf token for login
+const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+}).then(r => r.json());
+
+// login
+await fetch('http://localhost:5001/auth/login', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': loginCsrf.csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
+}).then(r => r.json())
+
+// access protected route (no csrf needed for get requests)
 await fetch('http://localhost:5001/auth/protected', {
   credentials: 'include'
 }).then(r => r.json())
 
-// Logout
+// get fresh csrf token for logout
+const logoutCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+}).then(r => r.json());
+
+// logout
 await fetch('http://localhost:5001/auth/logout', {
   method: 'POST',
+  headers: {
+    'X-CSRFToken': logoutCsrf.csrf_token
+  },
   credentials: 'include'
 }).then(r => r.json())
 ```
