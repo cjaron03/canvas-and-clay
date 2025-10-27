@@ -181,8 +181,9 @@ def ensure_bootstrap_admin():
             print(f"created bootstrap admin: {bootstrap_email}")
             print("warning: default password in use - change immediately!")
 
-# ensure bootstrap admin exists on startup
-ensure_bootstrap_admin()
+# ensure bootstrap admin exists on startup (skip in test mode)
+if not app.config.get('TESTING', False):
+    ensure_bootstrap_admin()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
