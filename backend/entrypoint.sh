@@ -1,15 +1,19 @@
-#!/bin/sh
+#!/bin/bash
+set -e
 
 echo "waiting for database to be ready..."
-until python -c "import psycopg2; import os; psycopg2.connect(os.getenv('DATABASE_URL'))" 2>/dev/null; do
-  echo "database not ready yet, retrying in 2 seconds..."
+
+# wait for postgres to be ready
+while ! flask db current >/dev/null 2>&1; do
+  echo "database not ready, waiting..."
   sleep 2
 done
+
 echo "database is ready!"
 
+# run database migrations
 echo "running database migrations..."
 flask db upgrade
 
 echo "starting flask application..."
 exec "$@"
-
