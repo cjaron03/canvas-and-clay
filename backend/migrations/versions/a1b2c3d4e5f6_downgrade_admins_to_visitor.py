@@ -21,15 +21,34 @@ def upgrade():
     # get bootstrap admin email from environment
     bootstrap_email = os.getenv('BOOTSTRAP_ADMIN_EMAIL', 'admin@canvas-clay.local')
     
-    # downgrade all admin users to visitor except the bootstrap admin
-    op.execute(
-        f"""
-        UPDATE users 
-        SET role = 'visitor' 
-        WHERE role = 'admin' 
-        AND email != '{bootstrap_email}'
-        """
+    # use raw connection to check if table exists and has data
+    # this handles fresh database installations gracefully
+    connection = op.get_bind()
+    
+    # check if users table exists and has admin users
+    # use parameterized query to avoid sql injection
+    result = connection.execute(
+        sa.text("""
+            SELECT COUNT(*) 
+            FROM information_schema.tables 
+            WHERE table_name = 'users'
+        """)
     )
+    
+    table_exists = result.scalar() > 0
+    
+    # only run downgrade if users table exists and has admin users
+    if table_exists:
+        # downgrade all admin users to visitor except the bootstrap admin
+        connection.execute(
+            sa.text("""
+                UPDATE users 
+                SET role = 'visitor' 
+                WHERE role = 'admin' 
+                AND email != :bootstrap_email
+            """),
+            {'bootstrap_email': bootstrap_email}
+        )
 
 
 def downgrade():
