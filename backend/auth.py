@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
+from flask_wtf.csrf import generate_csrf
 from functools import wraps
 
 
@@ -24,6 +25,20 @@ def admin_required(f):
             return jsonify({'error': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated_function
+
+
+@auth_bp.route('/csrf-token', methods=['GET'])
+def get_csrf_token():
+    """get csrf token for frontend requests.
+    
+    frontend should call this endpoint first to obtain a csrf token,
+    then include it in subsequent POST/PUT/DELETE requests via X-CSRFToken header.
+    
+    Returns:
+        200: csrf token in response body
+    """
+    token = generate_csrf()
+    return jsonify({'csrf_token': token}), 200
 
 
 def validate_email(email):
@@ -73,11 +88,13 @@ def validate_password(password):
 def register():
     """Register a new user account.
     
+    security: all new user registrations are forced to 'visitor' role.
+    admin role must be granted through admin promotion endpoint.
+    
     Expected JSON body:
         {
             "email": "user@example.com",
-            "password": "SecurePassword123",
-            "role": "visitor"  # Optional, defaults to 'visitor'
+            "password": "SecurePassword123"
         }
         
     Returns:
@@ -95,7 +112,10 @@ def register():
     
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
-    role = data.get('role', 'visitor')
+    
+    # security fix: ignore any client-supplied role parameter
+    # all new users are forced to 'visitor' role to prevent privilege escalation
+    role = 'visitor'
     
     # Validate email
     if not email:
@@ -113,11 +133,6 @@ def register():
     is_valid, error_msg = validate_password(password)
     if not is_valid:
         return jsonify({'error': error_msg}), 400
-    
-    # Validate role
-    valid_roles = ['admin', 'visitor']
-    if role not in valid_roles:
-        return jsonify({'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'}), 400
     
     # Hash password and create user
     hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
@@ -145,7 +160,8 @@ def register():
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': 'Failed to create user', 'details': str(e)}), 500
+        # security fix: don't expose internal error details to client
+        return jsonify({'error': 'Failed to create user'}), 500
 
 
 @auth_bp.route('/login', methods=['POST'])
