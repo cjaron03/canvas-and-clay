@@ -112,8 +112,10 @@ def register():
     """
     db, bcrypt, User, limiter = get_dependencies()
     
-    # apply rate limiting: 5 registrations per hour per IP
-    limiter.limit("5 per hour")(lambda: None)()
+    # apply rate limiting: 5 registrations per hour per IP (disabled in testing mode)
+    from flask import current_app
+    if not current_app.config.get('TESTING', False):
+        limiter.limit("5 per hour")(lambda: None)()
 
     
     data = request.get_json()
@@ -200,8 +202,10 @@ def login():
     """
     db, bcrypt, User, limiter = get_dependencies()
     
-    # apply rate limiting: 5 login attempts per 15 minutes per IP
-    limiter.limit("5 per 15 minutes")(lambda: None)()
+    # apply rate limiting: 5 login attempts per 15 minutes per IP (disabled in testing mode)
+    from flask import current_app
+    if not current_app.config.get('TESTING', False):
+        limiter.limit("5 per 15 minutes")(lambda: None)()
     
     data = request.get_json()
     

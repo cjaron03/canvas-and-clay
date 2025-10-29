@@ -65,6 +65,7 @@ login_manager.session_protection = 'strong'
 
 # rate limiting to prevent brute force attacks
 # uses in-memory storage by default (switch to Redis in production for multi-instance deployments)
+# disabled during testing via TESTING config flag
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,

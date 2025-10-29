@@ -12,11 +12,16 @@ def client():
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     
-    with app.test_client() as client:
+    with app.test_client() as test_client:
         with app.app_context():
             db.create_all()
-            yield client
+            # enable session transactions for the test client
+            with test_client.session_transaction() as sess:
+                sess.clear()
+            yield test_client
             db.session.remove()
             db.drop_all()
 
@@ -28,11 +33,16 @@ def csrf_client():
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     
-    with app.test_client() as client:
+    with app.test_client() as test_client:
         with app.app_context():
             db.create_all()
-            yield client
+            # enable session transactions for the test client
+            with test_client.session_transaction() as sess:
+                sess.clear()
+            yield test_client
             db.session.remove()
             db.drop_all()
 
