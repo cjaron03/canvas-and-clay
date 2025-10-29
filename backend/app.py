@@ -55,12 +55,17 @@ login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
 # Initialize rate limiter
+# disable rate limiting in test mode by setting empty default limits
+if app.config.get('TESTING', False):
+    default_limits = []  # no limits in test mode
+else:
+    default_limits = ["200 per day", "50 per hour"]
+
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://",  # use in-memory storage (can be upgraded to Redis in production)
-    enabled=lambda: not app.config.get('TESTING', False)  # disable rate limiting in tests
+    default_limits=default_limits,
+    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
 )
 
 # Return 401 instead of redirect for unauthorized API requests
