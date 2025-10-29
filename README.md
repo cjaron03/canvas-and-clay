@@ -284,6 +284,7 @@ WTF_CSRF_ENABLED=True
 
 ```javascript
 // get csrf token first
+(async () => {
 const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
   credentials: 'include'
 });
@@ -333,97 +334,120 @@ await fetch('http://localhost:5001/auth/logout', {
     'X-CSRFToken': logoutCsrf.csrf_token
   },
   credentials: 'include'
-}).then(r => r.json())
+}).then(r => r.json());
+})();
 ```
 
 ### Testing Security Fixes
 
 **Test 1: Privilege Escalation Prevention**
 ```javascript
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'attacker@example.com', password: 'SecurePass123', role: 'admin'})
-}).then(r => r.json());
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'attacker@example.com', password: 'SecurePass123', role: 'admin'})
+  }).then(r => r.json());
+  
+  console.log(result);
+})();
 ```
 
 **Test 2: Bootstrap Admin Login**
 ```javascript
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-await fetch('http://localhost:5001/auth/login', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'admin@canvas-clay.local', password: 'ChangeMe123'})
-}).then(r => r.json());
+  const loginResult = await fetch('http://localhost:5001/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'admin@canvas-clay.local', password: 'ChangeMe123'})
+  }).then(r => r.json());
+  
+  console.log('Login:', loginResult);
 
-await fetch('http://localhost:5001/auth/admin-only', {
-  credentials: 'include'
-}).then(r => r.json());
+  const adminResult = await fetch('http://localhost:5001/auth/admin-only', {
+    credentials: 'include'
+  }).then(r => r.json());
+  
+  console.log('Admin route:', adminResult);
+})();
 ```
 
 **Test 3: CSRF Protection Enforcement**
 ```javascript
-await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json'
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'nocsrf@example.com', password: 'SecurePass123'})
-}).then(r => r.json());
+(async () => {
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'nocsrf@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  
+  console.log(result);
+})();
 ```
 
 **Test 4: Admin-Only Route Access Control**
 ```javascript
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
-}).then(r => r.json());
+  const registerResult = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  
+  console.log('Register:', registerResult);
 
-const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-}).then(r => r.json());
+  const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  }).then(r => r.json());
 
-await fetch('http://localhost:5001/auth/login', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': loginCsrf.csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
-}).then(r => r.json());
+  const loginResult = await fetch('http://localhost:5001/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': loginCsrf.csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  
+  console.log('Login:', loginResult);
 
-await fetch('http://localhost:5001/auth/admin-only', {
-  credentials: 'include'
-}).then(r => r.json());
+  const adminResult = await fetch('http://localhost:5001/auth/admin-only', {
+    credentials: 'include'
+  }).then(r => r.json());
+  
+  console.log('Admin route (should fail):', adminResult);
+})();
 ```
 
 ## Project Structure
