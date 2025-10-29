@@ -12,6 +12,10 @@ def client():
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
     
+    # disable limiter if it exists
+    from app import limiter
+    limiter.enabled = False
+    
     with app.test_client(use_cookies=True) as client:
         with app.app_context():
             db.create_all()
@@ -28,6 +32,10 @@ def csrf_client():
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
+    
+    # disable limiter if it exists
+    from app import limiter
+    limiter.enabled = False
     
     with app.test_client(use_cookies=True) as client:
         with app.app_context():

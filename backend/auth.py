@@ -365,12 +365,12 @@ def login():
         'remember_me': remember
     })
     
+    # Login user with remember me option (must be called before session modification)
+    login_user(user, remember=remember)
+    
     # Regenerate session to prevent session fixation attacks
     session.permanent = True
     session.modified = True
-    
-    # Login user with remember me option
-    login_user(user, remember=remember)
     
     return jsonify({
         'message': 'Login successful',
