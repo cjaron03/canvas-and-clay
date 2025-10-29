@@ -44,23 +44,37 @@ def get_csrf_token():
 
 
 def validate_email(email):
-    """Validate email format.
+    """Validate email format and length.
+    
+    security: enforce maximum length to prevent DoS attacks.
     
     Args:
         email: Email string to validate
         
     Returns:
-        bool: True if valid email format
+        tuple: (is_valid: bool, error_message: str or None)
     """
+    # RFC 5321: maximum email length is 254 characters
+    MAX_EMAIL_LENGTH = 254
+    
+    if len(email) > MAX_EMAIL_LENGTH:
+        return False, f'Email must be no more than {MAX_EMAIL_LENGTH} characters'
+    
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
+    if not re.match(pattern, email):
+        return False, 'Invalid email format'
+    
+    return True, None
 
 
 def validate_password(password):
     """Validate password meets security requirements.
     
+    security: enforce length limits to prevent DoS attacks.
+    
     Requirements:
         - Minimum 8 characters
+        - Maximum 128 characters
         - At least one uppercase letter
         - At least one lowercase letter  
         - At least one digit
@@ -71,8 +85,14 @@ def validate_password(password):
     Returns:
         tuple: (is_valid: bool, error_message: str or None)
     """
-    if len(password) < 8:
-        return False, 'Password must be at least 8 characters long'
+    MIN_PASSWORD_LENGTH = 8
+    MAX_PASSWORD_LENGTH = 128
+    
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return False, f'Password must be at least {MIN_PASSWORD_LENGTH} characters long'
+    
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return False, f'Password must be no more than {MAX_PASSWORD_LENGTH} characters'
     
     if not re.search(r'[A-Z]', password):
         return False, 'Password must contain at least one uppercase letter'
@@ -123,8 +143,9 @@ def register():
     if not email:
         return jsonify({'error': 'Email is required'}), 400
     
-    if not validate_email(email):
-        return jsonify({'error': 'Invalid email format'}), 400
+    is_valid, error_msg = validate_email(email)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
     
     # Check for duplicate email
     existing_user = User.query.filter_by(email=email).first()
@@ -319,6 +340,16 @@ def login():
     
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+    
+    # validate email length (DoS prevention)
+    is_valid, error_msg = validate_email(email)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
+    
+    # validate password length (DoS prevention)
+    MAX_PASSWORD_LENGTH = 128
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return jsonify({'error': f'Password must be no more than {MAX_PASSWORD_LENGTH} characters'}), 400
     
     # check account lockout (check before user lookup to prevent user enumeration)
     is_locked, lockout_expires_at = check_account_locked(email)

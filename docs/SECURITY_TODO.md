@@ -18,10 +18,10 @@
   - csrf tokens required in X-CSRFToken header for all POST/PUT/DELETE requests
   - comprehensive csrf tests added to test suite
 
-- [ ] **insecure cookie defaults** (`backend/app.py:25-33`)
-  - SESSION_COOKIE_SECURE and REMEMBER_COOKIE_SECURE default to False
-  - cookies will ride over plain HTTP unless env var manually set in prod
-  - **fix**: flip defaults to secure=true, require explicit opt-out for local dev only, add startup validation
+- [x] **insecure cookie defaults** - FIXED (fix-cookie-cors-input-validation branch)
+  - SESSION_COOKIE_SECURE and REMEMBER_COOKIE_SECURE now default to True
+  - cookies require HTTPS by default, explicit opt-out via ALLOW_INSECURE_COOKIES env var for local dev
+  - startup validation added to warn about insecure configuration
 
 - [x] **information disclosure in error responses** - FIXED (fix-privilege-escalation-csrf branch)
   - registration failures now return generic 'Failed to create user' message
@@ -33,7 +33,10 @@
   - Flask-Limiter added to requirements.txt
   - rate limiting applied to login endpoint (5 attempts per 15 min per IP)
   - IP-based rate limiting prevents brute force attacks
-- [ ] **hardcoded cors origins** - `http://localhost:5173` won't work in production
+- [x] **hardcoded cors origins** - FIXED (fix-cookie-cors-input-validation branch)
+  - CORS origins moved to CORS_ORIGINS environment variable
+  - supports multiple origins separated by commas
+  - defaults to http://localhost:5173 for backward compatibility
 - [x] **no account lockout mechanism** - FIXED (fix-privilege-escalation-csrf branch)
   - account lockout after 5 failed attempts (15 min lockout period)
   - failed login attempts tracked in database
@@ -78,7 +81,7 @@ see the Authentication & Security section in README.md for full details.
 - [x] **API Input Validation** - COMPLETED for Auth
   - [x] Validate all user inputs (username, email, passwords)
   - [x] Sanitize inputs to prevent SQL injection (using SQLAlchemy ORM)
-  - [x] Implement length limits and character restrictions
+  - [x] Implement length limits and character restrictions (email max 254, password max 128)
   - [x] Add email format validation
   
 - [ ] **File Upload Security**
@@ -98,19 +101,19 @@ see the Authentication & Security section in README.md for full details.
   - [x] Add session regeneration on login
 
 ### CSRF Protection
-- [ ] **Cross-Site Request Forgery** - CRITICAL (see audit section above)
-  - [ ] Implement CSRF tokens for all POST/PUT/DELETE requests
-  - [ ] Configure Flask-WTF CSRF protection
-  - [ ] Add CSRF token to frontend forms
-  - [ ] Configure CSRF exemptions only for truly stateless API endpoints
+- [x] **Cross-Site Request Forgery** - COMPLETED (fix-privilege-escalation-csrf branch)
+  - [x] Implement CSRF tokens for all POST/PUT/DELETE requests
+  - [x] Configure Flask-WTF CSRF protection
+  - [x] Add CSRF token to frontend forms (via /auth/csrf-token endpoint)
+  - [x] Configure CSRF exemptions only for truly stateless API endpoints
 
 ### CORS Configuration
-- [ ] **Cross-Origin Resource Sharing** - MAJOR (hardcoded origins won't work in production)
-  - [ ] Move origins from hardcoded `http://localhost:5173` to environment variable
-  - [ ] Support multiple origins (dev, staging, prod)
-  - [ ] Set appropriate CORS headers
-  - [ ] Restrict to specific HTTP methods
-  - [ ] Configure credentials policy (currently supports_credentials=True for /api/* and /auth/*)
+- [x] **Cross-Origin Resource Sharing** - COMPLETED (fix-cookie-cors-input-validation branch)
+  - [x] Move origins from hardcoded `http://localhost:5173` to environment variable (CORS_ORIGINS)
+  - [x] Support multiple origins (dev, staging, prod) via comma-separated values
+  - [x] Set appropriate CORS headers
+  - [x] Restrict to specific HTTP methods
+  - [x] Configure credentials policy (currently supports_credentials=True for /api/* and /auth/*)
 
 ## Medium Priority (Additional Security)
 
@@ -203,15 +206,15 @@ see the Authentication & Security section in README.md for full details.
 5. ~~session security configuration~~ completed (defaults need fixing)
 
 ### phase 2 (CRITICAL - must fix before production)
-1. **fix privilege escalation** - remove client-controlled role assignment
-2. **implement CSRF protection** - add Flask-WTF CSRF tokens
-3. **fix insecure cookie defaults** - flip secure flags to true by default
-4. **fix information disclosure** - remove str(e) from error responses
+1. ~~**fix privilege escalation**~~ - COMPLETED: remove client-controlled role assignment
+2. ~~**implement CSRF protection**~~ - COMPLETED: add Flask-WTF CSRF tokens
+3. ~~**fix insecure cookie defaults**~~ - COMPLETED: flip secure flags to true by default
+4. ~~**fix information disclosure**~~ - COMPLETED: remove str(e) from error responses
 5. ~~**add rate limiting**~~ - COMPLETED: prevent brute force attacks
 6. ~~**implement audit logging**~~ - COMPLETED: detect security breaches
-7. **fix CORS configuration** - move to environment variables
+7. ~~**fix CORS configuration**~~ - COMPLETED: move to environment variables
 8. ~~**add account lockout**~~ - COMPLETED: protect against credential stuffing
-9. **add input length validation** - prevent DoS via long inputs
+9. ~~**add input length validation**~~ - COMPLETED: prevent DoS via long inputs (email max 254, password max 128)
 
 ### phase 3 (future enhancements)
 10. file upload security

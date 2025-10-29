@@ -152,6 +152,27 @@ class TestUserRegistration:
         data = response.get_json()
         assert 'digit' in data['error']
     
+    def test_register_email_too_long(self, client, sample_user):
+        """Test registration with email exceeding max length (DoS prevention)."""
+        # RFC 5321 max email length is 254 characters
+        long_email = 'a' * 245 + '@example.com'  # 254 characters total
+        sample_user['email'] = long_email
+        response = client.post('/auth/register', json=sample_user)
+        
+        assert response.status_code == 400
+        data = response.get_json()
+        assert '254 characters' in data['error']
+    
+    def test_register_password_too_long(self, client, sample_user):
+        """Test registration with password exceeding max length (DoS prevention)."""
+        # max password length is 128 characters
+        sample_user['password'] = 'A' + 'a' * 127 + '1'  # 129 characters
+        response = client.post('/auth/register', json=sample_user)
+        
+        assert response.status_code == 400
+        data = response.get_json()
+        assert '128 characters' in data['error']
+    
     def test_register_ignores_role_parameter(self, client, sample_user):
         """test that role parameter is ignored and all users are created as visitor (security fix)."""
         # try to register as admin (should be ignored)
@@ -247,6 +268,36 @@ class TestUserLogin:
         assert response.status_code == 400
         data = response.get_json()
         assert 'Email and password are required' in data['error']
+    
+    def test_login_email_too_long(self, client, sample_user):
+        """Test login with email exceeding max length (DoS prevention)."""
+        # RFC 5321 max email length is 254 characters
+        long_email = 'a' * 245 + '@example.com'  # 254 characters total
+        login_data = {
+            'email': long_email,
+            'password': 'SecurePass123'
+        }
+        response = client.post('/auth/login', json=login_data)
+        
+        assert response.status_code == 400
+        data = response.get_json()
+        assert '254 characters' in data['error']
+    
+    def test_login_password_too_long(self, client, sample_user):
+        """Test login with password exceeding max length (DoS prevention)."""
+        # Register user first
+        client.post('/auth/register', json=sample_user)
+        
+        # max password length is 128 characters
+        login_data = {
+            'email': sample_user['email'],
+            'password': 'A' + 'a' * 127 + '1'  # 129 characters
+        }
+        response = client.post('/auth/login', json=login_data)
+        
+        assert response.status_code == 400
+        data = response.get_json()
+        assert '128 characters' in data['error']
     
     def test_login_disabled_account(self, client, sample_user):
         """Test login with disabled account."""
