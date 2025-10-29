@@ -5,6 +5,7 @@ Flask-CORS==6.0.0
 Flask-Login==0.6.3
 Flask-Bcrypt==1.0.1
 Flask-WTF==1.2.1
+Flask-Limiter==3.5.0
 Werkzeug==3.0.6
 psycopg2-binary==2.9.7
 python-dotenv==1.0.0
@@ -13,7 +14,6 @@ pytest-cov==4.1.0
 flake8==6.0.0
 
 # TODO(security, JC): Adding these security packages eventually:
-# Flask-Limiter==3.5.0         # Rate limiting
 # PyJWT==2.8.0                 # JWT token authentication
 # python-magic==0.4.27         # File type validation
 # Pillow==10.0.0               # Image validation and processing

@@ -1,6 +1,7 @@
 """Authentication blueprint for user registration, login, and logout."""
 import re
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import generate_csrf
@@ -8,12 +9,17 @@ from functools import wraps
 
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+logger = logging.getLogger(__name__)
+
+# account lockout configuration
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
 
 
 def get_dependencies():
     """Get dependencies from app context to avoid circular imports."""
-    from app import db, bcrypt, User
-    return db, bcrypt, User
+    from app import db, bcrypt, User, limiter
+    return db, bcrypt, User, limiter
 
 
 def admin_required(f):
@@ -90,6 +96,7 @@ def register():
     
     security: all new user registrations are forced to 'visitor' role.
     admin role must be granted through admin promotion endpoint.
+    rate limited to 5 registrations per hour per IP to prevent spam.
     
     Expected JSON body:
         {
@@ -101,8 +108,13 @@ def register():
         201: User created successfully
         400: Validation error or duplicate email
         415: Unsupported media type (missing Content-Type: application/json)
+        429: Too many requests (rate limit exceeded)
     """
-    db, bcrypt, User = get_dependencies()
+    db, bcrypt, User, limiter = get_dependencies()
+    
+    # apply rate limiting: 5 registrations per hour per IP
+    limiter.limit("5 per hour")(lambda: None)()
+
     
     data = request.get_json()
     
@@ -168,6 +180,11 @@ def register():
 def login():
     """Login with email and password.
     
+    security features:
+    - rate limited to 5 login attempts per 15 minutes per IP
+    - account lockout after 5 failed attempts for 15 minutes
+    - failed login attempts are logged with IP address
+    
     Expected JSON body:
         {
             "email": "user@example.com",
@@ -178,11 +195,13 @@ def login():
     Returns:
         200: Login successful
         401: Invalid credentials
-        403: Account disabled
-    
-    TODO(security): Add Flask-Limiter for rate limiting to prevent brute force attacks
+        403: Account locked or disabled
+        429: Too many requests (rate limit exceeded)
     """
-    db, bcrypt, User = get_dependencies()
+    db, bcrypt, User, limiter = get_dependencies()
+    
+    # apply rate limiting: 5 login attempts per 15 minutes per IP
+    limiter.limit("5 per 15 minutes")(lambda: None)()
     
     data = request.get_json()
     
@@ -201,15 +220,69 @@ def login():
     user = User.query.filter_by(email=email).first()
     
     if not user:
+        # log failed login attempt for non-existent user
+        logger.warning(
+            f"failed login attempt for non-existent email: {email} from IP: {request.remote_addr}"
+        )
         return jsonify({'error': 'Invalid email or password'}), 401
+    
+    # Check if account is locked
+    if user.is_locked:
+        lockout_remaining = (user.account_locked_until - datetime.now(timezone.utc)).total_seconds()
+        lockout_minutes = int(lockout_remaining / 60) + 1
+        
+        logger.warning(
+            f"login attempt for locked account: {email} from IP: {request.remote_addr}, "
+            f"locked until: {user.account_locked_until}"
+        )
+        
+        return jsonify({
+            'error': f'Account is temporarily locked due to multiple failed login attempts. '
+                     f'Please try again in {lockout_minutes} minutes.'
+        }), 403
     
     # Check if account is active
     if not user.is_active:
+        logger.warning(
+            f"login attempt for disabled account: {email} from IP: {request.remote_addr}"
+        )
         return jsonify({'error': 'Account is disabled'}), 403
     
     # Verify password
     if not bcrypt.check_password_hash(user.hashed_password, password):
+        # increment failed login attempts
+        user.failed_login_attempts += 1
+        user.last_failed_login = datetime.now(timezone.utc)
+        
+        # lock account if max attempts reached
+        if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
+            user.account_locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+            db.session.commit()
+            
+            logger.warning(
+                f"account locked after {MAX_FAILED_ATTEMPTS} failed attempts: {email} "
+                f"from IP: {request.remote_addr}, locked until: {user.account_locked_until}"
+            )
+            
+            return jsonify({
+                'error': f'Account locked due to {MAX_FAILED_ATTEMPTS} failed login attempts. '
+                         f'Please try again in {LOCKOUT_DURATION_MINUTES} minutes.'
+            }), 403
+        
+        db.session.commit()
+        
+        logger.warning(
+            f"failed login attempt ({user.failed_login_attempts}/{MAX_FAILED_ATTEMPTS}): "
+            f"{email} from IP: {request.remote_addr}"
+        )
+        
         return jsonify({'error': 'Invalid email or password'}), 401
+    
+    # successful login - reset failed attempts and clear lockout
+    user.failed_login_attempts = 0
+    user.account_locked_until = None
+    user.last_failed_login = None
+    db.session.commit()
     
     # Regenerate session to prevent session fixation attacks
     session.permanent = True
@@ -217,6 +290,8 @@ def login():
     
     # Login user with remember me option
     login_user(user, remember=remember)
+    
+    logger.info(f"successful login: {email} from IP: {request.remote_addr}")
     
     return jsonify({
         'message': 'Login successful',

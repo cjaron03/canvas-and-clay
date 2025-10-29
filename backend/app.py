@@ -1,5 +1,6 @@
 from flask import Flask, jsonify
 import os
+import logging
 from datetime import timedelta, datetime, timezone
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
@@ -8,8 +9,18 @@ from flask_login import LoginManager
 from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 load_dotenv()
+
+# configure logging for security events
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, 
@@ -52,6 +63,16 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
+# rate limiting to prevent brute force attacks
+# uses in-memory storage by default (switch to Redis in production for multi-instance deployments)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=os.getenv('RATE_LIMIT_STORAGE_URI', 'memory://'),
+    strategy="fixed-window"
+)
+
 # Return 401 instead of redirect for unauthorized API requests
 @login_manager.unauthorized_handler
 def unauthorized():
@@ -93,11 +114,6 @@ def set_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
     return response
-
-
-# TODO(security): Add rate limiting to prevent brute force attacks (Flask-Limiter)
-# TODO(security): Implement CSRF protection for state-changing operations (Flask-WTF)
-# TODO(security): Add input validation middleware for all endpoints
 
 @app.route('/')
 def home():

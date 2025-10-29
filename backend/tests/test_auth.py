@@ -1,5 +1,7 @@
 """Tests for authentication endpoints and session security."""
 import pytest
+import time
+from datetime import datetime, timezone, timedelta
 from app import app, db, User
 
 
@@ -486,4 +488,232 @@ class TestCSRFProtection:
         
         # should fail with 400
         assert response.status_code == 400
+
+
+class TestBruteForceProtection:
+    """tests for brute force protection via account lockout and rate limiting."""
+    
+    def test_failed_login_increments_counter(self, client, sample_user):
+        """test that failed login attempts increment the counter."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # make 1 failed login attempt
+        client.post('/auth/login', json={
+            'email': sample_user['email'],
+            'password': 'WrongPassword123'
+        })
+        
+        # check that counter was incremented
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.failed_login_attempts == 1
+            assert user.last_failed_login is not None
+    
+    def test_account_lockout_after_five_failed_attempts(self, client, sample_user):
+        """test that account is locked after 5 failed login attempts."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # make 5 failed login attempts
+        for i in range(5):
+            response = client.post('/auth/login', json={
+                'email': sample_user['email'],
+                'password': 'WrongPassword123'
+            })
+            
+            if i < 4:
+                # first 4 attempts should return 401 unauthorized
+                assert response.status_code == 401
+            else:
+                # 5th attempt should lock account and return 403 forbidden
+                assert response.status_code == 403
+                data = response.get_json()
+                assert 'Account locked' in data['error']
+                assert '15 minutes' in data['error']
+        
+        # verify account is locked in database
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.failed_login_attempts == 5
+            assert user.account_locked_until is not None
+            assert user.is_locked is True
+    
+    def test_locked_account_rejects_login_with_correct_password(self, client, sample_user):
+        """test that locked account cannot login even with correct password."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # lock the account by making 5 failed attempts
+        for _ in range(5):
+            client.post('/auth/login', json={
+                'email': sample_user['email'],
+                'password': 'WrongPassword123'
+            })
+        
+        # try to login with correct password
+        response = client.post('/auth/login', json={
+            'email': sample_user['email'],
+            'password': sample_user['password']
+        })
+        
+        # should still be locked
+        assert response.status_code == 403
+        data = response.get_json()
+        assert 'temporarily locked' in data['error']
+    
+    def test_successful_login_resets_failed_attempts(self, client, sample_user):
+        """test that successful login resets failed login counter."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # make 3 failed login attempts
+        for _ in range(3):
+            client.post('/auth/login', json={
+                'email': sample_user['email'],
+                'password': 'WrongPassword123'
+            })
+        
+        # verify counter is at 3
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.failed_login_attempts == 3
+        
+        # successful login
+        response = client.post('/auth/login', json={
+            'email': sample_user['email'],
+            'password': sample_user['password']
+        })
+        assert response.status_code == 200
+        
+        # verify counter is reset
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.failed_login_attempts == 0
+            assert user.account_locked_until is None
+            assert user.last_failed_login is None
+    
+    def test_lockout_expires_after_duration(self, client, sample_user):
+        """test that account lockout expires after the lockout duration."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # lock account
+        for _ in range(5):
+            client.post('/auth/login', json={
+                'email': sample_user['email'],
+                'password': 'WrongPassword123'
+            })
+        
+        # manually expire the lockout (simulate time passage)
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            # set lockout to expire in the past
+            user.account_locked_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.session.commit()
+        
+        # try to login with correct password
+        response = client.post('/auth/login', json={
+            'email': sample_user['email'],
+            'password': sample_user['password']
+        })
+        
+        # should succeed since lockout expired
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['message'] == 'Login successful'
+        
+        # verify counter is reset
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.failed_login_attempts == 0
+            assert user.account_locked_until is None
+    
+    def test_failed_login_for_nonexistent_user_does_not_crash(self, client):
+        """test that failed login for nonexistent user is handled gracefully."""
+        response = client.post('/auth/login', json={
+            'email': 'nonexistent@example.com',
+            'password': 'SomePassword123'
+        })
+        
+        # should return 401 unauthorized
+        assert response.status_code == 401
+        data = response.get_json()
+        assert 'Invalid email or password' in data['error']
+    
+    def test_lockout_time_remaining_calculation(self, client, sample_user):
+        """test that lockout error message shows correct time remaining."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # lock account
+        for _ in range(5):
+            response = client.post('/auth/login', json={
+                'email': sample_user['email'],
+                'password': 'WrongPassword123'
+            })
+        
+        # verify error message contains time information
+        assert response.status_code == 403
+        data = response.get_json()
+        assert 'Account locked' in data['error']
+        assert 'minutes' in data['error']
+    
+    def test_is_locked_property_false_when_not_locked(self, client, sample_user):
+        """test that is_locked property returns false for unlocked accounts."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.is_locked is False
+    
+    def test_is_locked_property_false_when_lockout_expired(self, client, sample_user):
+        """test that is_locked property returns false when lockout has expired."""
+        # register user
+        client.post('/auth/register', json=sample_user)
+        
+        # set lockout in the past
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            user.account_locked_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.session.commit()
+        
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert user.is_locked is False
+    
+    def test_multiple_users_independent_lockout(self, client, sample_user):
+        """test that account lockout is independent per user."""
+        # register two users
+        user1 = {'email': 'user1@example.com', 'password': 'SecurePass123'}
+        user2 = {'email': 'user2@example.com', 'password': 'SecurePass456'}
+        
+        client.post('/auth/register', json=user1)
+        client.post('/auth/register', json=user2)
+        
+        # lock user1's account
+        for _ in range(5):
+            client.post('/auth/login', json={
+                'email': user1['email'],
+                'password': 'WrongPassword123'
+            })
+        
+        # user1 should be locked
+        with app.app_context():
+            locked_user = User.query.filter_by(email=user1['email']).first()
+            assert locked_user.is_locked is True
+        
+        # user2 should not be locked
+        with app.app_context():
+            unlocked_user = User.query.filter_by(email=user2['email']).first()
+            assert unlocked_user.is_locked is False
+            assert unlocked_user.failed_login_attempts == 0
+        
+        # user2 should be able to login
+        response = client.post('/auth/login', json={
+            'email': user2['email'],
+            'password': user2['password']
+        })
+        assert response.status_code == 200
 

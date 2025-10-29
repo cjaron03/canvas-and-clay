@@ -26,6 +26,9 @@ def init_models(database):
             role: User role for RBAC (e.g., 'admin', 'visitor')
             remember_token: Token for "remember me" functionality
             is_active: Whether the account is active (for soft deletion/suspension)
+            failed_login_attempts: Counter for consecutive failed login attempts
+            account_locked_until: Timestamp when account lockout expires (null if not locked)
+            last_failed_login: Timestamp of most recent failed login attempt
         """
         __tablename__ = 'users'
         
@@ -36,6 +39,9 @@ def init_models(database):
         role = database.Column(database.String(20), nullable=False, default='visitor')
         remember_token = database.Column(database.String(255), unique=True, nullable=True)
         is_active = database.Column(database.Boolean, nullable=False, default=True)
+        failed_login_attempts = database.Column(database.Integer, nullable=False, default=0)
+        account_locked_until = database.Column(database.DateTime, nullable=True)
+        last_failed_login = database.Column(database.DateTime, nullable=True)
         
         def __repr__(self):
             return f'<User {self.email}>'
@@ -48,5 +54,13 @@ def init_models(database):
         def is_admin(self):
             """Check if user has admin role."""
             return self.role == 'admin'
+        
+        @property
+        def is_locked(self):
+            """Check if account is currently locked due to failed login attempts."""
+            if self.account_locked_until is None:
+                return False
+            # account is locked if lockout time hasn't expired yet
+            return datetime.now(timezone.utc) < self.account_locked_until
     
     return User
