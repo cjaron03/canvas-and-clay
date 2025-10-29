@@ -311,7 +311,6 @@ Tests cover:
 **Note:** CSRF protection is enabled by default. For local development, ensure `ALLOW_INSECURE_COOKIES=true` is set in `backend/.env` to allow cookies over HTTP.
 
 ```javascript
-<<<<<<< HEAD
 (async () => {
   const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
     credentials: 'include'
@@ -366,11 +365,7 @@ Tests cover:
 
 **note:** on subsequent test runs, the register step will fail with "email already registered" error. this is expected. the test will still work because it logs in with the existing user. to test fresh registration, use a unique email (e.g., `test2@example.com`, `test3@example.com`)
 
-### Testing New Security Fixes
-
 For detailed testing instructions on the latest security fixes (cookie defaults, CORS configuration, input length validation), see [`docs/TESTING_SECURITY_FIXES.md`](docs/TESTING_SECURITY_FIXES.md).
-
-### Testing Security Fixes
 
 **Test 1: Privilege Escalation Prevention**
 ```javascript
