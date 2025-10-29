@@ -335,7 +335,7 @@ WTF_CSRF_ENABLED=True
 })();
 ```
 
-**note:** on subsequent test runs, the register step will fail with "email already registered" error. this is expected. the test will still work because it logs in with the existing user. to test fresh registration, use a unique email (e.g., `test2@example.com`, `test3@example.com`).
+**note:** on subsequent test runs, the register step will fail with "email already registered" error. this is expected. the test will still work because it logs in with the existing user. to test fresh registration, use a unique email (e.g., `test2@example.com`, `test3@example.com`)
 
 ### Testing Security Fixes
 
