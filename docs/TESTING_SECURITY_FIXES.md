@@ -138,7 +138,7 @@ Visit http://localhost:5173 and run:
   });
   const { csrf_token } = await csrfResp.json();
 
-  const result = await fetch('http://localhost:5001/auth/register', {
+  const response = await fetch('http://localhost:5001/auth/register', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -149,10 +149,11 @@ Visit http://localhost:5173 and run:
       email: longEmail,
       password: 'SecurePass123'
     })
-  }).then(r => r.json());
-
-  console.log('Result:', result);
-  // Should show error about 254 character limit
+  });
+  
+  const result = await response.json();
+  console.log('Status:', response.status, 'Result:', result);
+  // Should show 400 status and error about 254 character limit
 })();
 ```
 
@@ -165,7 +166,7 @@ Visit http://localhost:5173 and run:
   });
   const { csrf_token } = await csrfResp.json();
 
-  const result = await fetch('http://localhost:5001/auth/register', {
+  const response = await fetch('http://localhost:5001/auth/register', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -176,10 +177,11 @@ Visit http://localhost:5173 and run:
       email: 'test@example.com',
       password: longPassword
     })
-  }).then(r => r.json());
-
-  console.log('Result:', result);
-  // Should show error about 128 character limit
+  });
+  
+  const result = await response.json();
+  console.log('Status:', response.status, 'Result:', result);
+  // Should show 400 status and error about 128 character limit
 })();
 ```
 
@@ -194,7 +196,7 @@ Visit http://localhost:5173 and run:
   });
   const { csrf_token } = await csrfResp.json();
 
-  const result = await fetch('http://localhost:5001/auth/register', {
+  const response = await fetch('http://localhost:5001/auth/register', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -205,9 +207,10 @@ Visit http://localhost:5173 and run:
       email: validLongEmail,
       password: 'SecurePass123'
     })
-  }).then(r => r.json());
-
-  console.log('Result:', result);
+  });
+  
+  const result = await response.json();
+  console.log('Status:', response.status, 'Result:', result);
   // Should succeed (201 Created)
 })();
 ```
@@ -221,7 +224,7 @@ Visit http://localhost:5173 and run:
   });
   const { csrf_token } = await csrfResp.json();
 
-  const result = await fetch('http://localhost:5001/auth/register', {
+  const response = await fetch('http://localhost:5001/auth/register', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -232,9 +235,10 @@ Visit http://localhost:5173 and run:
       email: 'another@example.com',
       password: validLongPassword
     })
-  }).then(r => r.json());
-
-  console.log('Result:', result);
+  });
+  
+  const result = await response.json();
+  console.log('Status:', response.status, 'Result:', result);
   // Should succeed (201 Created)
 })();
 ```
