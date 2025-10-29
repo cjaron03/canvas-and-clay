@@ -1,4 +1,7 @@
 #!/bin/bash
+# entrypoint script for backend container
+# automatically runs database migrations on startup
+
 set -e
 
 echo "waiting for database to be ready..."
@@ -17,3 +20,4 @@ flask db upgrade
 
 echo "starting flask application..."
 exec "$@"
+
