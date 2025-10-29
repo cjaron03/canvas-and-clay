@@ -14,8 +14,14 @@ from flask_limiter.util import get_remote_address
 load_dotenv()
 
 app = Flask(__name__)
+
+# CORS configuration - move to environment variable for production
+# supports multiple origins separated by commas (e.g., "http://localhost:5173,https://example.com")
+cors_origins_env = os.getenv('CORS_ORIGINS', 'http://localhost:5173')
+cors_origins = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
+
 CORS(app, 
-     origins=["http://localhost:5173"],
+     origins=cors_origins,
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "X-CSRFToken"],
      expose_headers=["Content-Type", "X-CSRFToken"],
@@ -27,20 +33,23 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Session security configuration
+# security: default to secure=true (HTTPS only), require explicit opt-out for local dev
+# set ALLOW_INSECURE_COOKIES=true in local dev environment only
+allow_insecure_cookies = os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+app.config['SESSION_COOKIE_SECURE'] = not allow_insecure_cookies
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 
 # Remember-Me configuration
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=14)
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
-app.config['REMEMBER_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+app.config['REMEMBER_COOKIE_SECURE'] = not allow_insecure_cookies
 
 # CSRF protection configuration
 app.config['WTF_CSRF_ENABLED'] = True
 app.config['WTF_CSRF_TIME_LIMIT'] = None  # token doesn't expire (session-based)
-app.config['WTF_CSRF_SSL_STRICT'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+app.config['WTF_CSRF_SSL_STRICT'] = not allow_insecure_cookies
 app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 # accept csrf token from header (for API requests) and form field (traditional forms)
 app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']
@@ -198,9 +207,27 @@ def ensure_bootstrap_admin():
         # this is expected during initial setup
         pass
 
+# startup validation - warn about insecure configuration
+def validate_security_config():
+    """validate security configuration and warn about potential issues."""
+    if app.config.get('TESTING', False):
+        return
+    
+    # warn if insecure cookies are allowed (should only be in local dev)
+    if allow_insecure_cookies:
+        print("warning: ALLOW_INSECURE_COOKIES is enabled - cookies will be sent over HTTP")
+        print("warning: this should only be used in local development, not in production")
+    
+    # warn if CORS origins include localhost (may indicate dev config in production)
+    localhost_origins = [origin for origin in cors_origins if 'localhost' in origin.lower()]
+    if localhost_origins and not allow_insecure_cookies:
+        print(f"warning: CORS origins include localhost: {localhost_origins}")
+        print("warning: ensure CORS_ORIGINS is configured correctly for production")
+
 # ensure bootstrap admin exists on startup (skip in test mode)
 if not app.config.get('TESTING', False):
     ensure_bootstrap_admin()
+    validate_security_config()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
