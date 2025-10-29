@@ -130,105 +130,113 @@ Expected response: `400 Bad Request` with error "Password must be no more than 1
 Visit http://localhost:5173 and run:
 
 ```javascript
-// Test email too long (255 chars)
-const longEmail = 'a'.repeat(245) + '@example.com';
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+// Test email too long (255 chars) - wrap in async IIFE for console
+(async () => {
+  const longEmail = 'a'.repeat(245) + '@example.com';
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-const result = await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({
-    email: longEmail,
-    password: 'SecurePass123'
-  })
-}).then(r => r.json());
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      email: longEmail,
+      password: 'SecurePass123'
+    })
+  }).then(r => r.json());
 
-console.log('Result:', result);
-// Should show error about 254 character limit
+  console.log('Result:', result);
+  // Should show error about 254 character limit
+})();
 ```
 
 ```javascript
-// Test password too long (129 chars)
-const longPassword = 'A' + 'a'.repeat(127) + '1';
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+// Test password too long (129 chars) - wrap in async IIFE for console
+(async () => {
+  const longPassword = 'A' + 'a'.repeat(127) + '1';
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-const result = await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({
-    email: 'test@example.com',
-    password: longPassword
-  })
-}).then(r => r.json());
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      email: 'test@example.com',
+      password: longPassword
+    })
+  }).then(r => r.json());
 
-console.log('Result:', result);
-// Should show error about 128 character limit
+  console.log('Result:', result);
+  // Should show error about 128 character limit
+})();
 ```
 
 **Test valid inputs (should work):**
 
 ```javascript
 // Valid email (254 chars exactly - should work)
-const validLongEmail = 'a'.repeat(244) + '@ex.co'; // 254 chars total
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+(async () => {
+  const validLongEmail = 'a'.repeat(244) + '@ex.co'; // 254 chars total
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-const result = await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({
-    email: validLongEmail,
-    password: 'SecurePass123'
-  })
-}).then(r => r.json());
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      email: validLongEmail,
+      password: 'SecurePass123'
+    })
+  }).then(r => r.json());
 
-console.log('Result:', result);
-// Should succeed (201 Created)
+  console.log('Result:', result);
+  // Should succeed (201 Created)
+})();
 ```
 
 ```javascript
 // Valid password (128 chars exactly - should work)
-const validLongPassword = 'A' + 'a'.repeat(125) + '1'; // 128 chars total
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+(async () => {
+  const validLongPassword = 'A' + 'a'.repeat(125) + '1'; // 128 chars total
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-const result = await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({
-    email: 'another@example.com',
-    password: validLongPassword
-  })
-}).then(r => r.json());
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      email: 'another@example.com',
+      password: validLongPassword
+    })
+  }).then(r => r.json());
 
-console.log('Result:', result);
-// Should succeed (201 Created)
+  console.log('Result:', result);
+  // Should succeed (201 Created)
+})();
 ```
 
 ## Running Specific Tests
