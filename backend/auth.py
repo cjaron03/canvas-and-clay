@@ -268,7 +268,10 @@ def clear_failed_login_attempts(email):
 
 def apply_rate_limit(func):
     """apply rate limiting decorator to login function."""
-    from app import limiter
+    from app import limiter, app
+    # only apply rate limiting if not in test mode
+    if app.config.get('TESTING', False):
+        return func
     return limiter.limit("5 per 15 minutes")(func)
 
 

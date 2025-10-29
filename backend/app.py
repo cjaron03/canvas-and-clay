@@ -59,7 +59,8 @@ limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
+    storage_uri="memory://",  # use in-memory storage (can be upgraded to Redis in production)
+    enabled=lambda: not app.config.get('TESTING', False)  # disable rate limiting in tests
 )
 
 # Return 401 instead of redirect for unauthorized API requests
