@@ -283,58 +283,62 @@ WTF_CSRF_ENABLED=True
 ```
 
 ```javascript
-// get csrf token first
 (async () => {
-const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-});
-const { csrf_token } = await csrfResp.json();
+  // get csrf token first
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-// register a new user (all users are created as 'visitor' role)
-await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
-}).then(r => r.json())
+  // register a new user (all users are created as 'visitor' role)
+  const registerResult = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  console.log('Register:', registerResult);
 
-// get fresh csrf token for login
-const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-}).then(r => r.json());
+  // get fresh csrf token for login
+  const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  }).then(r => r.json());
 
-// login
-await fetch('http://localhost:5001/auth/login', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': loginCsrf.csrf_token
-  },
-  credentials: 'include',
-  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
-}).then(r => r.json())
+  // login
+  const loginResult = await fetch('http://localhost:5001/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': loginCsrf.csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  console.log('Login:', loginResult);
 
-// access protected route (no csrf needed for get requests)
-await fetch('http://localhost:5001/auth/protected', {
-  credentials: 'include'
-}).then(r => r.json())
+  // access protected route (no csrf needed for get requests)
+  const protectedResult = await fetch('http://localhost:5001/auth/protected', {
+    credentials: 'include'
+  }).then(r => r.json());
+  console.log('Protected route:', protectedResult);
 
-// get fresh csrf token for logout
-const logoutCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
-  credentials: 'include'
-}).then(r => r.json());
+  // get fresh csrf token for logout
+  const logoutCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  }).then(r => r.json());
 
-// logout
-await fetch('http://localhost:5001/auth/logout', {
-  method: 'POST',
-  headers: {
-    'X-CSRFToken': logoutCsrf.csrf_token
-  },
-  credentials: 'include'
-}).then(r => r.json());
+  // logout
+  const logoutResult = await fetch('http://localhost:5001/auth/logout', {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': logoutCsrf.csrf_token
+    },
+    credentials: 'include'
+  }).then(r => r.json());
+  console.log('Logout:', logoutResult);
 })();
 ```
 
