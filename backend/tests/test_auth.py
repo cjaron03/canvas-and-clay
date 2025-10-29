@@ -10,7 +10,7 @@ def client():
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
-    # rate limiting is automatically disabled via TESTING config in app.py
+    app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
     
     with app.test_client(use_cookies=True) as client:
         with app.app_context():
@@ -27,7 +27,7 @@ def csrf_client():
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
-    # rate limiting is automatically disabled via TESTING config in app.py
+    app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
     
     with app.test_client(use_cookies=True) as client:
         with app.app_context():
