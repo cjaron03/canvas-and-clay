@@ -104,7 +104,7 @@ def register():
         400: Validation error or duplicate email
         415: Unsupported media type (missing Content-Type: application/json)
     """
-    db, bcrypt, User = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter = get_dependencies()
     
     data = request.get_json()
     
