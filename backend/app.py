@@ -8,6 +8,8 @@ from flask_login import LoginManager
 from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 load_dotenv()
 
@@ -52,15 +54,25 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
+# Initialize rate limiter
+# rate limiting can be disabled via limiter.enabled = False in tests
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
+)
+
 # Return 401 instead of redirect for unauthorized API requests
 @login_manager.unauthorized_handler
 def unauthorized():
     """Return 401 for unauthorized API requests instead of redirecting."""
     return jsonify({'error': 'Authentication required'}), 401
 
+
 # Initialize models
 from models import init_models
-User = init_models(db)
+User, FailedLoginAttempt, AuditLog = init_models(db)
 
 # User loader for Flask-Login
 @login_manager.user_loader

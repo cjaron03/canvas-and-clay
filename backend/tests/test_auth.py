@@ -10,8 +10,13 @@ def client():
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
+    app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
     
-    with app.test_client() as client:
+    # disable limiter if it exists
+    from app import limiter
+    limiter.enabled = False
+    
+    with app.test_client(use_cookies=True) as client:
         with app.app_context():
             db.create_all()
             yield client
@@ -26,8 +31,13 @@ def csrf_client():
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
+    app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
     
-    with app.test_client() as client:
+    # disable limiter if it exists
+    from app import limiter
+    limiter.enabled = False
+    
+    with app.test_client(use_cookies=True) as client:
         with app.app_context():
             db.create_all()
             yield client
@@ -181,6 +191,9 @@ class TestUserLogin:
         assert data['message'] == 'Login successful'
         assert data['user']['email'] == sample_user['email']
         assert data['user']['role'] == 'visitor'
+        
+        # verify session cookie is set
+        assert 'Set-Cookie' in response.headers or 'session' in str(response.headers)
     
     def test_login_with_remember_me(self, client, sample_user):
         """Test login with remember me option."""

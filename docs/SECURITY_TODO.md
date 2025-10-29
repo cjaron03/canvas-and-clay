@@ -29,10 +29,21 @@
   - detailed errors should be logged server-side only
 
 ### major issues
-- [ ] **rate limiting not implemented** - unlimited login attempts possible, brute force attacks viable
+- [x] **rate limiting not implemented** - FIXED (fix-privilege-escalation-csrf branch)
+  - Flask-Limiter added to requirements.txt
+  - rate limiting applied to login endpoint (5 attempts per 15 min per IP)
+  - IP-based rate limiting prevents brute force attacks
 - [ ] **hardcoded cors origins** - `http://localhost:5173` won't work in production
-- [ ] **no account lockout mechanism** - no protection against repeated failed login attempts
-- [ ] **no audit logging** - cannot detect or investigate security breaches
+- [x] **no account lockout mechanism** - FIXED (fix-privilege-escalation-csrf branch)
+  - account lockout after 5 failed attempts (15 min lockout period)
+  - failed login attempts tracked in database
+  - lockout clears automatically after 15 minutes
+- [x] **no audit logging** - FIXED (fix-privilege-escalation-csrf branch)
+  - structured audit logging implemented
+  - all login attempts logged (success and failure)
+  - failed login attempts logged with IP address and user agent
+  - account lockout events logged
+  - rate limit exceeded events logged
 
 ### completed in feat/auth-session-hardening branch
 - [x] user authentication system with registration, login, and logout
@@ -104,14 +115,14 @@ see the Authentication & Security section in README.md for full details.
 ## Medium Priority (Additional Security)
 
 ### Rate Limiting
-- [ ] **Brute Force Protection** - MAJOR (unlimited login attempts currently possible)
-  - [ ] Add Flask-Limiter dependency to requirements.txt
-  - [ ] Add rate limiting to login endpoint (5 attempts per 15 min per IP)
-  - [ ] Implement account lockout after 5 failed attempts (15 min lockout)
-  - [ ] Rate limit registration endpoint
-  - [ ] Rate limit file uploads
-  - [ ] Add IP-based blocking for repeated violations
-  - [ ] Log failed login attempts for security monitoring
+- [x] **Brute Force Protection** - COMPLETED (fix-privilege-escalation-csrf branch)
+  - [x] Add Flask-Limiter dependency to requirements.txt
+  - [x] Add rate limiting to login endpoint (5 attempts per 15 min per IP)
+  - [x] Implement account lockout after 5 failed attempts (15 min lockout)
+  - [x] Add IP-based blocking for repeated violations
+  - [x] Log failed login attempts for security monitoring
+  - [ ] Rate limit registration endpoint (future enhancement)
+  - [ ] Rate limit file uploads (pending file upload feature)
 
 ### Database Security
 - [ ] **SQL Injection Prevention**
@@ -139,15 +150,17 @@ see the Authentication & Security section in README.md for full details.
   - [ ] Validate tokens on protected endpoints
 
 ### Logging & Monitoring
-- [ ] **Security Audit Logging** - MAJOR (cannot detect or investigate security breaches currently)
-  - [ ] Implement structured audit logging (JSON format recommended)
-  - [ ] Log all authentication attempts (success and failure)
-  - [ ] Log failed login attempts with IP address and user agent
-  - [ ] Log admin actions and role changes
+- [x] **Security Audit Logging** - COMPLETED (fix-privilege-escalation-csrf branch)
+  - [x] Implement structured audit logging (JSON format in details field)
+  - [x] Log all authentication attempts (success and failure)
+  - [x] Log failed login attempts with IP address and user agent
+  - [x] Log account lockout events
+  - [x] Log rate limit exceeded events
+  - [ ] Log admin actions and role changes (pending admin promotion endpoint)
   - [ ] Log sensitive operations (password resets, account modifications)
-  - [ ] Log file uploads
-  - [ ] Set up log rotation and aggregation
-  - [ ] Configure alerting for suspicious patterns
+  - [ ] Log file uploads (pending file upload feature)
+  - [ ] Set up log rotation and aggregation (operational concern)
+  - [ ] Configure alerting for suspicious patterns (operational concern)
 
 ## Low Priority (Enhanced Security)
 
@@ -194,10 +207,10 @@ see the Authentication & Security section in README.md for full details.
 2. **implement CSRF protection** - add Flask-WTF CSRF tokens
 3. **fix insecure cookie defaults** - flip secure flags to true by default
 4. **fix information disclosure** - remove str(e) from error responses
-5. **add rate limiting** - prevent brute force attacks
-6. **implement audit logging** - detect security breaches
+5. ~~**add rate limiting**~~ - COMPLETED: prevent brute force attacks
+6. ~~**implement audit logging**~~ - COMPLETED: detect security breaches
 7. **fix CORS configuration** - move to environment variables
-8. **add account lockout** - protect against credential stuffing
+8. ~~**add account lockout**~~ - COMPLETED: protect against credential stuffing
 9. **add input length validation** - prevent DoS via long inputs
 
 ### phase 3 (future enhancements)

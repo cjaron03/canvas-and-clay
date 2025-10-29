@@ -1,9 +1,11 @@
 """Authentication blueprint for user registration, login, and logout."""
 import re
-from datetime import datetime, timezone
+import json as json_lib
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import generate_csrf
+from flask_limiter.util import get_remote_address
 from functools import wraps
 
 
@@ -12,8 +14,8 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
 def get_dependencies():
     """Get dependencies from app context to avoid circular imports."""
-    from app import db, bcrypt, User
-    return db, bcrypt, User
+    from app import db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter
+    return db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter
 
 
 def admin_required(f):
@@ -102,7 +104,7 @@ def register():
         400: Validation error or duplicate email
         415: Unsupported media type (missing Content-Type: application/json)
     """
-    db, bcrypt, User = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter = get_dependencies()
     
     data = request.get_json()
     
@@ -164,9 +166,131 @@ def register():
         return jsonify({'error': 'Failed to create user'}), 500
 
 
+def log_audit_event(event_type, user_id=None, email=None, details=None):
+    """log security audit event.
+    
+    Args:
+        event_type: Type of event (e.g., 'login_success', 'login_failure', 'account_locked')
+        user_id: ID of the user (optional)
+        email: Email address associated with the event (optional)
+        details: Additional details as dict (will be JSON serialized)
+    """
+    db, _, _, _, AuditLog, _ = get_dependencies()
+    
+    ip_address = get_remote_address()
+    user_agent = request.headers.get('User-Agent', '')
+    details_json = json_lib.dumps(details) if details else None
+    
+    audit_log = AuditLog(
+        event_type=event_type,
+        user_id=user_id,
+        email=email,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        details=details_json,
+        created_at=datetime.now(timezone.utc)
+    )
+    
+    try:
+        db.session.add(audit_log)
+        db.session.commit()
+    except Exception:
+        # silently fail audit logging to prevent breaking authentication flow
+        db.session.rollback()
+
+
+def check_account_locked(email):
+    """check if account is locked due to too many failed login attempts.
+    
+    Args:
+        email: Email address to check
+        
+    Returns:
+        tuple: (is_locked: bool, lockout_expires_at: datetime or None)
+    """
+    db, _, _, FailedLoginAttempt, _, _ = get_dependencies()
+    
+    # check failed attempts in last 15 minutes
+    lockout_window = datetime.now(timezone.utc) - timedelta(minutes=15)
+    recent_failures = FailedLoginAttempt.query.filter(
+        FailedLoginAttempt.email == email,
+        FailedLoginAttempt.attempted_at >= lockout_window
+    ).order_by(FailedLoginAttempt.attempted_at.desc()).all()
+    
+    if len(recent_failures) >= 5:
+        # account is locked - return lockout expiration (15 min from first failure in window)
+        first_failure = recent_failures[-1]
+        lockout_expires_at = first_failure.attempted_at + timedelta(minutes=15)
+        return True, lockout_expires_at
+    
+    return False, None
+
+
+def record_failed_login(email):
+    """record a failed login attempt.
+    
+    Args:
+        email: Email address that failed login
+    """
+    db, _, _, FailedLoginAttempt, _, _ = get_dependencies()
+    
+    ip_address = get_remote_address()
+    user_agent = request.headers.get('User-Agent', '')
+    
+    failed_attempt = FailedLoginAttempt(
+        email=email,
+        ip_address=ip_address,
+        attempted_at=datetime.now(timezone.utc),
+        user_agent=user_agent
+    )
+    
+    try:
+        db.session.add(failed_attempt)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def clear_failed_login_attempts(email):
+    """clear all failed login attempts for an email (on successful login).
+    
+    Args:
+        email: Email address to clear attempts for
+    """
+    db, _, _, FailedLoginAttempt, _, _ = get_dependencies()
+    
+    try:
+        FailedLoginAttempt.query.filter_by(email=email).delete()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def apply_rate_limit(func):
+    """apply rate limiting decorator to login function.
+    
+    in test mode, returns the function unchanged without applying rate limiting.
+    """
+    from app import limiter, app
+    
+    # only apply rate limiting if not in test mode
+    if app.config.get('TESTING', False):
+        # return function unchanged in test mode
+        return func
+    
+    # apply rate limiting decorator
+    return limiter.limit("5 per 15 minutes")(func)
+
+
 @auth_bp.route('/login', methods=['POST'])
+@apply_rate_limit
 def login():
     """Login with email and password.
+    
+    security features:
+    - rate limiting: 5 attempts per 15 minutes per IP address (applied via decorator)
+    - account lockout: 5 failed attempts per email = 15 minute lockout
+    - audit logging: all login attempts (success and failure) are logged
     
     Expected JSON body:
         {
@@ -177,12 +301,11 @@ def login():
         
     Returns:
         200: Login successful
+        429: Rate limit exceeded
         401: Invalid credentials
-        403: Account disabled
-    
-    TODO(security): Add Flask-Limiter for rate limiting to prevent brute force attacks
+        403: Account disabled or locked
     """
-    db, bcrypt, User = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter = get_dependencies()
     
     data = request.get_json()
     
@@ -197,26 +320,57 @@ def login():
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
     
+    # check account lockout (check before user lookup to prevent user enumeration)
+    is_locked, lockout_expires_at = check_account_locked(email)
+    if is_locked:
+        remaining_time = (lockout_expires_at - datetime.now(timezone.utc)).total_seconds()
+        log_audit_event('account_locked', email=email, details={
+            'lockout_expires_at': lockout_expires_at.isoformat(),
+            'remaining_seconds': int(remaining_time)
+        })
+        return jsonify({
+            'error': 'Account temporarily locked due to too many failed login attempts. Please try again later.'
+        }), 403
+    
     # Find user by email
     user = User.query.filter_by(email=email).first()
     
-    if not user:
+    # verify password (or return generic error if user doesn't exist)
+    password_valid = False
+    if user:
+        password_valid = bcrypt.check_password_hash(user.hashed_password, password)
+    
+    if not user or not password_valid:
+        # record failed login attempt
+        record_failed_login(email)
+        
+        # log failed login attempt
+        log_audit_event('login_failure', email=email, details={
+            'reason': 'invalid_credentials'
+        })
+        
         return jsonify({'error': 'Invalid email or password'}), 401
     
-    # Check if account is active
+    # check if account is active
     if not user.is_active:
+        log_audit_event('login_failure', user_id=user.id, email=email, details={
+            'reason': 'account_disabled'
+        })
         return jsonify({'error': 'Account is disabled'}), 403
     
-    # Verify password
-    if not bcrypt.check_password_hash(user.hashed_password, password):
-        return jsonify({'error': 'Invalid email or password'}), 401
+    # successful login - clear failed attempts and log success
+    clear_failed_login_attempts(email)
+    
+    log_audit_event('login_success', user_id=user.id, email=email, details={
+        'remember_me': remember
+    })
+    
+    # Login user with remember me option (must be called before session modification)
+    login_user(user, remember=remember)
     
     # Regenerate session to prevent session fixation attacks
     session.permanent = True
     session.modified = True
-    
-    # Login user with remember me option
-    login_user(user, remember=remember)
     
     return jsonify({
         'message': 'Login successful',
