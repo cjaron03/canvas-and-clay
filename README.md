@@ -353,7 +353,7 @@ await fetch('http://localhost:5001/auth/register', {
   },
   credentials: 'include',
   body: JSON.stringify({email: 'attacker@example.com', password: 'SecurePass123', role: 'admin'})
-}).then(r => r.json())
+}).then(r => r.json());
 ```
 
 **Test 2: Bootstrap Admin Login**
@@ -371,11 +371,11 @@ await fetch('http://localhost:5001/auth/login', {
   },
   credentials: 'include',
   body: JSON.stringify({email: 'admin@canvas-clay.local', password: 'ChangeMe123'})
-}).then(r => r.json())
+}).then(r => r.json());
 
 await fetch('http://localhost:5001/auth/admin-only', {
   credentials: 'include'
-}).then(r => r.json())
+}).then(r => r.json());
 ```
 
 **Test 3: CSRF Protection Enforcement**
@@ -387,7 +387,7 @@ await fetch('http://localhost:5001/auth/register', {
   },
   credentials: 'include',
   body: JSON.stringify({email: 'nocsrf@example.com', password: 'SecurePass123'})
-}).then(r => r.json())
+}).then(r => r.json());
 ```
 
 **Test 4: Admin-Only Route Access Control**
@@ -405,7 +405,7 @@ await fetch('http://localhost:5001/auth/register', {
   },
   credentials: 'include',
   body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
-}).then(r => r.json())
+}).then(r => r.json());
 
 const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
   credentials: 'include'
@@ -419,11 +419,11 @@ await fetch('http://localhost:5001/auth/login', {
   },
   credentials: 'include',
   body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
-}).then(r => r.json())
+}).then(r => r.json());
 
 await fetch('http://localhost:5001/auth/admin-only', {
   credentials: 'include'
-}).then(r => r.json())
+}).then(r => r.json());
 ```
 
 ## Project Structure
