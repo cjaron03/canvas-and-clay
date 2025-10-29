@@ -13,7 +13,7 @@ def init_models(database):
         database: SQLAlchemy database instance from Flask app
         
     Returns:
-        User model class
+        tuple: (User model class, FailedLoginAttempt model class, AuditLog model class)
     """
     class User(UserMixin, database.Model):
         """User model for authentication and authorization.
@@ -49,4 +49,52 @@ def init_models(database):
             """Check if user has admin role."""
             return self.role == 'admin'
     
-    return User
+    class FailedLoginAttempt(database.Model):
+        """Model to track failed login attempts for account lockout.
+        
+        Attributes:
+            id: Primary key
+            email: Email address that failed login
+            ip_address: IP address of the failed attempt
+            attempted_at: Timestamp of the failed attempt
+            user_agent: User agent string from the request
+        """
+        __tablename__ = 'failed_login_attempts'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        email = database.Column(database.String(120), nullable=False, index=True)
+        ip_address = database.Column(database.String(45), nullable=False, index=True)
+        attempted_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+        user_agent = database.Column(database.String(255), nullable=True)
+        
+        def __repr__(self):
+            return f'<FailedLoginAttempt {self.email}@{self.ip_address} at {self.attempted_at}>'
+    
+    class AuditLog(database.Model):
+        """Model for security audit logging.
+        
+        Attributes:
+            id: Primary key
+            event_type: Type of event (e.g., 'login_success', 'login_failure', 'account_locked')
+            user_id: ID of the user (nullable for failed logins with nonexistent users)
+            email: Email address associated with the event
+            ip_address: IP address of the request
+            user_agent: User agent string from the request
+            details: Additional details in JSON format
+            created_at: Timestamp of the event
+        """
+        __tablename__ = 'audit_logs'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        event_type = database.Column(database.String(50), nullable=False, index=True)
+        user_id = database.Column(database.Integer, nullable=True, index=True)
+        email = database.Column(database.String(120), nullable=True, index=True)
+        ip_address = database.Column(database.String(45), nullable=False, index=True)
+        user_agent = database.Column(database.String(255), nullable=True)
+        details = database.Column(database.Text, nullable=True)  # JSON string for additional details
+        created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+        
+        def __repr__(self):
+            return f'<AuditLog {self.event_type} for {self.email} at {self.created_at}>'
+    
+    return User, FailedLoginAttempt, AuditLog
