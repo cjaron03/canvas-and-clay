@@ -307,6 +307,7 @@ WTF_CSRF_ENABLED=True
 ```
 
 ```javascript
+<<<<<<< HEAD
 (async () => {
   const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
     credentials: 'include'
