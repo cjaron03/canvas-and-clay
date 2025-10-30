@@ -18,7 +18,3 @@ flake8==6.0.0
 # python-magic==0.4.27         # File type validation
 # Pillow==10.0.0               # Image validation and processing
 
-# TODO (MK)
-# add SQLAlchemy
-# psycopg
-# alembic

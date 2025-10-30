@@ -50,6 +50,10 @@ def unauthorized():
 from models import init_models
 User = init_models(db)
 
+# Initialize db tables
+from create_tbls import init_tables
+Artist, Artwork, Storage, FlatFile, WallSpace, Rack = init_tables(db)
+
 # User loader for Flask-Login
 @login_manager.user_loader
 def load_user(user_id):
