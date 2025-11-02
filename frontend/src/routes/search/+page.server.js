@@ -1,4 +1,4 @@
-import { PUBLIC_API_BASE_URL } from '$env/static/public';
+import { API_BASE_URL } from '$env/static/private';
 
 export const load = async ({ url, fetch }) => {
   const rawQuery = url.searchParams.get('q') ?? '';
@@ -10,7 +10,7 @@ export const load = async ({ url, fetch }) => {
 
   try {
     const response = await fetch(
-      `${PUBLIC_API_BASE_URL}/api/search?q=${encodeURIComponent(searchTerm)}`,
+      `${API_BASE_URL}/api/search?q=${encodeURIComponent(searchTerm)}`,
       {
         headers: {
           accept: 'application/json'
@@ -26,10 +26,10 @@ export const load = async ({ url, fetch }) => {
     const items = Array.isArray(data?.items) ? data.items : [];
 
     return { q: rawQuery, results: items, error: null };
+    
   } catch (err) {
       console.error('search load failed for', searchTerm, err);
       const message = err instanceof Error ? err.message : 'Unexpected error while performing search';
-
     return { q: rawQuery, results: [], error: message };
   }
 };
