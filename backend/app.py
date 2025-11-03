@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import os
 from datetime import timedelta, datetime, timezone
 from dotenv import load_dotenv
@@ -83,6 +83,10 @@ def unauthorized():
 from models import init_models
 User, FailedLoginAttempt, AuditLog = init_models(db)
 
+# Initialize db tables
+from create_tbls import init_tables
+Artist, Artwork, Storage, FlatFile, WallSpace, Rack = init_tables(db)
+
 # User loader for Flask-Login
 @login_manager.user_loader
 def load_user(user_id):
@@ -159,6 +163,136 @@ def api_hello():
         'message': 'Hello from Canvas and Clay!',
         'endpoint': '/api/hello',
         'method': 'GET'
+    })
+
+
+@app.route('/api/search')
+def api_search():
+    """Search across artworks, artists, and locations."""
+    raw_query = request.args.get('q', '', type=str)
+    query = raw_query.strip()
+
+    if not query:
+        return jsonify({
+            'query': raw_query,
+            'items': []
+        })
+
+    like_pattern = f"%{query}%"
+    items = []
+
+    try:
+        # Search artworks
+        artwork_rows = (
+            db.session.query(Artwork, Artist, Storage)
+            .join(Artist, Artwork.artist_id == Artist.artist_id)
+            .outerjoin(Storage, Artwork.storage_id == Storage.storage_id)
+            .filter(
+                db.or_(
+                    Artwork.artwork_ttl.ilike(like_pattern),
+                    Artwork.artwork_medium.ilike(like_pattern),
+                    Artist.artist_fname.ilike(like_pattern),
+                    Artist.artist_lname.ilike(like_pattern),
+                    Storage.storage_loc.ilike(like_pattern)
+                )
+            )
+            .order_by(Artwork.artwork_ttl.asc())
+            .limit(10)
+            .all()
+        )
+
+        for artwork, artist, storage in artwork_rows:
+            artist_name = " ".join(
+                part for part in [artist.artist_fname, artist.artist_lname] if part
+            ).strip() or artist.artist_fname or artist.artist_lname
+
+            location_payload = None
+            if storage:
+                location_payload = {
+                    'type': storage.storage_type,
+                    'id': storage.storage_id,
+                    'name': storage.storage_loc,
+                    'profile_url': f"/locations/{storage.storage_id}"
+                }
+
+            items.append({
+                'type': 'artwork',
+                'id': artwork.artwork_num,
+                'title': artwork.artwork_ttl,
+                'medium': artwork.artwork_medium,
+                'thumbnail': None,
+                'artist': {
+                    'id': artist.artist_id,
+                    'name': artist_name,
+                    'profile_url': f"/artists/{artist.artist_id}"
+                },
+                'location': location_payload,
+                'profile_url': f"/artworks/{artwork.artwork_num}"
+            })
+
+        # Search artists
+        artist_rows = (
+            Artist.query.filter(
+                db.or_(
+                    Artist.artist_fname.ilike(like_pattern),
+                    Artist.artist_lname.ilike(like_pattern),
+                    Artist.artist_email.ilike(like_pattern),
+                    Artist.artist_site.ilike(like_pattern)
+                )
+            )
+            .order_by(Artist.artist_fname.asc(), Artist.artist_lname.asc())
+            .limit(10)
+            .all()
+        )
+
+        for artist in artist_rows:
+            artist_name = " ".join(
+                part for part in [artist.artist_fname, artist.artist_lname] if part
+            ).strip() or artist.artist_fname or artist.artist_lname
+
+            items.append({
+                'type': 'artist',
+                'id': artist.artist_id,
+                'name': artist_name,
+                'email': artist.artist_email,
+                'site': artist.artist_site,
+                'profile_url': f"/artists/{artist.artist_id}"
+            })
+
+        # Search locations
+        storage_rows = (
+            Storage.query.filter(
+                db.or_(
+                    Storage.storage_loc.ilike(like_pattern),
+                    Storage.storage_type.ilike(like_pattern),
+                    Storage.storage_id.ilike(like_pattern)
+                )
+            )
+            .order_by(Storage.storage_loc.asc())
+            .limit(10)
+            .all()
+        )
+
+        for storage in storage_rows:
+            items.append({
+                'type': 'location',
+                'id': storage.storage_id,
+                'name': storage.storage_loc,
+                'storage_type': storage.storage_type,
+                'profile_url': f"/locations/{storage.storage_id}"
+            })
+
+    except Exception as exc:
+        app.logger.exception("Search failed for query '%s'", query)
+        return jsonify({
+            'query': raw_query,
+            'items': [],
+            'error': 'Search failed. Please try again later.'
+        }), 500
+
+    return jsonify({
+        'query': raw_query,
+        'items': items
     })
 
 # TODO(security, JC): Implement JWT token authentication for API endpoints (optional)
