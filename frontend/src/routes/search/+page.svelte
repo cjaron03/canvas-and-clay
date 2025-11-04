@@ -153,6 +153,39 @@ Renders the results based on Svelte template syntax + JS
             {/if}
           </div>
         </li>
+      {:else if item?.type === 'photo'}
+        <li>
+          <div aria-hidden="true">
+            {#if item?.thumbnail}
+              <img src={getThumbnailUrl(item.thumbnail)} alt={`Photo: ${item.filename ?? 'image'}`} />
+            {:else}
+              <div>No thumbnail</div>
+            {/if}
+          </div>
+          <div>
+            <strong>Photo:</strong> {item.filename}
+            {#if item?.orphaned}
+              <span class="orphaned-badge">(Not associated with artwork)</span>
+            {:else if item?.artwork}
+              <p>
+                Associated with artwork:
+                {#if item.artwork.profile_url}
+                  <a href={item.artwork.profile_url}>{item.artwork.title ?? item.artwork.id}</a>
+                {:else}
+                  <span>{item.artwork.title ?? item.artwork.id}</span>
+                {/if}
+              </p>
+            {/if}
+            {#if item?.url}
+              <p>
+                <a href={getThumbnailUrl(item.url)} target="_blank" rel="noopener noreferrer">View full size</a>
+              </p>
+            {/if}
+            {#if item?.width && item?.height}
+              <p class="photo-dimensions">{item.width} × {item.height} pixels</p>
+            {/if}
+          </div>
+        </li>
       {:else}
         <li>
           <pre>{JSON.stringify(item, null, 2)}</pre>

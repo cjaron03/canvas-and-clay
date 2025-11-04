@@ -298,6 +298,45 @@ def api_search():
                 'profile_url': f"/locations/{storage.storage_id}"
             })
 
+        # Search photos by filename
+        photo_rows = (
+            ArtworkPhoto.query.filter(
+                ArtworkPhoto.filename.ilike(like_pattern)
+            )
+            .order_by(ArtworkPhoto.uploaded_at.desc())
+            .limit(10)
+            .all()
+        )
+
+        for photo in photo_rows:
+            photo_item = {
+                'type': 'photo',
+                'id': photo.photo_id,
+                'filename': photo.filename,
+                'thumbnail': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+                'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+                'width': photo.width,
+                'height': photo.height,
+                'file_size': photo.file_size,
+                'uploaded_at': photo.uploaded_at.isoformat(),
+                'is_primary': photo.is_primary
+            }
+
+            # If photo is associated with an artwork, include artwork info
+            if photo.artwork_num:
+                artwork = Artwork.query.get(photo.artwork_num)
+                if artwork:
+                    photo_item['artwork'] = {
+                        'id': artwork.artwork_num,
+                        'title': artwork.artwork_ttl,
+                        'profile_url': f"/artworks/{artwork.artwork_num}"
+                    }
+            else:
+                # Orphaned photo - not associated with any artwork
+                photo_item['orphaned'] = True
+
+            items.append(photo_item)
+
     except Exception as exc:
         app.logger.exception("Search failed for query '%s'", query)
         return jsonify({
