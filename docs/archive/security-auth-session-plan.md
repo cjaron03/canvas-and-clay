@@ -1,5 +1,18 @@
 # Authentication & Session Hardening Plan
 
+**STATUS: COMPLETED - Archived October 27, 2025**
+
+all tasks in this plan have been successfully implemented and merged to main via the `feat/auth-session-hardening` branch. see `README.md` Authentication & Security section for documentation and `backend/tests/test_auth.py` for comprehensive test coverage.
+
+**note:** while the implementation is complete, security audit (in `docs/SECURITY_TODO.md`) identified critical vulnerabilities that need to be addressed before production deployment, including:
+- privilege escalation via self-service admin role assignment
+- missing csrf protection
+- insecure cookie defaults
+
+---
+
+## original plan
+
 Beginning from the latest `main` snapshot, use the steps below to implement two high-priority security items from `docs/SECURITY_TODO.md`.
 
 ## Branch Setup

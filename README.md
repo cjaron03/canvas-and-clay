@@ -29,6 +29,8 @@ Simple Architecture diagram should be added to '/docs/arch.png'
    cd infra
    docker compose up --build
    ```
+   
+   Database migrations will run automatically on startup.
 
 **Ports**
 - **Frontend**: http://localhost:5173
@@ -194,33 +196,95 @@ This project implements comprehensive authentication and session security.
 - Role-based access control for sensitive operations
 
 **API Endpoints:**
-- `POST /auth/register` - Create new user account
-- `POST /auth/login` - Authenticate and create session
-- `POST /auth/logout` - End session and clear cookies
+- `GET /auth/csrf-token` - Get CSRF token for frontend requests
+- `POST /auth/register` - Create new user account (requires CSRF token)
+- `POST /auth/login` - Authenticate and create session (requires CSRF token)
+- `POST /auth/logout` - End session and clear cookies (requires CSRF token)
 - `GET /auth/me` - Get current user info
 - `GET /auth/protected` - Example protected route
 - `GET /auth/admin-only` - Example admin-only route
+
+**CSRF Protection:**
+All POST/PUT/DELETE endpoints require a CSRF token. Frontend must:
+1. Fetch token from `GET /auth/csrf-token`
+2. Include token in subsequent requests via `X-CSRFToken` header
+
+Example:
+```javascript
+// fetch csrf token
+const csrfResponse = await fetch('http://localhost:5001/auth/csrf-token', {
+  credentials: 'include'
+});
+const { csrf_token } = await csrfResponse.json();
+
+// use token in request
+await fetch('http://localhost:5001/auth/register', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf_token
+  },
+  credentials: 'include',
+  body: JSON.stringify({email: 'user@example.com', password: 'SecurePass123'})
+});
+```
 
 ### Environment Configuration
 
 Create `backend/.env` from `backend/.env.example`:
 
 ```bash
-# Session Security Settings
-SESSION_COOKIE_SECURE=True  # Set to True in production with HTTPS
+# Session Security Settings (for local development)
+ALLOW_INSECURE_COOKIES=true  # Allow cookies over HTTP (set to false in production)
+
+# Bootstrap Admin Configuration
+BOOTSTRAP_ADMIN_EMAIL=admin@canvas-clay.local
+BOOTSTRAP_ADMIN_PASSWORD=ChangeMe123  # change immediately after first login
+
+# CORS Configuration (optional - defaults to http://localhost:5173)
+CORS_ORIGINS=http://localhost:5173,https://example.com
 ```
 
-For local development without HTTPS, set `SESSION_COOKIE_SECURE=False`.
+**Important Notes:**
+- For local development without HTTPS, set `ALLOW_INSECURE_COOKIES=true` in `.env`
+- Cookies default to `Secure=True` (HTTPS only) for production security
+- The bootstrap admin user is automatically created/promoted on application startup
+- All new user registrations are forced to 'visitor' role (security fix)
+- Admin role can only be granted by existing admins (future admin promotion endpoint)
+- CORS origins can be configured via `CORS_ORIGINS` env var (comma-separated for multiple origins)
+- Input length limits: email max 254 chars, password max 128 chars (DoS prevention)
 
 ### Database Migrations
 
-Initialize the database and apply migrations:
+**Automated Migrations (Docker):**
+
+When using Docker Compose, database migrations run automatically on container startup. No manual intervention required!
+
+**Manual Migration Commands:**
+
+If you need to run migrations manually or create new ones:
 
 ```bash
-# In backend directory or Docker container
-flask db init        # First time only
-flask db migrate -m "Add user model"
-flask db upgrade
+# Run migrations manually in running container
+docker exec canvas_backend flask db upgrade
+
+# Create a new migration after model changes
+docker exec canvas_backend flask db migrate -m "description of changes"
+
+# Check current migration status
+docker exec canvas_backend flask db current
+
+# Rollback last migration (if needed)
+docker exec canvas_backend flask db downgrade
+```
+
+**Without Docker (local development):**
+
+```bash
+# In backend directory
+flask db init        # first time only - creates migrations folder
+flask db migrate -m "add user model"  # generate migration after model changes
+flask db upgrade     # apply pending migrations
 ```
 
 ### Testing Authentication
@@ -233,42 +297,184 @@ pytest tests/test_auth.py -v
 ```
 
 Tests cover:
-- User registration validation
+- User registration validation (including input length limits)
 - Login/logout flows
-- Password security requirements
-- Session security (httponly, samesite)
+- Password security requirements (min 8, max 128 chars)
+- Email validation (max 254 chars)
+- Session security (httponly, samesite, secure flag)
 - RBAC (role-based access control)
 - Account status management
+- CSRF protection for state-changing endpoints
 
 **Manual testing from browser console** (visit http://localhost:5173 first):
 
+**Note:** CSRF protection is enabled by default. For local development, ensure `ALLOW_INSECURE_COOKIES=true` is set in `backend/.env` to allow cookies over HTTP.
+
 ```javascript
-// Register a new user
-await fetch('http://localhost:5001/auth/register', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  credentials: 'include',
-  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123', role: 'visitor'})
-}).then(r => r.json())
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
 
-// Login
-await fetch('http://localhost:5001/auth/login', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  credentials: 'include',
-  body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
-}).then(r => r.json())
+  const registerResult = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  console.log('Register:', registerResult);
 
-// Access protected route
-await fetch('http://localhost:5001/auth/protected', {
-  credentials: 'include'
-}).then(r => r.json())
+  const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  }).then(r => r.json());
 
-// Logout
-await fetch('http://localhost:5001/auth/logout', {
-  method: 'POST',
-  credentials: 'include'
-}).then(r => r.json())
+  const loginResult = await fetch('http://localhost:5001/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': loginCsrf.csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'test@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  console.log('Login:', loginResult);
+
+  const protectedResult = await fetch('http://localhost:5001/auth/protected', {
+    credentials: 'include'
+  }).then(r => r.json());
+  console.log('Protected route:', protectedResult);
+
+  const logoutCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  }).then(r => r.json());
+
+  const logoutResult = await fetch('http://localhost:5001/auth/logout', {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': logoutCsrf.csrf_token
+    },
+    credentials: 'include'
+  }).then(r => r.json());
+  console.log('Logout:', logoutResult);
+})();
+```
+
+**note:** on subsequent test runs, the register step will fail with "email already registered" error. this is expected. the test will still work because it logs in with the existing user. to test fresh registration, use a unique email (e.g., `test2@example.com`, `test3@example.com`)
+
+For detailed testing instructions on the latest security fixes (cookie defaults, CORS configuration, input length validation), see [`docs/TESTING_SECURITY_FIXES.md`](docs/TESTING_SECURITY_FIXES.md).
+
+**Test 1: Privilege Escalation Prevention**
+```javascript
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
+
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'attacker@example.com', password: 'SecurePass123', role: 'admin'})
+  }).then(r => r.json());
+  
+  console.log(result);
+})();
+```
+
+**Test 2: Bootstrap Admin Login**
+```javascript
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
+
+  const loginResult = await fetch('http://localhost:5001/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'admin@canvas-clay.local', password: 'ChangeMe123'})
+  }).then(r => r.json());
+  
+  console.log('Login:', loginResult);
+
+  const adminResult = await fetch('http://localhost:5001/auth/admin-only', {
+    credentials: 'include'
+  }).then(r => r.json());
+  
+  console.log('Admin route:', adminResult);
+})();
+```
+
+**Test 3: CSRF Protection Enforcement**
+```javascript
+(async () => {
+  const result = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'nocsrf@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  
+  console.log(result);
+})();
+```
+
+**Test 4: Admin-Only Route Access Control**
+```javascript
+(async () => {
+  const csrfResp = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  });
+  const { csrf_token } = await csrfResp.json();
+
+  const registerResult = await fetch('http://localhost:5001/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  
+  console.log('Register:', registerResult);
+
+  const loginCsrf = await fetch('http://localhost:5001/auth/csrf-token', {
+    credentials: 'include'
+  }).then(r => r.json());
+
+  const loginResult = await fetch('http://localhost:5001/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': loginCsrf.csrf_token
+    },
+    credentials: 'include',
+    body: JSON.stringify({email: 'visitor@example.com', password: 'SecurePass123'})
+  }).then(r => r.json());
+  
+  console.log('Login:', loginResult);
+
+  const adminResult = await fetch('http://localhost:5001/auth/admin-only', {
+    credentials: 'include'
+  }).then(r => r.json());
+  
+  console.log('Admin route (should fail):', adminResult);
+})();
 ```
 
 ## Project Structure

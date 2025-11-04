@@ -19,6 +19,7 @@ services:
       target: development  # Use development stage with all dependencies
       args:
         PUBLIC_API_BASE_URL: http://localhost:5001
+        API_BASE_URL: http://backend:5000
     container_name: canvas_frontend
     ports: 
       - "5173:5173"
@@ -29,6 +30,7 @@ services:
       - backend
     environment:
       - PUBLIC_API_BASE_URL=http://localhost:5001
+      - API_BASE_URL=http://backend:5000
 
   db:
     image: postgres:15

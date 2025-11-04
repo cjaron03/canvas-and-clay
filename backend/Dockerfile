@@ -48,7 +48,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Copy application code
 COPY . .
 
+
 EXPOSE 5000
+
 
 # Run Flask development server
 CMD ["python", "app.py"]
