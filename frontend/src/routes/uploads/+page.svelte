@@ -37,24 +37,24 @@
   });
 
   // Handle file selection for existing artwork
-  function handleFileSelect(event) {
+  const handleFileSelect = (event) => {
     selectedFiles = Array.from(event.target.files);
     uploadStatus = '';
     uploadError = '';
     uploadProgress = selectedFiles.map(() => ({ status: 'pending', message: '' }));
-  }
+  };
 
   // Handle file selection for orphaned photos
-  function handleOrphanedFileSelect(event) {
+  const handleOrphanedFileSelect = (event) => {
     orphanedFiles = Array.from(event.target.files);
     orphanedStatus = '';
     orphanedError = '';
     orphanedProgress = orphanedFiles.map(() => ({ status: 'pending', message: '' }));
     uploadedPhotoIds = [];
-  }
+  };
 
   // Upload photos to existing artwork
-  async function uploadToExistingArtwork() {
+  const uploadToExistingArtwork = async () => {
     if (!artworkId.trim()) {
       uploadError = 'Please enter an artwork ID';
       return;
@@ -95,7 +95,6 @@
         );
 
         if (response.ok) {
-          const data = await response.json();
           uploadProgress[i] = { status: 'success', message: 'Uploaded successfully!' };
         } else {
           // Handle authentication errors specially
@@ -104,12 +103,33 @@
               status: 'error',
               message: 'Not logged in. Please log in at /auth/login to upload photos.'
             };
+          } else if (response.status === 400) {
+            // CSRF or validation error
+            try {
+              const error = await response.json();
+              uploadProgress[i] = {
+                status: 'error',
+                message: error.error || 'Bad request - check CSRF token or file validation'
+              };
+            } catch {
+              uploadProgress[i] = {
+                status: 'error',
+                message: `Upload failed: HTTP ${response.status} - Possible CSRF token issue. Try refreshing the page.`
+              };
+            }
           } else {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-            uploadProgress[i] = {
-              status: 'error',
-              message: error.error || `Upload failed with status ${response.status}`
-            };
+            try {
+              const error = await response.json();
+              uploadProgress[i] = {
+                status: 'error',
+                message: error.error || `Upload failed with HTTP ${response.status}`
+              };
+            } catch {
+              uploadProgress[i] = {
+                status: 'error',
+                message: `Upload failed: HTTP ${response.status} - ${response.statusText || 'Server error'}`
+              };
+            }
           }
         }
       } catch (error) {
@@ -135,10 +155,10 @@
     } else {
       uploadStatus = 'Some uploads failed. Check the error message shown with each file above.';
     }
-  }
+  };
 
   // Upload orphaned photos
-  async function uploadOrphanedPhotos() {
+  const uploadOrphanedPhotos = async () => {
     if (orphanedFiles.length === 0) {
       orphanedError = 'Please select at least one photo';
       return;
@@ -183,12 +203,33 @@
               status: 'error',
               message: 'Not logged in. Please log in at /auth/login to upload photos.'
             };
+          } else if (response.status === 400) {
+            // CSRF or validation error
+            try {
+              const error = await response.json();
+              orphanedProgress[i] = {
+                status: 'error',
+                message: error.error || 'Bad request - check CSRF token or file validation'
+              };
+            } catch {
+              orphanedProgress[i] = {
+                status: 'error',
+                message: `Upload failed: HTTP ${response.status} - Possible CSRF token issue. Try refreshing the page.`
+              };
+            }
           } else {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-            orphanedProgress[i] = {
-              status: 'error',
-              message: error.error || `Upload failed with status ${response.status}`
-            };
+            try {
+              const error = await response.json();
+              orphanedProgress[i] = {
+                status: 'error',
+                message: error.error || `Upload failed with HTTP ${response.status}`
+              };
+            } catch {
+              orphanedProgress[i] = {
+                status: 'error',
+                message: `Upload failed: HTTP ${response.status} - ${response.statusText || 'Server error'}`
+              };
+            }
           }
         }
       } catch (error) {
@@ -212,7 +253,7 @@
     } else {
       orphanedStatus = 'Some uploads failed. Check the error message shown with each file above.';
     }
-  }
+  };
 </script>
 
 <h1>Upload Photos</h1>
