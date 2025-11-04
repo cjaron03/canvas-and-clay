@@ -102,7 +102,7 @@ def init_tables(db):
 
     class Rack(db.Model):
         """ Rack Model - subclass for Storage
-        
+
         Attributes:
             rack_id - primary key
             rack_num - number of rack
@@ -114,6 +114,44 @@ def init_tables(db):
                                                     primary_key=True)
         rack_num = db.Column(db.String(10), nullable=True)
 
-    return Artist, Artwork, Storage, FlatFile, WallSpace, Rack
+
+    class ArtworkPhoto(db.Model):
+        """ ArtworkPhoto Model for storing artwork photo metadata
+
+        Attributes:
+            photo_id - primary key (CHAR(8))
+            artwork_num - foreign key to artwork (nullable for orphaned photos)
+            filename - sanitized original filename
+            file_path - relative path to full-size image
+            thumbnail_path - relative path to thumbnail (200x200)
+            file_size - file size in bytes
+            mime_type - validated MIME type (image/jpeg, image/png, image/webp, image/avif)
+            width - image width in pixels
+            height - image height in pixels
+            uploaded_at - timestamp of upload
+            uploaded_by - foreign key to user who uploaded
+            is_primary - whether this is the primary photo for the artwork
+        """
+        __tablename__ = 'artwork_photos'
+        photo_id = db.Column(db.CHAR(8), primary_key=True)
+        artwork_num = db.Column(db.CHAR(8), db.ForeignKey('artwork.artwork_num',
+                                                          onupdate='CASCADE',
+                                                          ondelete='CASCADE'),
+                                                          nullable=True)
+        filename = db.Column(db.String(255), nullable=False)
+        file_path = db.Column(db.String(512), nullable=False)
+        thumbnail_path = db.Column(db.String(512), nullable=False)
+        file_size = db.Column(db.Integer, nullable=False)
+        mime_type = db.Column(db.String(50), nullable=False)
+        width = db.Column(db.Integer, nullable=False)
+        height = db.Column(db.Integer, nullable=False)
+        uploaded_at = db.Column(db.DateTime, nullable=False)
+        uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id',
+                                                          onupdate='CASCADE',
+                                                          ondelete='SET NULL'),
+                                                          nullable=True)
+        is_primary = db.Column(db.Boolean, default=False, nullable=False)
+
+    return Artist, Artwork, Storage, FlatFile, WallSpace, Rack, ArtworkPhoto
 
 

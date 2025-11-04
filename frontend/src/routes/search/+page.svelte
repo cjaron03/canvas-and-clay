@@ -1,6 +1,8 @@
  <!-- form taht implements server-side rendering -->
 
 <script>
+  import { PUBLIC_API_BASE_URL } from '$env/static/public';
+
   // data is exported from load() in` routes/search/+page.server.js
   export let data;
 
@@ -22,6 +24,15 @@
   const getArtworkHref = (item) => resolveHref(item, '/artworks');
   const getArtistHref = (item) => resolveHref(item, '/artists');
   const getLocationHref = (item) => resolveHref(item, '/locations');
+
+  // Helper to get full thumbnail URL
+  const getThumbnailUrl = (thumbnail) => {
+    if (!thumbnail) return null;
+    // If thumbnail is already a full URL, return as-is
+    if (thumbnail.startsWith('http')) return thumbnail;
+    // Otherwise prepend API base URL
+    return `${PUBLIC_API_BASE_URL}${thumbnail}`;
+  };
 </script>
 
 <h1>Search</h1>
@@ -51,7 +62,7 @@ Renders the results based on Svelte template syntax + JS
         <li>
           <div aria-hidden="true">
             {#if item?.thumbnail}
-              <img src={item.thumbnail} alt={`Thumbnail for ${item.title ?? 'artwork'}`} />
+              <img src={getThumbnailUrl(item.thumbnail)} alt={`Thumbnail for ${item.title ?? 'artwork'}`} />
             {:else}
               <div>No thumbnail</div>
             {/if}
