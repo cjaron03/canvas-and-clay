@@ -77,6 +77,9 @@ Renders the results based on Svelte template syntax + JS
                 {/if}
               </h2>
             {/if}
+            {#if item?.id}
+              <p class="artwork-id">ID: <code>{item.id}</code></p>
+            {/if}
             {#if item?.artist}
               <p>
                 Artist:
@@ -164,6 +167,9 @@ Renders the results based on Svelte template syntax + JS
           </div>
           <div>
             <strong>Photo:</strong> {item.filename}
+            {#if item?.id}
+              <p class="artwork-id">Photo ID: <code>{item.id}</code></p>
+            {/if}
             {#if item?.orphaned}
               <span class="orphaned-badge">(Not associated with artwork)</span>
             {:else if item?.artwork}
@@ -196,3 +202,21 @@ Renders the results based on Svelte template syntax + JS
 {:else if data.q?.trim()}
   <p>No results found.</p>
 {/if}
+
+<style>
+  .artwork-id {
+    font-size: 0.9rem;
+    color: #999;
+    margin: 0.25rem 0 0.5rem 0;
+  }
+
+  .artwork-id code {
+    background: #2a2a2a;
+    color: #5a9fd4;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    font-weight: bold;
+  }
+</style>

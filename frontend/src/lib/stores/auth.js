@@ -77,16 +77,22 @@ function createAuthStore() {
 
 		// Logout
 		async logout() {
-			let csrfToken;
-			update((state) => {
-				csrfToken = state.csrfToken;
-				return state;
-			});
-
 			try {
+				// Get a fresh CSRF token before logout
+				const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+					credentials: 'include'
+				});
+				let csrfToken = null;
+				if (csrfResponse.ok) {
+					const data = await csrfResponse.json();
+					csrfToken = data.csrf_token;
+				}
+
+				// Attempt logout with fresh token
 				await fetch(`${PUBLIC_API_BASE_URL}/auth/logout`, {
 					method: 'POST',
 					headers: {
+						'Content-Type': 'application/json',
 						'X-CSRFToken': csrfToken
 					},
 					credentials: 'include'
@@ -95,10 +101,11 @@ function createAuthStore() {
 				console.error('Logout failed:', error);
 			}
 
+			// Clear auth state regardless of logout success
 			set({
 				user: null,
 				isAuthenticated: false,
-				csrfToken
+				csrfToken: null
 			});
 
 			goto('/login');

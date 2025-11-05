@@ -44,6 +44,14 @@
     uploadProgress = selectedFiles.map(() => ({ status: 'pending', message: '' }));
   };
 
+  // Remove a file from the existing artwork upload queue
+  const removeFile = (index) => {
+    selectedFiles = selectedFiles.filter((_, i) => i !== index);
+    uploadProgress = uploadProgress.filter((_, i) => i !== index);
+    uploadStatus = '';
+    uploadError = '';
+  };
+
   // Handle file selection for orphaned photos
   const handleOrphanedFileSelect = (event) => {
     orphanedFiles = Array.from(event.target.files);
@@ -51,6 +59,14 @@
     orphanedError = '';
     orphanedProgress = orphanedFiles.map(() => ({ status: 'pending', message: '' }));
     uploadedPhotoIds = [];
+  };
+
+  // Remove a file from the orphaned photos upload queue
+  const removeOrphanedFile = (index) => {
+    orphanedFiles = orphanedFiles.filter((_, i) => i !== index);
+    orphanedProgress = orphanedProgress.filter((_, i) => i !== index);
+    orphanedStatus = '';
+    orphanedError = '';
   };
 
   // Upload photos to existing artwork
@@ -103,6 +119,20 @@
               status: 'error',
               message: 'Not logged in. Please log in at /auth/login to upload photos.'
             };
+          } else if (response.status === 409) {
+            // Duplicate file error
+            try {
+              const error = await response.json();
+              uploadProgress[i] = {
+                status: 'error',
+                message: error.error || 'Duplicate file - a photo with this filename already exists'
+              };
+            } catch {
+              uploadProgress[i] = {
+                status: 'error',
+                message: 'Duplicate file - a photo with this filename already exists'
+              };
+            }
           } else if (response.status === 400) {
             // CSRF or validation error
             try {
@@ -203,6 +233,20 @@
               status: 'error',
               message: 'Not logged in. Please log in at /auth/login to upload photos.'
             };
+          } else if (response.status === 409) {
+            // Duplicate file error
+            try {
+              const error = await response.json();
+              orphanedProgress[i] = {
+                status: 'error',
+                message: error.error || 'Duplicate file - a photo with this filename already exists'
+              };
+            } catch {
+              orphanedProgress[i] = {
+                status: 'error',
+                message: 'Duplicate file - a photo with this filename already exists'
+              };
+            }
           } else if (response.status === 400) {
             // CSRF or validation error
             try {
@@ -316,7 +360,19 @@
           <ul>
             {#each selectedFiles as file, index}
               <li>
-                <div class="file-info">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                <div class="file-item">
+                  <div class="file-info">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                  {#if !uploadProgress[index] || uploadProgress[index].status === 'pending'}
+                    <button
+                      type="button"
+                      class="remove-btn"
+                      on:click={() => removeFile(index)}
+                      title="Remove this file"
+                    >
+                      ✕
+                    </button>
+                  {/if}
+                </div>
                 {#if uploadProgress[index]}
                   <div class="status-{uploadProgress[index].status}">
                     {uploadProgress[index].message}
@@ -366,7 +422,19 @@
           <ul>
             {#each orphanedFiles as file, index}
               <li>
-                <div class="file-info">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                <div class="file-item">
+                  <div class="file-info">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                  {#if !orphanedProgress[index] || orphanedProgress[index].status === 'pending'}
+                    <button
+                      type="button"
+                      class="remove-btn"
+                      on:click={() => removeOrphanedFile(index)}
+                      title="Remove this file"
+                    >
+                      ✕
+                    </button>
+                  {/if}
+                </div>
                 {#if orphanedProgress[index]}
                   <div class="status-{orphanedProgress[index].status}">
                     {orphanedProgress[index].message}
@@ -512,9 +580,43 @@
     border-left: 3px solid #444;
   }
 
+  .file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+
   .file-info {
     color: #e0e0e0;
     margin-bottom: 0.25rem;
+    flex: 1;
+  }
+
+  .remove-btn {
+    background: #5a2d2d;
+    color: #d5a8a8;
+    border: none;
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    font-size: 1.25rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .remove-btn:hover {
+    background: #7a3d3d;
+    transform: scale(1.1);
+  }
+
+  .remove-btn:active {
+    transform: scale(0.95);
   }
 
   .status-message {

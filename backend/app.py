@@ -189,6 +189,7 @@ def api_search():
             .outerjoin(Storage, Artwork.storage_id == Storage.storage_id)
             .filter(
                 db.or_(
+                    Artwork.artwork_num.ilike(like_pattern),  # Search by artwork ID
                     Artwork.artwork_ttl.ilike(like_pattern),
                     Artwork.artwork_medium.ilike(like_pattern),
                     Artist.artist_fname.ilike(like_pattern),
@@ -298,10 +299,13 @@ def api_search():
                 'profile_url': f"/locations/{storage.storage_id}"
             })
 
-        # Search photos by filename
+        # Search photos by filename or photo ID
         photo_rows = (
             ArtworkPhoto.query.filter(
-                ArtworkPhoto.filename.ilike(like_pattern)
+                db.or_(
+                    ArtworkPhoto.filename.ilike(like_pattern),
+                    ArtworkPhoto.photo_id.ilike(like_pattern)
+                )
             )
             .order_by(ArtworkPhoto.uploaded_at.desc())
             .limit(10)
@@ -352,7 +356,7 @@ def api_search():
 
 
 # Photo Upload Endpoints
-from upload_utils import process_upload, FileValidationError, delete_photo_files
+from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
 from auth import admin_required
 
 
@@ -405,6 +409,14 @@ def upload_artwork_photo(artwork_id):
 
     # Read file data
     file_data = file.read()
+
+    # Check for duplicate filename
+    sanitized_name = sanitize_filename(file.filename)
+    existing_photo = ArtworkPhoto.query.filter_by(filename=sanitized_name).first()
+    if existing_photo:
+        return jsonify({
+            'error': f'A photo with the filename "{sanitized_name}" already exists (Photo ID: {existing_photo.photo_id})'
+        }), 409  # 409 Conflict
 
     try:
         # Process upload with full security validation
@@ -483,6 +495,14 @@ def upload_orphaned_photo():
         return jsonify({'error': 'No file selected'}), 400
 
     file_data = file.read()
+
+    # Check for duplicate filename
+    sanitized_name = sanitize_filename(file.filename)
+    existing_photo = ArtworkPhoto.query.filter_by(filename=sanitized_name).first()
+    if existing_photo:
+        return jsonify({
+            'error': f'A photo with the filename "{sanitized_name}" already exists (Photo ID: {existing_photo.photo_id})'
+        }), 409  # 409 Conflict
 
     try:
         photo_metadata = process_upload(file_data, file.filename)

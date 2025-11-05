@@ -194,12 +194,55 @@ def generate_unique_id():
     return secrets.token_hex(4).upper()
 
 
-def generate_thumbnail(image, thumbnail_path):
+def get_save_options(mime_type, is_thumbnail=False):
+    """Get format-specific save options for PIL Image.save().
+
+    Different image formats support different save parameters. This function
+    returns the appropriate options for each format to ensure reliable encoding.
+
+    Args:
+        mime_type: MIME type of the image (e.g., 'image/jpeg', 'image/png')
+        is_thumbnail: If True, use thumbnail-appropriate compression settings
+
+    Returns:
+        dict: Save options to pass to PIL Image.save() as **kwargs
+    """
+    if mime_type == 'image/jpeg':
+        # JPEG supports quality (1-100) and optimization
+        return {
+            'quality': 85 if is_thumbnail else 95,
+            'optimize': True,
+            'progressive': True,  # Progressive JPEG for better web performance
+        }
+    elif mime_type == 'image/png':
+        # PNG is lossless; no quality param, but supports compression level
+        return {
+            'optimize': True,
+            'compress_level': 9 if is_thumbnail else 6,  # 0-9, higher = smaller but slower
+        }
+    elif mime_type == 'image/webp':
+        # WebP supports quality (0-100, different scale than JPEG)
+        return {
+            'quality': 80 if is_thumbnail else 90,
+            'method': 6,  # 0-6, higher = better compression but slower
+        }
+    elif mime_type == 'image/avif':
+        # AVIF supports quality (0-100)
+        return {
+            'quality': 70 if is_thumbnail else 80,  # AVIF has excellent compression
+        }
+    else:
+        # Fallback for unknown types (shouldn't happen due to validation)
+        return {'optimize': True}
+
+
+def generate_thumbnail(image, thumbnail_path, mime_type):
     """Generate a thumbnail from an image.
 
     Args:
         image: PIL Image object
         thumbnail_path: Path to save the thumbnail
+        mime_type: MIME type of the image (for format-specific save options)
 
     Returns:
         tuple: (thumbnail_width, thumbnail_height)
@@ -210,15 +253,18 @@ def generate_thumbnail(image, thumbnail_path):
     # Use LANCZOS resampling for high-quality thumbnails
     thumbnail.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
 
-    # Convert RGBA to RGB if saving as JPEG
-    if thumbnail.mode == 'RGBA' and thumbnail_path.lower().endswith('.jpg'):
+    # Convert RGBA to RGB if saving as JPEG (JPEG doesn't support transparency)
+    if thumbnail.mode == 'RGBA' and mime_type == 'image/jpeg':
         # Create white background
         background = Image.new('RGB', thumbnail.size, (255, 255, 255))
         background.paste(thumbnail, mask=thumbnail.split()[3])  # Use alpha channel as mask
         thumbnail = background
 
-    # Save thumbnail with optimization
-    thumbnail.save(thumbnail_path, optimize=True, quality=85)
+    # Get format-specific save options
+    save_options = get_save_options(mime_type, is_thumbnail=True)
+
+    # Save thumbnail with format-appropriate options
+    thumbnail.save(thumbnail_path, **save_options)
 
     return thumbnail.size
 
@@ -300,17 +346,20 @@ def process_upload(file_data, original_filename):
 
     # Re-encode the image (strips EXIF and other metadata, prevents exploits)
     try:
-        # Convert RGBA to RGB if saving as JPEG
-        if image.mode == 'RGBA' and extension == '.jpg':
+        # Convert RGBA to RGB if saving as JPEG (JPEG doesn't support transparency)
+        if image.mode == 'RGBA' and mime_type == 'image/jpeg':
             background = Image.new('RGB', image.size, (255, 255, 255))
             background.paste(image, mask=image.split()[3])
             image = background
 
-        # Save re-encoded image
-        image.save(artwork_path, quality=95, optimize=True)
+        # Get format-specific save options
+        save_options = get_save_options(mime_type, is_thumbnail=False)
+
+        # Save re-encoded image with format-appropriate options
+        image.save(artwork_path, **save_options)
 
         # Generate thumbnail
-        thumbnail_size = generate_thumbnail(image, thumbnail_path)
+        thumbnail_size = generate_thumbnail(image, thumbnail_path, mime_type)
 
         # Get actual file size after re-encoding
         actual_file_size = os.path.getsize(artwork_path)
