@@ -3,7 +3,6 @@ services:
     build:
       context: ../backend
     container_name: canvas_backend
-    command: flask run --host=0.0.0.0 --port=5000
     ports: 
       - "5001:5000"
     env_file:
@@ -12,6 +11,8 @@ services:
       - ../backend:/app
     depends_on:
       - db
+    networks:
+      - default
 
   frontend: 
     build:
@@ -19,6 +20,7 @@ services:
       target: development  # Use development stage with all dependencies
       args:
         PUBLIC_API_BASE_URL: http://localhost:5001
+        API_BASE_URL: http://backend:5000
     container_name: canvas_frontend
     ports: 
       - "5173:5173"
@@ -29,6 +31,9 @@ services:
       - backend
     environment:
       - PUBLIC_API_BASE_URL=http://localhost:5001
+      - API_BASE_URL=http://backend:5000
+    networks:
+      - default
 
   db:
     image: postgres:15
@@ -41,6 +46,12 @@ services:
       - "5432:5432"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
 
 volumes:
   pgdata:

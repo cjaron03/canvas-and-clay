@@ -13,7 +13,7 @@ from example_data import artist_data, storage_data, artwork_data, flatfile_data,
 
 # revision identifiers, used by Alembic.
 revision = '3fdd405089a3'
-down_revision = 'd6c8e4bd5a0a'
+down_revision = 'b7f8a9c1d2e3'
 branch_labels = None
 depends_on = None
 
