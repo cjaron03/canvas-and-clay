@@ -18,6 +18,7 @@
 	<div class="nav-links">
 		<a href="/">home</a>
 		<a href="/search">search</a>
+		<a href="/artworks">artworks</a>
 		<a href="/uploads">uploads</a>
 	</div>
 	<div class="nav-auth">

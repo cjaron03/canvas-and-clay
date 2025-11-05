@@ -13,6 +13,12 @@
   let uploadError = '';
   let uploadProgress = [];
 
+  // Artwork selector state
+  let artworks = [];
+  let artworkSearch = '';
+  let showDropdown = false;
+  let isLoadingArtworks = false;
+
   // Orphaned photo upload state
   let orphanedFiles = [];
   let orphanedStatus = '';
@@ -34,7 +40,63 @@
     } catch (error) {
       console.error('Failed to fetch CSRF token:', error);
     }
+
+    // Load artworks for dropdown
+    await loadArtworks();
   });
+
+  // Load artworks from API
+  const loadArtworks = async () => {
+    isLoadingArtworks = true;
+    try {
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/artworks?per_page=100`,
+        {
+          credentials: 'include'
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        artworks = data.artworks || [];
+      }
+    } catch (error) {
+      console.error('Failed to load artworks:', error);
+    }
+    isLoadingArtworks = false;
+  };
+
+  // Filter artworks based on search
+  $: filteredArtworks = artworkSearch.trim()
+    ? artworks.filter(artwork => {
+        const searchLower = artworkSearch.toLowerCase();
+        return (
+          artwork.id.toLowerCase().includes(searchLower) ||
+          artwork.title.toLowerCase().includes(searchLower) ||
+          artwork.artist?.name.toLowerCase().includes(searchLower)
+        );
+      })
+    : artworks;
+
+  // Select artwork from dropdown
+  const selectArtwork = (artwork) => {
+    artworkId = artwork.id;
+    artworkSearch = `${artwork.id} - ${artwork.title}`;
+    showDropdown = false;
+  };
+
+  // Handle search input
+  const handleArtworkSearch = (event) => {
+    artworkSearch = event.target.value;
+    showDropdown = artworkSearch.length > 0;
+  };
+
+  // Handle search focus
+  const handleSearchFocus = () => {
+    if (artworkSearch.length > 0) {
+      showDropdown = true;
+    }
+  };
 
   // Handle file selection for existing artwork
   const handleFileSelect = (event) => {
@@ -323,15 +385,59 @@
     <p>Upload photos for an artwork that already exists in the database.</p>
 
     <form on:submit|preventDefault={uploadToExistingArtwork}>
+      <div class="form-group artwork-selector">
+        <label for="artwork-search">Search for Artwork</label>
+        <div class="search-wrapper">
+          <input
+            id="artwork-search"
+            type="text"
+            bind:value={artworkSearch}
+            on:input={handleArtworkSearch}
+            on:focus={handleSearchFocus}
+            placeholder="Search by ID, title, or artist name..."
+            autocomplete="off"
+          />
+          {#if showDropdown && filteredArtworks.length > 0}
+            <div class="dropdown">
+              {#each filteredArtworks.slice(0, 10) as artwork}
+                <button
+                  type="button"
+                  class="dropdown-item"
+                  on:click={() => selectArtwork(artwork)}
+                >
+                  <div class="artwork-option">
+                    <div class="artwork-id-option">
+                      <code>{artwork.id}</code>
+                    </div>
+                    <div class="artwork-title">{artwork.title}</div>
+                    <div class="artwork-artist">{artwork.artist?.name || 'Unknown Artist'}</div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        {#if isLoadingArtworks}
+          <small>Loading artworks...</small>
+        {:else if artworks.length === 0}
+          <small>No artworks found. <a href="/artworks">Browse artworks</a> or enter an ID manually below.</small>
+        {:else}
+          <small>{artworks.length} artworks available</small>
+        {/if}
+      </div>
+
       <div class="form-group">
-        <label for="artwork-id">Artwork ID</label>
+        <label for="artwork-id">Or Enter Artwork ID Manually</label>
         <input
           id="artwork-id"
           type="text"
           bind:value={artworkId}
-          placeholder="Enter artwork ID (e.g., A1234567)"
+          placeholder="Enter artwork ID (e.g., AW000001)"
           required
         />
+        {#if artworkId && !artworks.find(a => a.id === artworkId)}
+          <small class="warning">⚠ This artwork ID was not found in the list above</small>
+        {/if}
       </div>
 
       <div class="form-group">
@@ -686,5 +792,78 @@
     padding: 0.25rem 0.5rem;
     border-radius: 3px;
     font-family: monospace;
+  }
+
+  /* Artwork selector dropdown styles */
+  .artwork-selector {
+    position: relative;
+  }
+
+  .search-wrapper {
+    position: relative;
+  }
+
+  .dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 400px;
+    overflow-y: auto;
+    background: #1e1e1e;
+    border: 1px solid #5a9fd4;
+    border-radius: 4px;
+    margin-top: 0.25rem;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    z-index: 10;
+  }
+
+  .dropdown-item {
+    width: 100%;
+    padding: 0.75rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid #2a2a2a;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s;
+  }
+
+  .dropdown-item:hover {
+    background: #2a2a2a;
+  }
+
+  .dropdown-item:last-child {
+    border-bottom: none;
+  }
+
+  .artwork-option {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .artwork-id-option code {
+    background: #2a2a2a;
+    color: #5a9fd4;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.875rem;
+    font-weight: bold;
+  }
+
+  .artwork-title {
+    color: #e0e0e0;
+    font-weight: 500;
+  }
+
+  .artwork-artist {
+    color: #999;
+    font-size: 0.875rem;
+  }
+
+  .form-group small.warning {
+    color: #ff9800;
   }
 </style>
