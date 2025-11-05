@@ -210,7 +210,7 @@ class TestCreateArtwork:
         assert data['artwork']['title'] == 'New Artwork'
 
         # Verify audit log
-        audit = AuditLog.query.filter_by(action='artwork_created').first()
+        audit = AuditLog.query.filter_by(event_type='artwork_created').first()
         assert audit is not None
         assert audit.user_id == admin_user.id
 
@@ -282,9 +282,11 @@ class TestUpdateArtwork:
         assert data['artwork']['medium'] == 'Updated Medium'
 
         # Verify audit log
-        audit = AuditLog.query.filter_by(action='artwork_updated').first()
+        audit = AuditLog.query.filter_by(event_type='artwork_updated').first()
         assert audit is not None
-        assert 'title' in audit.details['changes']
+        import json
+        details = json.loads(audit.details)
+        assert 'title' in details['changes']
 
     def test_update_artwork_not_found(self, client, admin_user, test_data):
         """Test updating non-existent artwork."""
@@ -329,9 +331,11 @@ class TestDeleteArtwork:
         assert artwork is None
 
         # Verify audit log
-        audit = AuditLog.query.filter_by(action='artwork_deleted').first()
+        audit = AuditLog.query.filter_by(event_type='artwork_deleted').first()
         assert audit is not None
-        assert audit.details['artwork_id'] == 'AW000001'
+        import json
+        details = json.loads(audit.details)
+        assert details['artwork_id'] == 'AW000001'
 
     def test_delete_artwork_not_found(self, client, admin_user, test_data):
         """Test deleting non-existent artwork."""

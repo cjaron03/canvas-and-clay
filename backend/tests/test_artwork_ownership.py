@@ -432,8 +432,7 @@ class TestOrphanedPhotoUploads:
             json={'artwork_id': artwork_id}
         )
 
-        # Try to associate again
-        test_image.seek(0)
+        # Try to associate again (should fail)
         response = client.patch(
             f'/api/photos/{photo_id}/associate',
             json={'artwork_id': artwork_id}
