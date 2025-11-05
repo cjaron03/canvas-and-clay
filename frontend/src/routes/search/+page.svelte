@@ -1,6 +1,8 @@
  <!-- form taht implements server-side rendering -->
 
 <script>
+  import { PUBLIC_API_BASE_URL } from '$env/static/public';
+
   // data is exported from load() in` routes/search/+page.server.js
   export let data;
 
@@ -22,6 +24,15 @@
   const getArtworkHref = (item) => resolveHref(item, '/artworks');
   const getArtistHref = (item) => resolveHref(item, '/artists');
   const getLocationHref = (item) => resolveHref(item, '/locations');
+
+  // Helper to get full thumbnail URL
+  const getThumbnailUrl = (thumbnail) => {
+    if (!thumbnail) return null;
+    // If thumbnail is already a full URL, return as-is
+    if (thumbnail.startsWith('http')) return thumbnail;
+    // Otherwise prepend API base URL
+    return `${PUBLIC_API_BASE_URL}${thumbnail}`;
+  };
 </script>
 
 <h1>Search</h1>
@@ -51,7 +62,7 @@ Renders the results based on Svelte template syntax + JS
         <li>
           <div aria-hidden="true">
             {#if item?.thumbnail}
-              <img src={item.thumbnail} alt={`Thumbnail for ${item.title ?? 'artwork'}`} />
+              <img src={getThumbnailUrl(item.thumbnail)} alt={`Thumbnail for ${item.title ?? 'artwork'}`} />
             {:else}
               <div>No thumbnail</div>
             {/if}
@@ -65,6 +76,9 @@ Renders the results based on Svelte template syntax + JS
                   <span>{item.title}</span>
                 {/if}
               </h2>
+            {/if}
+            {#if item?.id}
+              <p class="artwork-id">ID: <code>{item.id}</code></p>
             {/if}
             {#if item?.artist}
               <p>
@@ -142,6 +156,42 @@ Renders the results based on Svelte template syntax + JS
             {/if}
           </div>
         </li>
+      {:else if item?.type === 'photo'}
+        <li>
+          <div aria-hidden="true">
+            {#if item?.thumbnail}
+              <img src={getThumbnailUrl(item.thumbnail)} alt={`Photo: ${item.filename ?? 'image'}`} />
+            {:else}
+              <div>No thumbnail</div>
+            {/if}
+          </div>
+          <div>
+            <strong>Photo:</strong> {item.filename}
+            {#if item?.id}
+              <p class="artwork-id">Photo ID: <code>{item.id}</code></p>
+            {/if}
+            {#if item?.orphaned}
+              <span class="orphaned-badge">(Not associated with artwork)</span>
+            {:else if item?.artwork}
+              <p>
+                Associated with artwork:
+                {#if item.artwork.profile_url}
+                  <a href={item.artwork.profile_url}>{item.artwork.title ?? item.artwork.id}</a>
+                {:else}
+                  <span>{item.artwork.title ?? item.artwork.id}</span>
+                {/if}
+              </p>
+            {/if}
+            {#if item?.url}
+              <p>
+                <a href={getThumbnailUrl(item.url)} target="_blank" rel="noopener noreferrer">View full size</a>
+              </p>
+            {/if}
+            {#if item?.width && item?.height}
+              <p class="photo-dimensions">{item.width} × {item.height} pixels</p>
+            {/if}
+          </div>
+        </li>
       {:else}
         <li>
           <pre>{JSON.stringify(item, null, 2)}</pre>
@@ -152,3 +202,21 @@ Renders the results based on Svelte template syntax + JS
 {:else if data.q?.trim()}
   <p>No results found.</p>
 {/if}
+
+<style>
+  .artwork-id {
+    font-size: 0.9rem;
+    color: #999;
+    margin: 0.25rem 0 0.5rem 0;
+  }
+
+  .artwork-id code {
+    background: #2a2a2a;
+    color: #5a9fd4;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    font-weight: bold;
+  }
+</style>

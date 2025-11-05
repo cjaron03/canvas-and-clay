@@ -15,6 +15,10 @@ def init_models(database):
     Returns:
         tuple: (User model class, FailedLoginAttempt model class, AuditLog model class)
     """
+    cached_models = getattr(init_models, "_models_cache", None)
+    if cached_models is not None:
+        return cached_models
+
     class User(UserMixin, database.Model):
         """User model for authentication and authorization.
         
@@ -97,4 +101,5 @@ def init_models(database):
         def __repr__(self):
             return f'<AuditLog {self.event_type} for {self.email} at {self.created_at}>'
     
-    return User, FailedLoginAttempt, AuditLog
+    init_models._models_cache = (User, FailedLoginAttempt, AuditLog)
+    return init_models._models_cache

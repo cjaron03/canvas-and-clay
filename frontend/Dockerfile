@@ -13,7 +13,9 @@ RUN --mount=type=cache,target=/root/.npm \
 
 # Set default API base URL for development
 ARG PUBLIC_API_BASE_URL=http://localhost:5001
+ARG API_BASE_URL=http://backend:5000
 ENV PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
+ENV API_BASE_URL=$API_BASE_URL
 
 EXPOSE 5173
 
@@ -37,7 +39,9 @@ COPY . .
 
 # Set default API base URL for build time
 ARG PUBLIC_API_BASE_URL=http://localhost:5001
+ARG API_BASE_URL=http://backend:5000
 ENV PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
+ENV API_BASE_URL=$API_BASE_URL
 
 # Build the application
 RUN npm run build
@@ -65,7 +69,9 @@ COPY src ./src
 
 # Set the API base URL for runtime
 ARG PUBLIC_API_BASE_URL=http://localhost:5001
+ARG API_BASE_URL=http://backend:5000
 ENV PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
+ENV API_BASE_URL=$API_BASE_URL
 
 EXPOSE 5173
 
