@@ -116,13 +116,13 @@ see the Authentication & Security section in README.md for full details.
   - [x] Implement length limits and character restrictions (email max 254, password max 128)
   - [x] Add email format validation
   
-- [ ] **File Upload Security**
-  - [ ] Whitelist allowed file types (jpg, png, gif)
-  - [ ] Validate file size limits (max 10MB)
-  - [ ] Check file headers, not just extensions
-  - [ ] Sanitize filenames to prevent path traversal
-  - [ ] Store files outside web root
-  - [ ] Implement virus scanning (optional: ClamAV integration)
+- [x] **File Upload Security** - COMPLETED
+  - [x] Whitelist allowed file types (JPG, PNG, WebP, AVIF)
+  - [x] Validate file size limits (max 10MB)
+  - [x] Check file headers via magic bytes, not just extensions
+  - [x] Sanitize filenames to prevent path traversal
+  - [x] Store files outside web root (in dedicated uploads directory)
+  - [ ] Implement virus scanning (optional: ClamAV integration) - Deferred for future enhancement
 
 ### Session & Cookie Security
 - [x] **Secure Session Configuration** - COMPLETED

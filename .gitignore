@@ -13,6 +13,10 @@ venv/
 infra/postgres_data/
 infra/test_postgres_data/
 
+# Uploaded files (keep .gitkeep)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
 # Testing files
 infra/cookies.txt
 infra/cookies2.txt
