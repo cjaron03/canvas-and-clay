@@ -1,10 +1,10 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 import os
 from datetime import timedelta, datetime, timezone
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from flask_login import LoginManager
+from flask_login import LoginManager, login_required, current_user
 from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
@@ -85,7 +85,8 @@ User, FailedLoginAttempt, AuditLog = init_models(db)
 
 # Initialize db tables
 from create_tbls import init_tables
-Artist, Artwork, Storage, FlatFile, WallSpace, Rack = init_tables(db)
+Artist, Artwork, Storage, FlatFile, WallSpace, Rack, ArtworkPhoto = init_tables(db)
+
 
 # User loader for Flask-Login
 @login_manager.user_loader
@@ -189,6 +190,7 @@ def api_search():
             .outerjoin(Storage, Artwork.storage_id == Storage.storage_id)
             .filter(
                 db.or_(
+                    Artwork.artwork_num.ilike(like_pattern),  # Search by artwork ID
                     Artwork.artwork_ttl.ilike(like_pattern),
                     Artwork.artwork_medium.ilike(like_pattern),
                     Artist.artist_fname.ilike(like_pattern),
@@ -215,12 +217,28 @@ def api_search():
                     'profile_url': f"/locations/{storage.storage_id}"
                 }
 
+            # Get primary photo or first photo for this artwork
+            primary_photo = ArtworkPhoto.query.filter_by(
+                artwork_num=artwork.artwork_num,
+                is_primary=True
+            ).first()
+
+            if not primary_photo:
+                # Fall back to most recent photo
+                primary_photo = ArtworkPhoto.query.filter_by(
+                    artwork_num=artwork.artwork_num
+                ).order_by(ArtworkPhoto.uploaded_at.desc()).first()
+
+            thumbnail_url = None
+            if primary_photo:
+                thumbnail_url = f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+
             items.append({
                 'type': 'artwork',
                 'id': artwork.artwork_num,
                 'title': artwork.artwork_ttl,
                 'medium': artwork.artwork_medium,
-                'thumbnail': None,
+                'thumbnail': thumbnail_url,
                 'artist': {
                     'id': artist.artist_id,
                     'name': artist_name,
@@ -282,6 +300,48 @@ def api_search():
                 'profile_url': f"/locations/{storage.storage_id}"
             })
 
+        # Search photos by filename or photo ID
+        photo_rows = (
+            ArtworkPhoto.query.filter(
+                db.or_(
+                    ArtworkPhoto.filename.ilike(like_pattern),
+                    ArtworkPhoto.photo_id.ilike(like_pattern)
+                )
+            )
+            .order_by(ArtworkPhoto.uploaded_at.desc())
+            .limit(10)
+            .all()
+        )
+
+        for photo in photo_rows:
+            photo_item = {
+                'type': 'photo',
+                'id': photo.photo_id,
+                'filename': photo.filename,
+                'thumbnail': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+                'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+                'width': photo.width,
+                'height': photo.height,
+                'file_size': photo.file_size,
+                'uploaded_at': photo.uploaded_at.isoformat(),
+                'is_primary': photo.is_primary
+            }
+
+            # If photo is associated with an artwork, include artwork info
+            if photo.artwork_num:
+                artwork = Artwork.query.get(photo.artwork_num)
+                if artwork:
+                    photo_item['artwork'] = {
+                        'id': artwork.artwork_num,
+                        'title': artwork.artwork_ttl,
+                        'profile_url': f"/artworks/{artwork.artwork_num}"
+                    }
+            else:
+                # Orphaned photo - not associated with any artwork
+                photo_item['orphaned'] = True
+
+            items.append(photo_item)
+
     except Exception as exc:
         app.logger.exception("Search failed for query '%s'", query)
         return jsonify({
@@ -295,8 +355,418 @@ def api_search():
         'items': items
     })
 
+
+# Photo Upload Endpoints
+from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
+from auth import admin_required
+
+
+@app.route('/api/artworks/<artwork_id>/photos', methods=['POST'])
+@login_required
+@limiter.limit("20 per minute")
+def upload_artwork_photo(artwork_id):
+    """Upload a photo for an existing artwork.
+
+    Security:
+        - Requires authentication
+        - User must own the artwork OR be admin
+        - Validates file type using magic bytes
+        - Sanitizes filename
+        - Validates file size (max 10MB)
+        - Re-encodes image to strip metadata
+        - Generates thumbnail
+
+    Args:
+        artwork_id: The artwork ID to attach the photo to
+
+    Request:
+        - multipart/form-data with 'photo' file field
+        - Optional 'is_primary' boolean field
+
+    Returns:
+        201: Photo uploaded successfully with metadata
+        400: Validation error
+        403: Permission denied
+        404: Artwork not found
+    """
+    # Verify artwork exists
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    # Check permissions (admin or artwork owner)
+    if not current_user.is_admin:
+        # Get the artist associated with this artwork
+        artist = Artist.query.get(artwork.artist_id)
+        if not artist:
+            return jsonify({'error': 'Artist not found for this artwork'}), 404
+
+        # If artist has no user_id, fall back to admin-only access (secure default)
+        if not artist.user_id:
+            return jsonify({
+                'error': 'This artwork is not linked to a user account. Only admins can upload photos. Please contact an administrator.'
+            }), 403
+
+        # Check if current user owns this artist
+        if artist.user_id != current_user.id:
+            return jsonify({
+                'error': 'You do not have permission to upload photos for this artwork'
+            }), 403
+
+    # Get uploaded file
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No photo file provided'}), 400
+
+    file = request.files['photo']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    # Read file data
+    file_data = file.read()
+
+    # Check for duplicate filename
+    sanitized_name = sanitize_filename(file.filename)
+    existing_photo = ArtworkPhoto.query.filter_by(filename=sanitized_name).first()
+    if existing_photo:
+        return jsonify({
+            'error': f'A photo with the filename "{sanitized_name}" already exists (Photo ID: {existing_photo.photo_id})'
+        }), 409  # 409 Conflict
+
+    try:
+        # Process upload with full security validation
+        photo_metadata = process_upload(file_data, file.filename)
+
+        # Check if this should be the primary photo
+        is_primary = request.form.get('is_primary', 'false').lower() == 'true'
+
+        # If setting as primary, unset other primary photos for this artwork
+        if is_primary:
+            ArtworkPhoto.query.filter_by(
+                artwork_num=artwork_id,
+                is_primary=True
+            ).update({'is_primary': False})
+
+        # Create database record
+        photo = ArtworkPhoto(
+            photo_id=photo_metadata['photo_id'],
+            artwork_num=artwork_id,
+            filename=photo_metadata['filename'],
+            file_path=photo_metadata['file_path'],
+            thumbnail_path=photo_metadata['thumbnail_path'],
+            file_size=photo_metadata['file_size'],
+            mime_type=photo_metadata['mime_type'],
+            width=photo_metadata['width'],
+            height=photo_metadata['height'],
+            uploaded_at=datetime.now(timezone.utc),
+            uploaded_by=current_user.id,
+            is_primary=is_primary
+        )
+
+        db.session.add(photo)
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Photo uploaded successfully',
+            'photo': {
+                'id': photo.photo_id,
+                'filename': photo.filename,
+                'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+                'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+                'width': photo.width,
+                'height': photo.height,
+                'file_size': photo.file_size,
+                'is_primary': photo.is_primary
+            }
+        }), 201
+
+    except FileValidationError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        app.logger.exception("Photo upload failed")
+        return jsonify({'error': 'Upload failed. Please try again.'}), 500
+
+
+@app.route('/api/photos', methods=['POST'])
+@login_required
+@limiter.limit("20 per minute")
+def upload_orphaned_photo():
+    """Upload a photo without associating it to an artwork (orphaned).
+
+    This is useful for uploading photos before creating the artwork record.
+    Photos can be associated later when creating/updating artwork.
+
+    Security: Same as upload_artwork_photo
+
+    Returns:
+        201: Photo uploaded successfully
+        400: Validation error
+    """
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No photo file provided'}), 400
+
+    file = request.files['photo']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    file_data = file.read()
+
+    # Check for duplicate filename
+    sanitized_name = sanitize_filename(file.filename)
+    existing_photo = ArtworkPhoto.query.filter_by(filename=sanitized_name).first()
+    if existing_photo:
+        return jsonify({
+            'error': f'A photo with the filename "{sanitized_name}" already exists (Photo ID: {existing_photo.photo_id})'
+        }), 409  # 409 Conflict
+
+    try:
+        photo_metadata = process_upload(file_data, file.filename)
+
+        # Create orphaned photo record (artwork_num is NULL)
+        photo = ArtworkPhoto(
+            photo_id=photo_metadata['photo_id'],
+            artwork_num=None,  # Orphaned
+            filename=photo_metadata['filename'],
+            file_path=photo_metadata['file_path'],
+            thumbnail_path=photo_metadata['thumbnail_path'],
+            file_size=photo_metadata['file_size'],
+            mime_type=photo_metadata['mime_type'],
+            width=photo_metadata['width'],
+            height=photo_metadata['height'],
+            uploaded_at=datetime.now(timezone.utc),
+            uploaded_by=current_user.id,
+            is_primary=False
+        )
+
+        db.session.add(photo)
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Photo uploaded successfully',
+            'photo': {
+                'id': photo.photo_id,
+                'filename': photo.filename,
+                'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+                'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+                'width': photo.width,
+                'height': photo.height,
+                'file_size': photo.file_size
+            }
+        }), 201
+
+    except FileValidationError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        app.logger.exception("Photo upload failed")
+        return jsonify({'error': 'Upload failed. Please try again.'}), 500
+
+
+@app.route('/api/artworks/<artwork_id>/photos', methods=['GET'])
+def get_artwork_photos(artwork_id):
+    """Get all photos for an artwork.
+
+    Args:
+        artwork_id: The artwork ID
+
+    Returns:
+        200: List of photos
+        404: Artwork not found
+    """
+    # Verify artwork exists
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    # Get all photos for this artwork
+    photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).order_by(
+        ArtworkPhoto.is_primary.desc(),
+        ArtworkPhoto.uploaded_at.desc()
+    ).all()
+
+    return jsonify({
+        'artwork_id': artwork_id,
+        'photos': [{
+            'id': photo.photo_id,
+            'filename': photo.filename,
+            'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+            'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+            'width': photo.width,
+            'height': photo.height,
+            'file_size': photo.file_size,
+            'is_primary': photo.is_primary,
+            'uploaded_at': photo.uploaded_at.isoformat()
+        } for photo in photos]
+    })
+
+
+@app.route('/api/photos/<photo_id>', methods=['DELETE'])
+@login_required
+@limiter.limit("20 per minute")
+def delete_photo(photo_id):
+    """Delete a photo.
+
+    Security:
+        - Requires authentication
+        - User must own the photo OR be admin
+
+    Args:
+        photo_id: The photo ID to delete
+
+    Returns:
+        200: Photo deleted successfully
+        403: Permission denied
+        404: Photo not found
+    """
+    photo = ArtworkPhoto.query.get(photo_id)
+    if not photo:
+        return jsonify({'error': 'Photo not found'}), 404
+
+    # Check permissions
+    if not current_user.is_admin and photo.uploaded_by != current_user.id:
+        return jsonify({'error': 'Permission denied'}), 403
+
+    # Delete files from filesystem
+    delete_photo_files(photo.file_path, photo.thumbnail_path)
+
+    # Delete database record
+    db.session.delete(photo)
+    db.session.commit()
+
+    return jsonify({'message': 'Photo deleted successfully'})
+
+
+# Admin Management Endpoints
+
+@app.route('/api/admin/artists/<artist_id>/assign-user', methods=['POST'])
+@login_required
+@admin_required
+def assign_artist_to_user(artist_id):
+    """Admin endpoint to link an artist to a user account.
+
+    This enables ownership enforcement for artwork photo uploads.
+    Only admins can assign artists to users.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+
+    Args:
+        artist_id: The artist ID to link
+
+    Request Body:
+        user_id: The user ID to link to this artist
+
+    Returns:
+        200: Artist linked successfully
+        400: Invalid request
+        403: Permission denied
+        404: Artist or user not found
+    """
+    data = request.get_json()
+    if not data or 'user_id' not in data:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    user_id = data.get('user_id')
+
+    # Verify artist exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    # Verify user exists
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    # Link artist to user
+    artist.user_id = user_id
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Artist {artist_id} successfully linked to user {user.email}',
+        'artist': {
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'email': artist.artist_email
+        },
+        'user': {
+            'id': user.id,
+            'email': user.email
+        }
+    })
+
+
+@app.route('/api/admin/artists/<artist_id>/unassign-user', methods=['POST'])
+@login_required
+@admin_required
+def unassign_artist_from_user(artist_id):
+    """Admin endpoint to unlink an artist from their user account.
+
+    This reverts to admin-only photo uploads for this artist's artworks.
+    Only admins can unassign artists from users.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+
+    Args:
+        artist_id: The artist ID to unlink
+
+    Returns:
+        200: Artist unlinked successfully
+        403: Permission denied
+        404: Artist not found
+    """
+    # Verify artist exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    # Unlink artist from user
+    old_user_id = artist.user_id
+    artist.user_id = None
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Artist {artist_id} successfully unlinked from user account',
+        'artist': {
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'previous_user_id': old_user_id
+        }
+    })
+
+
+@app.route('/uploads/<path:filename>')
+def serve_upload(filename):
+    """Serve uploaded files securely.
+
+    Security:
+        - Prevents directory traversal (send_from_directory handles this)
+        - Only serves files from uploads directory
+        - Sets proper Content-Type headers
+
+    Args:
+        filename: Path to the file (e.g., "artworks/photo.jpg" or "thumbnails/thumb.jpg")
+
+    Returns:
+        File contents or 404
+    """
+    try:
+        # Additional security check for path traversal attempts
+        if '..' in filename or filename.startswith('/'):
+            return jsonify({'error': 'Invalid file path'}), 400
+
+        # Construct full path to uploads directory
+        upload_dir = os.path.join(os.path.dirname(__file__), 'uploads')
+
+        # send_from_directory already prevents directory traversal
+        return send_from_directory(upload_dir, filename)
+
+    except FileNotFoundError:
+        return jsonify({'error': 'File not found'}), 404
+
+
 # TODO(security, JC): Implement JWT token authentication for API endpoints (optional)
-# TODO(security, JC): Add file upload endpoint with security checks (file type, size, virus scan)
 
 def ensure_bootstrap_admin():
     """ensure the bootstrap admin user exists and has admin role.
