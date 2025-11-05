@@ -7,7 +7,7 @@
 def init_tables(db):
     class Artist(db.Model):
         """ Artist model holding artist information
-            
+
         Attributes:
             artist_id - primary key
             artist_fname - artist first name
@@ -16,6 +16,7 @@ def init_tables(db):
             artist_site  - artist website or social media
             artist_bio - artist biography/description
             artist_phone - artist phone number
+            user_id - foreign key to users table for ownership (nullable)
         """
         __tablename__ = 'artist'
         artist_id = db.Column(db.CHAR(8), primary_key=True)
@@ -25,6 +26,10 @@ def init_tables(db):
         artist_site = db.Column(db.String(100), nullable=True)
         artist_bio = db.Column(db.String(800), nullable=True)
         artist_phone = db.Column(db.CHAR(14), nullable=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('users.id',
+                                                      onupdate='CASCADE',
+                                                      ondelete='SET NULL'),
+                                                      nullable=True)
 
 
     class Artwork(db.Model):

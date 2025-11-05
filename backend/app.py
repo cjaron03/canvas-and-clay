@@ -394,10 +394,23 @@ def upload_artwork_photo(artwork_id):
         return jsonify({'error': 'Artwork not found'}), 404
 
     # Check permissions (admin or artwork owner)
-    # For now, allow any authenticated user - can add ownership check later
     if not current_user.is_admin:
-        # TODO: Add ownership check when we have artist-user relationships
-        pass
+        # Get the artist associated with this artwork
+        artist = Artist.query.get(artwork.artist_id)
+        if not artist:
+            return jsonify({'error': 'Artist not found for this artwork'}), 404
+
+        # If artist has no user_id, fall back to admin-only access (secure default)
+        if not artist.user_id:
+            return jsonify({
+                'error': 'This artwork is not linked to a user account. Only admins can upload photos. Please contact an administrator.'
+            }), 403
+
+        # Check if current user owns this artist
+        if artist.user_id != current_user.id:
+            return jsonify({
+                'error': 'You do not have permission to upload photos for this artwork'
+            }), 403
 
     # Get uploaded file
     if 'photo' not in request.files:
@@ -618,6 +631,108 @@ def delete_photo(photo_id):
     db.session.commit()
 
     return jsonify({'message': 'Photo deleted successfully'})
+
+
+# Admin Management Endpoints
+
+@app.route('/api/admin/artists/<artist_id>/assign-user', methods=['POST'])
+@login_required
+@admin_required
+def assign_artist_to_user(artist_id):
+    """Admin endpoint to link an artist to a user account.
+
+    This enables ownership enforcement for artwork photo uploads.
+    Only admins can assign artists to users.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+
+    Args:
+        artist_id: The artist ID to link
+
+    Request Body:
+        user_id: The user ID to link to this artist
+
+    Returns:
+        200: Artist linked successfully
+        400: Invalid request
+        403: Permission denied
+        404: Artist or user not found
+    """
+    data = request.get_json()
+    if not data or 'user_id' not in data:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    user_id = data.get('user_id')
+
+    # Verify artist exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    # Verify user exists
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    # Link artist to user
+    artist.user_id = user_id
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Artist {artist_id} successfully linked to user {user.email}',
+        'artist': {
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'email': artist.artist_email
+        },
+        'user': {
+            'id': user.id,
+            'email': user.email
+        }
+    })
+
+
+@app.route('/api/admin/artists/<artist_id>/unassign-user', methods=['POST'])
+@login_required
+@admin_required
+def unassign_artist_from_user(artist_id):
+    """Admin endpoint to unlink an artist from their user account.
+
+    This reverts to admin-only photo uploads for this artist's artworks.
+    Only admins can unassign artists from users.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+
+    Args:
+        artist_id: The artist ID to unlink
+
+    Returns:
+        200: Artist unlinked successfully
+        403: Permission denied
+        404: Artist not found
+    """
+    # Verify artist exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    # Unlink artist from user
+    old_user_id = artist.user_id
+    artist.user_id = None
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Artist {artist_id} successfully unlinked from user account',
+        'artist': {
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'previous_user_id': old_user_id
+        }
+    })
 
 
 @app.route('/uploads/<path:filename>')
