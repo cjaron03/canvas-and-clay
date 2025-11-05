@@ -3,7 +3,7 @@ import pytest
 import io
 from PIL import Image
 import json
-from app import app, db
+from app import app, db, User, Artist, Artwork, Storage
 
 
 @pytest.fixture
@@ -54,8 +54,6 @@ def admin_user(client):
     })
 
     # Promote the user to admin since registration always defaults to visitor
-    from models import init_models
-    User, _, _ = init_models(db)
     user = User.query.filter_by(email='admin@test.com').first()
     if user:
         user.role = 'admin'
@@ -86,12 +84,6 @@ def regular_user(client):
 @pytest.fixture
 def artist_and_artwork(client):
     """Create test artist and artwork."""
-    from create_tbls import init_tables
-
-    Artist, Artwork, Storage, _, _, _, _ = init_tables(db)
-    # ensure tables exist for the newly defined models
-    db.create_all()
-
     # Create storage location first
     storage = Storage(
         storage_id='TST0001',
@@ -109,6 +101,9 @@ def artist_and_artwork(client):
         user_id=None
     )
     db.session.add(artist)
+
+    # Flush so storage and artist rows exist before inserting artwork (FK safety)
+    db.session.flush()
 
     # Create artwork
     artwork = Artwork(
@@ -160,12 +155,6 @@ class TestArtworkOwnership:
 
     def test_owner_can_upload_to_linked_artwork(self, client, regular_user, artist_and_artwork, test_image):
         """Test that artist owner can upload photos to their own artworks."""
-        from create_tbls import init_tables
-        from models import init_models
-
-        User, _, _ = init_models(db)
-        Artist, _, _, _, _, _, _ = init_tables(db)
-
         # Get the user ID for the logged-in user
         user = User.query.filter_by(email='user@test.com').first()
 
@@ -191,12 +180,6 @@ class TestArtworkOwnership:
 
     def test_non_owner_cannot_upload_to_linked_artwork(self, client, artist_and_artwork, test_image):
         """Test that non-owner cannot upload to someone else's artwork."""
-        from create_tbls import init_tables
-        from models import init_models
-
-        User, _, _ = init_models(db)
-        Artist, _, _, _, _, _, _ = init_tables(db)
-
         # Create and login as owner
         client.post('/auth/register', json={
             'email': 'owner@test.com',
@@ -247,10 +230,6 @@ class TestAdminArtistManagement:
 
     def test_admin_can_assign_artist_to_user(self, client, admin_user, artist_and_artwork):
         """Test that admin can link artist to user."""
-        from models import init_models
-
-        User, _, _ = init_models(db)
-
         # Create a user to assign
         client.post('/auth/register', json={
             'email': 'newartist@test.com',
@@ -283,12 +262,6 @@ class TestAdminArtistManagement:
 
     def test_admin_can_unassign_artist(self, client, admin_user, artist_and_artwork):
         """Test that admin can unlink artist from user."""
-        from create_tbls import init_tables
-        from models import init_models
-
-        User, _, _ = init_models(db)
-        Artist, _, _, _, _, _, _ = init_tables(db)
-
         # Create and link a user
         client.post('/auth/register', json={
             'email': 'unlink@test.com',
