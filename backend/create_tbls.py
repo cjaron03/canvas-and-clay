@@ -1,10 +1,17 @@
-""" Populating Canvas and Clay Tables with SQLAlchemyORM
-    last modified: 10/27/25 (MK)
-    will initialize in app.py
-    need to also define tables here in order to interact with Flask
-"""
+"""Model declarations for non-auth tables used by the Canvas & Clay app."""
 
 def init_tables(db):
+    """Return table models, defining them once per process.
+
+    Flask-SQLAlchemy registers models globally on the shared declarative
+    registry. The tests import init_tables() multiple times (per fixture),
+    so we memoise the class definitions to avoid redefining the same tables
+    and tripping over SQLAlchemy's metadata duplicate-table guard.
+    """
+    cached_models = getattr(init_tables, "_models_cache", None)
+    if cached_models is not None:
+        return cached_models
+
     class Artist(db.Model):
         """ Artist model holding artist information
 
@@ -157,6 +164,15 @@ def init_tables(db):
                                                           nullable=True)
         is_primary = db.Column(db.Boolean, default=False, nullable=False)
 
-    return Artist, Artwork, Storage, FlatFile, WallSpace, Rack, ArtworkPhoto
+    init_tables._models_cache = (
+        Artist,
+        Artwork,
+        Storage,
+        FlatFile,
+        WallSpace,
+        Rack,
+        ArtworkPhoto,
+    )
 
+    return init_tables._models_cache
 

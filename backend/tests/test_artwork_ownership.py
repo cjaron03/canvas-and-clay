@@ -53,6 +53,14 @@ def admin_user(client):
         'password': 'AdminPassword123!'
     })
 
+    # Promote the user to admin since registration always defaults to visitor
+    from models import init_models
+    User, _, _ = init_models(db)
+    user = User.query.filter_by(email='admin@test.com').first()
+    if user:
+        user.role = 'admin'
+        db.session.commit()
+
     return response.json
 
 
@@ -81,6 +89,8 @@ def artist_and_artwork(client):
     from create_tbls import init_tables
 
     Artist, Artwork, Storage, _, _, _, _ = init_tables(db)
+    # ensure tables exist for the newly defined models
+    db.create_all()
 
     # Create storage location first
     storage = Storage(
