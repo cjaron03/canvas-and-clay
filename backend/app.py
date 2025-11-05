@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request, send_from_directory
 import os
+import json
 from datetime import timedelta, datetime, timezone
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
@@ -625,16 +626,17 @@ def create_artwork():
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            action='artwork_created',
-            details={
+            email=current_user.email,
+            event_type='artwork_created',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
                 'artwork_id': new_artwork_id,
                 'title': data['title'],
                 'artist_id': data['artist_id'],
                 'artist_name': f"{artist.artist_fname} {artist.artist_lname}",
-                'storage_id': data['storage_id'],
-                'ip_address': request.remote_addr,
-                'user_agent': request.headers.get('User-Agent', 'Unknown')
-            }
+                'storage_id': data['storage_id']
+            })
         )
         db.session.add(audit_log)
         db.session.commit()
@@ -757,13 +759,14 @@ def update_artwork(artwork_id):
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            action='artwork_updated',
-            details={
+            email=current_user.email,
+            event_type='artwork_updated',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
                 'artwork_id': artwork_id,
-                'changes': changes,
-                'ip_address': request.remote_addr,
-                'user_agent': request.headers.get('User-Agent', 'Unknown')
-            }
+                'changes': changes
+            })
         )
         db.session.add(audit_log)
         db.session.commit()
@@ -838,15 +841,16 @@ def delete_artwork(artwork_id):
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            action='artwork_deleted',
-            details={
+            email=current_user.email,
+            event_type='artwork_deleted',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
                 'artwork_id': artwork_id,
                 'title': artwork_title,
                 'artist_id': artist_id,
-                'photos_deleted': photo_count,
-                'ip_address': request.remote_addr,
-                'user_agent': request.headers.get('User-Agent', 'Unknown')
-            }
+                'photos_deleted': photo_count
+            })
         )
         db.session.add(audit_log)
         db.session.commit()
@@ -1139,15 +1143,16 @@ def associate_photo_with_artwork(photo_id):
     # Audit log the association
     audit_log = AuditLog(
         user_id=current_user.id,
-        action='photo_associated',
-        details={
+        email=current_user.email,
+        event_type='photo_associated',
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent', 'Unknown'),
+        details=json.dumps({
             'photo_id': photo_id,
             'filename': photo.filename,
             'artwork_id': artwork_id,
-            'artwork_title': artwork.artwork_ttl,
-            'ip_address': request.remote_addr,
-            'user_agent': request.headers.get('User-Agent', 'Unknown')
-        }
+            'artwork_title': artwork.artwork_ttl
+        })
     )
     db.session.add(audit_log)
     db.session.commit()

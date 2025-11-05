@@ -378,6 +378,13 @@ class TestOrphanedPhotoUploads:
 
     def test_regular_user_cannot_associate_orphaned_photo(self, client, admin_user, regular_user, artist_and_artwork, test_image):
         """Test that non-admin cannot associate orphaned photos with artworks."""
+        # Logout regular user and login as admin to upload orphaned photo
+        client.post('/auth/logout')
+        client.post('/auth/login', json={
+            'email': 'admin@test.com',
+            'password': 'AdminPassword123!'
+        })
+
         # Admin uploads orphaned photo
         upload_response = client.post(
             '/api/photos',
