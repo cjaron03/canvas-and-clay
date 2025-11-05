@@ -93,6 +93,55 @@ see the Authentication & Security section in README.md for full details.
 
 ---
 
+## Upload Security Implementation (November 2025)
+
+### comprehensive file upload hardening completed
+
+### workstream 1 - format-safe processing
+- [x] **format-specific save options** - COMPLETED
+  - implemented `get_save_options()` in `upload_utils.py` to respect detected MIME types
+  - JPEG: quality=95, optimize=True, progressive=True
+  - PNG: optimize=True, compress_level=6 (lossless)
+  - WebP: quality=90, method=6
+  - AVIF: quality=80 (excellent compression)
+  - prevents errors when JPEG params applied to PNG/WebP/AVIF files
+  - comprehensive test coverage for all formats in `test_upload_utils.py`
+
+### workstream 2 - ownership enforcement
+- [x] **artist-user linking** - COMPLETED
+  - added `user_id` column to Artist table (nullable, FK to users with CASCADE/SET NULL)
+  - migration `dd25ebc37dcf_add_user_id_to_artist.py` successfully applied
+  - secure default: artists with `user_id=NULL` require admin access for photo uploads
+  - ownership: artists with `user_id` require owner or admin for photo uploads
+  - prevents unauthorized photo uploads to other users' artworks
+
+- [x] **admin artist management endpoints** - COMPLETED
+  - `POST /api/admin/artists/<id>/assign-user` - link artist to user account
+  - `POST /api/admin/artists/<id>/unassign-user` - unlink artist from user account
+  - comprehensive test coverage in `test_artwork_ownership.py`
+
+### workstream 3 - orphaned upload controls
+- [x] **admin-only policy** - COMPLETED
+  - orphaned uploads (`POST /api/photos`) now require admin role
+  - prevents storage abuse by regular users
+  - regular users must associate photos with artworks they own
+  - rate limited to 20 per minute per IP
+  - comprehensive test coverage for admin/user/unauthenticated access scenarios
+
+### implementation details
+- **upload endpoint**: `POST /api/artworks/<id>/photos` (owner or admin)
+- **orphaned endpoint**: `POST /api/photos` (admin only)
+- **security validations**: magic bytes, file size (10MB max), image dimensions (8000x8000 max), filename sanitization
+- **image processing**: re-encoding strips EXIF/metadata, thumbnail generation, format-appropriate compression
+- **authorization flow**:
+  1. check artwork exists
+  2. check artist ownership (user_id matches current_user.id or user is admin)
+  3. fallback: artist with no user_id requires admin access (secure default)
+
+see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test results.
+
+---
+
 ## High Priority (Core Security)
 
 ### Authentication & Authorization
@@ -122,6 +171,10 @@ see the Authentication & Security section in README.md for full details.
   - [x] Check file headers via magic bytes, not just extensions
   - [x] Sanitize filenames to prevent path traversal
   - [x] Store files outside web root (in dedicated uploads directory)
+  - [x] Format-safe processing (respect MIME type in save options, prevent JPEG params on PNG/WebP/AVIF)
+  - [x] Ownership enforcement (artist-user linking via `artist.user_id` foreign key)
+  - [x] Admin endpoints for artist-user management (`assign-user`, `unassign-user`)
+  - [x] Orphaned upload controls (admin-only policy prevents storage abuse)
   - [ ] Implement virus scanning (optional: ClamAV integration) - Deferred for future enhancement
 
 ### Session & Cookie Security
@@ -248,12 +301,19 @@ see the Authentication & Security section in README.md for full details.
 8. ~~**add account lockout**~~ - COMPLETED: protect against credential stuffing
 9. ~~**add input length validation**~~ - COMPLETED: prevent DoS via long inputs (email max 254, password max 128)
 
-### phase 3 (future enhancements)
-10. file upload security
-11. JWT token implementation
-12. two-factor authentication
-13. penetration testing
-14. HTTPS/TLS in production
+### phase 3 (COMPLETED - upload security hardening)
+1. ~~**format-safe image processing**~~ - COMPLETED: respect MIME type in save options
+2. ~~**ownership enforcement**~~ - COMPLETED: artist-user linking with `user_id` foreign key
+3. ~~**admin artist management**~~ - COMPLETED: assign/unassign endpoints
+4. ~~**orphaned upload controls**~~ - COMPLETED: admin-only policy
+5. ~~**upload security tests**~~ - COMPLETED: comprehensive test suite
+
+### phase 4 (future enhancements)
+10. JWT token implementation
+11. two-factor authentication
+12. penetration testing
+13. HTTPS/TLS in production
+14. orphaned photo cleanup job (delete unassociated photos after X days)
 
 ## sources
 

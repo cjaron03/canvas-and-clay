@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request, send_from_directory
 import os
+import json
 from datetime import timedelta, datetime, timezone
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
@@ -94,7 +95,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Register blueprints
-from auth import auth_bp
+from auth import auth_bp, admin_required
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -355,6 +356,522 @@ def api_search():
     })
 
 
+# Artwork CRUD Endpoints
+@app.route('/api/artworks', methods=['GET'])
+def list_artworks():
+    """List all artworks with pagination, search, and filtering.
+
+    Query Parameters:
+        page (int): Page number (default: 1)
+        per_page (int): Items per page (default: 20, max: 100)
+        search (str): Search term (searches title, medium, artist name)
+        artist_id (str): Filter by artist ID
+        medium (str): Filter by medium
+
+    Returns:
+        200: Paginated list of artworks with full details
+    """
+    # Get query parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), 100)  # Cap at 100
+    search = request.args.get('search', '').strip()
+    artist_id = request.args.get('artist_id', '').strip()
+    medium = request.args.get('medium', '').strip()
+
+    # Build base query
+    query = db.session.query(Artwork, Artist).join(
+        Artist, Artwork.artist_id == Artist.artist_id
+    )
+
+    # Apply filters
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            db.or_(
+                Artwork.artwork_ttl.ilike(search_pattern),
+                Artwork.artwork_medium.ilike(search_pattern),
+                Artist.artist_fname.ilike(search_pattern),
+                Artist.artist_lname.ilike(search_pattern)
+            )
+        )
+
+    if artist_id:
+        query = query.filter(Artwork.artist_id == artist_id)
+
+    if medium:
+        query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination
+    query = query.order_by(Artwork.artwork_num.desc())
+    query = query.offset((page - 1) * per_page).limit(per_page)
+
+    # Execute query
+    results = query.all()
+
+    # Build response
+    artworks = []
+    for artwork, artist in results:
+        # Get primary photo or first photo
+        primary_photo = ArtworkPhoto.query.filter_by(
+            artwork_num=artwork.artwork_num,
+            is_primary=True
+        ).first()
+
+        if not primary_photo:
+            primary_photo = ArtworkPhoto.query.filter_by(
+                artwork_num=artwork.artwork_num
+            ).first()
+
+        # Get photo count
+        photo_count = ArtworkPhoto.query.filter_by(
+            artwork_num=artwork.artwork_num
+        ).count()
+
+        # Get storage info
+        storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+
+        artworks.append({
+            'id': artwork.artwork_num,
+            'title': artwork.artwork_ttl,
+            'medium': artwork.artwork_medium,
+            'size': artwork.artwork_size,
+            'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+            'artist': {
+                'id': artist.artist_id,
+                'name': f"{artist.artist_fname} {artist.artist_lname}",
+                'email': artist.artist_email
+            },
+            'storage': {
+                'id': storage.storage_id,
+                'location': storage.storage_loc,
+                'type': storage.storage_type
+            } if storage else None,
+            'primary_photo': {
+                'id': primary_photo.photo_id,
+                'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+            } if primary_photo else None,
+            'photo_count': photo_count
+        })
+
+    # Calculate pagination metadata
+    total_pages = (total + per_page - 1) // per_page
+
+    return jsonify({
+        'artworks': artworks,
+        'pagination': {
+            'page': page,
+            'per_page': per_page,
+            'total': total,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1
+        }
+    })
+
+
+@app.route('/api/artworks/<artwork_id>', methods=['GET'])
+def get_artwork(artwork_id):
+    """Get detailed information about a specific artwork.
+
+    Args:
+        artwork_id: The artwork ID
+
+    Returns:
+        200: Complete artwork details
+        404: Artwork not found
+    """
+    # Get artwork
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    # Get artist
+    artist = Artist.query.get(artwork.artist_id)
+
+    # Get storage
+    storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+
+    # Get all photos
+    photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).order_by(
+        ArtworkPhoto.is_primary.desc(),
+        ArtworkPhoto.uploaded_at.desc()
+    ).all()
+
+    return jsonify({
+        'id': artwork.artwork_num,
+        'title': artwork.artwork_ttl,
+        'medium': artwork.artwork_medium,
+        'size': artwork.artwork_size,
+        'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+        'artist': {
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'email': artist.artist_email,
+            'phone': artist.artist_phone,
+            'website': artist.artist_site,
+            'bio': artist.artist_bio
+        } if artist else None,
+        'storage': {
+            'id': storage.storage_id,
+            'location': storage.storage_loc,
+            'type': storage.storage_type
+        } if storage else None,
+        'photos': [{
+            'id': photo.photo_id,
+            'filename': photo.filename,
+            'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+            'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+            'width': photo.width,
+            'height': photo.height,
+            'file_size': photo.file_size,
+            'is_primary': photo.is_primary,
+            'uploaded_at': photo.uploaded_at.isoformat()
+        } for photo in photos]
+    })
+
+
+@app.route('/api/artworks', methods=['POST'])
+@login_required
+@admin_required
+def create_artwork():
+    """Create a new artwork with auto-generated ID.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Validates artist and storage exist
+        - Auto-generates artwork ID
+        - Audit logged
+
+    Request Body:
+        title (str, required): Artwork title
+        artist_id (str, required): Artist ID (must exist)
+        storage_id (str, required): Storage location ID (must exist)
+        medium (str, optional): Medium/type of artwork
+        date_created (str, optional): Creation date (ISO format)
+        artwork_size (str, optional): Dimensions
+
+    Returns:
+        201: Artwork created successfully
+        400: Validation error
+        403: Permission denied
+        404: Artist or storage not found
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+
+    # Validate required fields
+    required_fields = ['title', 'artist_id', 'storage_id']
+    missing_fields = [field for field in required_fields if not data.get(field)]
+    if missing_fields:
+        return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+
+    # Verify artist exists
+    artist = Artist.query.get(data['artist_id'])
+    if not artist:
+        return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
+
+    # Verify storage exists
+    storage = Storage.query.get(data['storage_id'])
+    if not storage:
+        return jsonify({'error': f'Storage location not found: {data["storage_id"]}'}), 404
+
+    # Generate new artwork ID
+    # Find the highest existing artwork ID starting with 'AW'
+    max_id_result = db.session.query(db.func.max(Artwork.artwork_num)).filter(
+        Artwork.artwork_num.like('AW%')
+    ).scalar()
+
+    if max_id_result:
+        # Extract number from AW000010 -> 10
+        try:
+            current_num = int(max_id_result[2:])
+            new_num = current_num + 1
+        except ValueError:
+            new_num = 1
+    else:
+        new_num = 1
+
+    # Format as AW000001
+    new_artwork_id = f"AW{new_num:06d}"
+
+    # Handle date_created if provided
+    date_created = None
+    if data.get('date_created'):
+        try:
+            from datetime import datetime
+            date_created = datetime.fromisoformat(data['date_created'].replace('Z', '+00:00')).date()
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use ISO format (YYYY-MM-DD)'}), 400
+
+    # Create artwork
+    try:
+        artwork = Artwork(
+            artwork_num=new_artwork_id,
+            artwork_ttl=data['title'],
+            artwork_medium=data.get('medium'),
+            date_created=date_created,
+            artwork_size=data.get('artwork_size'),
+            artist_id=data['artist_id'],
+            storage_id=data['storage_id']
+        )
+
+        db.session.add(artwork)
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artwork_created',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artwork_id': new_artwork_id,
+                'title': data['title'],
+                'artist_id': data['artist_id'],
+                'artist_name': f"{artist.artist_fname} {artist.artist_lname}",
+                'storage_id': data['storage_id']
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} created artwork {new_artwork_id}: {data['title']}")
+
+        return jsonify({
+            'message': 'Artwork created successfully',
+            'artwork': {
+                'id': new_artwork_id,
+                'title': artwork.artwork_ttl,
+                'medium': artwork.artwork_medium,
+                'size': artwork.artwork_size,
+                'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'artist_id': artwork.artist_id,
+                'storage_id': artwork.storage_id
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artwork creation failed")
+        return jsonify({'error': 'Failed to create artwork. Please try again.'}), 500
+
+
+@app.route('/api/artworks/<artwork_id>', methods=['PUT'])
+@login_required
+@admin_required
+def update_artwork(artwork_id):
+    """Update an existing artwork.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Validates artist and storage exist if updated
+        - Audit logged
+
+    Args:
+        artwork_id: The artwork ID to update
+
+    Request Body:
+        title (str, optional): Artwork title
+        artist_id (str, optional): Artist ID (must exist)
+        storage_id (str, optional): Storage location ID (must exist)
+        medium (str, optional): Medium/type of artwork
+        date_created (str, optional): Creation date (ISO format)
+        artwork_size (str, optional): Dimensions
+
+    Returns:
+        200: Artwork updated successfully
+        400: Validation error
+        403: Permission denied
+        404: Artwork, artist, or storage not found
+    """
+    # Verify artwork exists
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+
+    # Track changes for audit log
+    changes = {}
+
+    # Update title
+    if 'title' in data and data['title'] != artwork.artwork_ttl:
+        changes['title'] = {'old': artwork.artwork_ttl, 'new': data['title']}
+        artwork.artwork_ttl = data['title']
+
+    # Update artist
+    if 'artist_id' in data and data['artist_id'] != artwork.artist_id:
+        artist = Artist.query.get(data['artist_id'])
+        if not artist:
+            return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
+        changes['artist_id'] = {'old': artwork.artist_id, 'new': data['artist_id']}
+        artwork.artist_id = data['artist_id']
+
+    # Update storage
+    if 'storage_id' in data and data['storage_id'] != artwork.storage_id:
+        storage = Storage.query.get(data['storage_id'])
+        if not storage:
+            return jsonify({'error': f'Storage location not found: {data["storage_id"]}'}), 404
+        changes['storage_id'] = {'old': artwork.storage_id, 'new': data['storage_id']}
+        artwork.storage_id = data['storage_id']
+
+    # Update medium
+    if 'medium' in data and data['medium'] != artwork.artwork_medium:
+        changes['medium'] = {'old': artwork.artwork_medium, 'new': data['medium']}
+        artwork.artwork_medium = data['medium']
+
+    # Update size
+    if 'artwork_size' in data and data['artwork_size'] != artwork.artwork_size:
+        changes['artwork_size'] = {'old': artwork.artwork_size, 'new': data['artwork_size']}
+        artwork.artwork_size = data['artwork_size']
+
+    # Update date_created
+    if 'date_created' in data:
+        try:
+            from datetime import datetime
+            new_date = datetime.fromisoformat(data['date_created'].replace('Z', '+00:00')).date() if data['date_created'] else None
+            if new_date != artwork.date_created:
+                changes['date_created'] = {
+                    'old': artwork.date_created.isoformat() if artwork.date_created else None,
+                    'new': new_date.isoformat() if new_date else None
+                }
+                artwork.date_created = new_date
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use ISO format (YYYY-MM-DD)'}), 400
+
+    # If no changes, return early
+    if not changes:
+        return jsonify({'message': 'No changes detected', 'artwork': {'id': artwork_id}}), 200
+
+    # Save changes
+    try:
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artwork_updated',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artwork_id': artwork_id,
+                'changes': changes
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} updated artwork {artwork_id}")
+
+        return jsonify({
+            'message': 'Artwork updated successfully',
+            'artwork': {
+                'id': artwork.artwork_num,
+                'title': artwork.artwork_ttl,
+                'medium': artwork.artwork_medium,
+                'size': artwork.artwork_size,
+                'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'artist_id': artwork.artist_id,
+                'storage_id': artwork.storage_id
+            }
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artwork update failed")
+        return jsonify({'error': 'Failed to update artwork. Please try again.'}), 500
+
+
+@app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_artwork(artwork_id):
+    """Delete an artwork and all associated photos.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Cascades deletion to photos (DB records and files)
+        - Audit logged
+
+    Args:
+        artwork_id: The artwork ID to delete
+
+    Returns:
+        200: Artwork deleted successfully
+        403: Permission denied
+        404: Artwork not found
+    """
+    # Verify artwork exists
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    # Get all photos for audit log and file deletion
+    photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).all()
+    photo_count = len(photos)
+
+    try:
+        # Delete photo files from filesystem
+        for photo in photos:
+            try:
+                delete_photo_files(photo.file_path, photo.thumbnail_path)
+            except Exception as e:
+                app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
+
+        # Delete photo database records
+        ArtworkPhoto.query.filter_by(artwork_num=artwork_id).delete()
+
+        # Delete artwork
+        artwork_title = artwork.artwork_ttl
+        artist_id = artwork.artist_id
+        db.session.delete(artwork)
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artwork_deleted',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artwork_id': artwork_id,
+                'title': artwork_title,
+                'artist_id': artist_id,
+                'photos_deleted': photo_count
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} deleted artwork {artwork_id} with {photo_count} photos")
+
+        return jsonify({
+            'message': 'Artwork deleted successfully',
+            'deleted': {
+                'artwork_id': artwork_id,
+                'title': artwork_title,
+                'photos_deleted': photo_count
+            }
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artwork deletion failed")
+        return jsonify({'error': 'Failed to delete artwork. Please try again.'}), 500
+
+
 # Photo Upload Endpoints
 from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
 from auth import admin_required
@@ -487,6 +1004,7 @@ def upload_artwork_photo(artwork_id):
 
 @app.route('/api/photos', methods=['POST'])
 @login_required
+@admin_required
 @limiter.limit("20 per minute")
 def upload_orphaned_photo():
     """Upload a photo without associating it to an artwork (orphaned).
@@ -494,11 +1012,20 @@ def upload_orphaned_photo():
     This is useful for uploading photos before creating the artwork record.
     Photos can be associated later when creating/updating artwork.
 
-    Security: Same as upload_artwork_photo
+    Security:
+        - Requires authentication
+        - Requires admin role (prevents storage abuse by regular users)
+        - Validates file type using magic bytes
+        - Sanitizes filename
+        - Validates file size (max 10MB)
+        - Re-encodes image to strip metadata
+        - Generates thumbnail
+        - Rate limited to 20 per minute per IP
 
     Returns:
         201: Photo uploaded successfully
         400: Validation error
+        403: Permission denied (non-admin)
     """
     if 'photo' not in request.files:
         return jsonify({'error': 'No photo file provided'}), 400
@@ -557,6 +1084,90 @@ def upload_orphaned_photo():
     except Exception as e:
         app.logger.exception("Photo upload failed")
         return jsonify({'error': 'Upload failed. Please try again.'}), 500
+
+
+@app.route('/api/photos/<photo_id>/associate', methods=['PATCH'])
+@login_required
+@admin_required
+def associate_photo_with_artwork(photo_id):
+    """Associate an orphaned photo with an artwork.
+
+    This endpoint allows admins to link previously uploaded orphaned photos
+    to specific artworks. This completes the bulk upload workflow.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Photo must be orphaned (artwork_num=NULL)
+        - Target artwork must exist
+        - Audit logged for accountability
+
+    Args:
+        photo_id: The photo ID to associate
+
+    Request Body:
+        artwork_id: The artwork ID to associate the photo with
+
+    Returns:
+        200: Photo associated successfully
+        400: Invalid request or photo already associated
+        403: Permission denied (non-admin)
+        404: Photo or artwork not found
+    """
+    data = request.get_json()
+    if not data or 'artwork_id' not in data:
+        return jsonify({'error': 'artwork_id is required'}), 400
+
+    artwork_id = data.get('artwork_id')
+
+    # Verify photo exists
+    photo = ArtworkPhoto.query.filter_by(photo_id=photo_id).first()
+    if not photo:
+        return jsonify({'error': 'Photo not found'}), 404
+
+    # Check if photo is already associated with an artwork
+    if photo.artwork_num is not None:
+        return jsonify({
+            'error': f'Photo is already associated with artwork {photo.artwork_num}'
+        }), 400
+
+    # Verify artwork exists
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    # Associate photo with artwork
+    photo.artwork_num = artwork_id
+    db.session.commit()
+
+    # Audit log the association
+    audit_log = AuditLog(
+        user_id=current_user.id,
+        email=current_user.email,
+        event_type='photo_associated',
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent', 'Unknown'),
+        details=json.dumps({
+            'photo_id': photo_id,
+            'filename': photo.filename,
+            'artwork_id': artwork_id,
+            'artwork_title': artwork.artwork_ttl
+        })
+    )
+    db.session.add(audit_log)
+    db.session.commit()
+
+    app.logger.info(f"Admin {current_user.email} associated photo {photo_id} with artwork {artwork_id}")
+
+    return jsonify({
+        'message': 'Photo associated successfully',
+        'photo': {
+            'id': photo.photo_id,
+            'filename': photo.filename,
+            'artwork_id': artwork_id,
+            'artwork_title': artwork.artwork_ttl
+        }
+    }), 200
 
 
 @app.route('/api/artworks/<artwork_id>/photos', methods=['GET'])

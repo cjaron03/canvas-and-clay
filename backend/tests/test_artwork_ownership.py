@@ -306,3 +306,170 @@ class TestAdminArtistManagement:
 
         assert response.status_code == 404
         assert 'Artist not found' in response.json['error']
+
+
+class TestOrphanedPhotoUploads:
+    """Test admin-only orphaned photo uploads."""
+
+    def test_admin_can_upload_orphaned_photo(self, client, admin_user, test_image):
+        """Test that admin can upload orphaned photos."""
+        response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'orphaned_admin.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+
+        assert response.status_code == 201
+        assert 'Photo uploaded successfully' in response.json['message']
+        assert 'photo' in response.json
+        assert response.json['photo']['filename'] == 'orphaned_admin.jpg'
+
+    def test_regular_user_cannot_upload_orphaned_photo(self, client, regular_user, test_image):
+        """Test that non-admin cannot upload orphaned photos (403 Forbidden)."""
+        response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'orphaned_user.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+
+        assert response.status_code == 403
+        assert 'Admin access required' in response.json['error']
+
+    def test_unauthenticated_cannot_upload_orphaned_photo(self, client, test_image):
+        """Test that unauthenticated users cannot upload orphaned photos."""
+        response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'orphaned_unauth.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+
+        assert response.status_code == 401
+        assert 'error' in response.json
+
+    def test_admin_can_associate_orphaned_photo_with_artwork(self, client, admin_user, artist_and_artwork, test_image):
+        """Test that admin can associate an orphaned photo with an artwork."""
+        # First, upload an orphaned photo
+        upload_response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'to_associate.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+        assert upload_response.status_code == 201
+        photo_id = upload_response.json['photo']['id']
+
+        # Now associate it with an artwork
+        artwork_id = artist_and_artwork['artwork_id']
+        associate_response = client.patch(
+            f'/api/photos/{photo_id}/associate',
+            json={'artwork_id': artwork_id}
+        )
+
+        assert associate_response.status_code == 200
+        assert 'Photo associated successfully' in associate_response.json['message']
+        assert associate_response.json['photo']['artwork_id'] == artwork_id
+
+    def test_regular_user_cannot_associate_orphaned_photo(self, client, admin_user, regular_user, artist_and_artwork, test_image):
+        """Test that non-admin cannot associate orphaned photos with artworks."""
+        # Logout regular user and login as admin to upload orphaned photo
+        client.post('/auth/logout')
+        client.post('/auth/login', json={
+            'email': 'admin@test.com',
+            'password': 'AdminPassword123!'
+        })
+
+        # Admin uploads orphaned photo
+        upload_response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'admin_upload.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+        assert upload_response.status_code == 201
+        photo_id = upload_response.json['photo']['id']
+
+        # Logout admin, login as regular user
+        client.post('/auth/logout')
+        client.post('/auth/login', json={
+            'email': 'user@test.com',
+            'password': 'UserPassword123!'
+        })
+
+        # Regular user tries to associate
+        artwork_id = artist_and_artwork['artwork_id']
+        associate_response = client.patch(
+            f'/api/photos/{photo_id}/associate',
+            json={'artwork_id': artwork_id}
+        )
+
+        assert associate_response.status_code == 403
+        assert 'Admin access required' in associate_response.json['error']
+
+    def test_cannot_associate_already_associated_photo(self, client, admin_user, artist_and_artwork, test_image):
+        """Test that photos already associated with artworks cannot be re-associated."""
+        # Upload orphaned photo
+        upload_response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'already_associated.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+        photo_id = upload_response.json['photo']['id']
+
+        # Associate it once
+        artwork_id = artist_and_artwork['artwork_id']
+        client.patch(
+            f'/api/photos/{photo_id}/associate',
+            json={'artwork_id': artwork_id}
+        )
+
+        # Try to associate again (should fail)
+        response = client.patch(
+            f'/api/photos/{photo_id}/associate',
+            json={'artwork_id': artwork_id}
+        )
+
+        assert response.status_code == 400
+        assert 'already associated' in response.json['error']
+
+    def test_associate_with_nonexistent_artwork_fails(self, client, admin_user, test_image):
+        """Test that associating with non-existent artwork fails gracefully."""
+        # Upload orphaned photo
+        upload_response = client.post(
+            '/api/photos',
+            data={
+                'photo': (test_image, 'no_artwork.jpg'),
+            },
+            content_type='multipart/form-data'
+        )
+        photo_id = upload_response.json['photo']['id']
+
+        # Try to associate with non-existent artwork
+        response = client.patch(
+            f'/api/photos/{photo_id}/associate',
+            json={'artwork_id': 'NONEXIST'}
+        )
+
+        assert response.status_code == 404
+        assert 'Artwork not found' in response.json['error']
+
+    def test_associate_nonexistent_photo_fails(self, client, admin_user, artist_and_artwork):
+        """Test that associating non-existent photo fails gracefully."""
+        artwork_id = artist_and_artwork['artwork_id']
+
+        response = client.patch(
+            '/api/photos/NOEXIST/associate',
+            json={'artwork_id': artwork_id}
+        )
+
+        assert response.status_code == 404
+        assert 'Photo not found' in response.json['error']
