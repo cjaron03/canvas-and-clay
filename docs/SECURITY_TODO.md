@@ -209,8 +209,8 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
   - [x] Implement account lockout after 5 failed attempts (15 min lockout)
   - [x] Add IP-based blocking for repeated violations
   - [x] Log failed login attempts for security monitoring
-  - [ ] Rate limit registration endpoint (future enhancement)
-  - [ ] Rate limit file uploads (pending file upload feature)
+  - [x] Rate limit registration endpoint (3 per minute cap, skipped in tests)
+  - [x] Rate limit file uploads (pending file upload feature)
 
 ### Database Security
 - [ ] **SQL Injection Prevention**
@@ -321,4 +321,3 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
 - Flask-Bcrypt: https://flask-bcrypt.readthedocs.io/
 - OWASP Top 10: https://owasp.org/www-project-top-ten/
 - Flask Security Best Practices: https://flask.palletsprojects.com/en/2.3.x/security/
-
