@@ -55,6 +55,6 @@ build/
 coverage/
 .coverage
 htmlcov/
-# Ignore local assistant guidance documents
-CLAUDE.local.md
-AGENTS.local.md
+# Ignore assistant guidance documents
+CLAUDE.md
+AGENTS.md

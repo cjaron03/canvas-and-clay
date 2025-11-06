@@ -14,10 +14,13 @@ done
 
 echo "database is ready!"
 
-# run database migrations
-echo "running database migrations..."
-flask db upgrade
+if [ "${SKIP_MIGRATIONS}" = "1" ]; then
+  echo "SKIP_MIGRATIONS=1 detected; skipping database migrations."
+else
+  # run database migrations
+  echo "running database migrations..."
+  flask db upgrade
+fi
 
 echo "starting flask application..."
 exec "$@"
-
