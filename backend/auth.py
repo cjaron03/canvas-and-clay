@@ -18,6 +18,19 @@ def get_dependencies():
     return db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter
 
 
+def rate_limit(limit):
+    """Return a limiter decorator that is disabled when TESTING is enabled."""
+    def decorator(func):
+        from app import limiter, app
+
+        if app.config.get('TESTING', False):
+            return func
+
+        return limiter.limit(limit)(func)
+
+    return decorator
+
+
 def admin_required(f):
     """Decorator to require admin role for a route."""
     @wraps(f)
@@ -107,6 +120,7 @@ def validate_password(password):
 
 
 @auth_bp.route('/register', methods=['POST'])
+@rate_limit("3 per minute")
 def register():
     """Register a new user account.
     
@@ -287,24 +301,8 @@ def clear_failed_login_attempts(email):
         db.session.rollback()
 
 
-def apply_rate_limit(func):
-    """apply rate limiting decorator to login function.
-    
-    in test mode, returns the function unchanged without applying rate limiting.
-    """
-    from app import limiter, app
-    
-    # only apply rate limiting if not in test mode
-    if app.config.get('TESTING', False):
-        # return function unchanged in test mode
-        return func
-    
-    # apply rate limiting decorator
-    return limiter.limit("5 per 15 minutes")(func)
-
-
 @auth_bp.route('/login', methods=['POST'])
-@apply_rate_limit
+@rate_limit("5 per 15 minutes")
 def login():
     """Login with email and password.
     
@@ -486,4 +484,3 @@ def admin_only_route():
         'user': current_user.email,
         'role': current_user.role
     }), 200
-
