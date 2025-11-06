@@ -1438,10 +1438,35 @@ def validate_security_config():
         print(f"warning: CORS origins include localhost: {localhost_origins}")
         print("warning: ensure CORS_ORIGINS is configured correctly for production")
 
-# ensure bootstrap admin exists on startup (skip in test mode)
-if not app.config.get('TESTING', False):
-    ensure_bootstrap_admin()
-    validate_security_config()
+# Lazy bootstrap initialization to avoid race conditions during container startup
+@app.before_request
+def _ensure_bootstrap_on_first_request():
+    """Lazily initialize bootstrap admin on first request.
+
+    This runs AFTER migrations complete, avoiding race conditions
+    during container startup when flask commands import app.py.
+    """
+    if app.config.get('TESTING', False):
+        return  # Skip in test mode
+
+    if hasattr(app, '_bootstrap_complete'):
+        return  # Already bootstrapped
+
+    try:
+        # Check if users table exists before querying
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        if 'users' not in inspector.get_table_names():
+            return  # Tables don't exist yet, migrations haven't run
+
+        # Safe to bootstrap now
+        ensure_bootstrap_admin()
+        validate_security_config()
+        app._bootstrap_complete = True
+
+    except Exception as e:
+        app.logger.warning(f"Bootstrap initialization skipped: {e}")
+        # Don't set _bootstrap_complete, will retry on next request
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
