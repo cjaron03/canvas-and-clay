@@ -7,12 +7,13 @@ WORKDIR /app
 # Avoid flaky http mirror responses that can trigger Hash Sum mismatch errors
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
 
-# Install system dependencies for psycopg2-binary
+# Install system dependencies for psycopg2-binary and python-magic
 # Note: psycopg2-binary includes its own libpq, but we need build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc6-dev \
     libpq-dev \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install with BuildKit cache mount
@@ -30,9 +31,10 @@ WORKDIR /app
 # Avoid flaky http mirror responses that can trigger Hash Sum mismatch errors
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
 
-# Install runtime dependencies only (libpq for psycopg2)
+# Install runtime dependencies (libpq for psycopg2, libmagic for python-magic)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -48,9 +50,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Copy application code
 COPY . .
 
+# Make entrypoint script executable
+RUN chmod +x entrypoint.sh
 
 EXPOSE 5000
 
-
-# Run Flask development server
-CMD ["python", "app.py"]
+# Use entrypoint script to run migrations before starting Flask
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
