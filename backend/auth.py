@@ -18,6 +18,19 @@ def get_dependencies():
     return db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter
 
 
+def rate_limit(limit):
+    """Return a limiter decorator that is disabled when TESTING is enabled."""
+    def decorator(func):
+        from app import limiter, app
+
+        if app.config.get('TESTING', False):
+            return func
+
+        return limiter.limit(limit)(func)
+
+    return decorator
+
+
 def admin_required(f):
     """Decorator to require admin role for a route."""
     @wraps(f)
@@ -286,19 +299,6 @@ def clear_failed_login_attempts(email):
         db.session.commit()
     except Exception:
         db.session.rollback()
-
-
-def rate_limit(limit):
-    """Return a limiter decorator that is disabled when TESTING is enabled."""
-    def decorator(func):
-        from app import limiter, app
-
-        if app.config.get('TESTING', False):
-            return func
-
-        return limiter.limit(limit)(func)
-
-    return decorator
 
 
 @auth_bp.route('/login', methods=['POST'])
