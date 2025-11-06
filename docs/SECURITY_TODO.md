@@ -213,10 +213,10 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
   - [x] Rate limit file uploads (pending file upload feature)
 
 ### Database Security
-- [ ] **SQL Injection Prevention**
-  - [ ] Use SQLAlchemy ORM for all queries
-  - [ ] Never use raw SQL with user input
-  - [ ] Parameterize any necessary raw queries
+- [x] **SQL Injection Prevention**
+  - [x] Use SQLAlchemy ORM for all queries
+  - [x] Never use raw SQL with user input
+  - [x] Parameterize any necessary raw queries
   
 - [ ] **Connection Security**
   - [ ] Use environment variables for DB credentials
