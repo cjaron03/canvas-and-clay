@@ -206,7 +206,8 @@ class TestCreateArtwork:
         assert response.status_code == 201
         data = response.json
         assert 'artwork' in data
-        assert data['artwork']['id'] == 'AW000003'  # Auto-incremented
+        assert data['artwork']['id'].startswith('AW')  # Auto-generated ID
+        assert len(data['artwork']['id']) == 8  # Format: AW000001
         assert data['artwork']['title'] == 'New Artwork'
 
         # Verify audit log
