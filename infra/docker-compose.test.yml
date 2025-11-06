@@ -6,6 +6,7 @@ services:
     command: python -m pytest tests/ -v
     environment:
       - DATABASE_URL=postgresql://test_user:test_password@db:5432/test_canvas_clay
+      - SKIP_MIGRATIONS=1
     depends_on:
       - db
     volumes:
