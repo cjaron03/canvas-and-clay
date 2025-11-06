@@ -27,20 +27,20 @@ def client():
 @pytest.fixture
 def test_data(client):
     """Create test artists, storage, and artworks."""
-    # Create storage locations
-    storage1 = Storage(storage_id='TST0001', storage_loc='Test Rack 1', storage_type='rack')
-    storage2 = Storage(storage_id='TST0002', storage_loc='Test Rack 2', storage_type='rack')
+    # Create storage locations (unique IDs to avoid conflicts with other test fixtures)
+    storage1 = Storage(storage_id='CRUD001', storage_loc='Test Rack 1', storage_type='rack')
+    storage2 = Storage(storage_id='CRUD002', storage_loc='Test Rack 2', storage_type='rack')
     db.session.add_all([storage1, storage2])
 
-    # Create artists
+    # Create artists (unique IDs to avoid conflicts with other test fixtures)
     artist1 = Artist(
-        artist_id='TSTART01',
+        artist_id='CRUDART1',
         artist_fname='Test',
         artist_lname='Artist',
         artist_email='test@artist.com'
     )
     artist2 = Artist(
-        artist_id='TSTART02',
+        artist_id='CRUDART2',
         artist_fname='Another',
         artist_lname='Artist',
         artist_email='another@artist.com'
@@ -48,22 +48,22 @@ def test_data(client):
     db.session.add_all([artist1, artist2])
     db.session.flush()
 
-    # Create some artworks
+    # Create some artworks (unique IDs to avoid conflicts with other test fixtures)
     artwork1 = Artwork(
-        artwork_num='AW000001',
+        artwork_num='CRUDAW01',
         artwork_ttl='Test Artwork 1',
         artwork_medium='Oil on Canvas',
         artwork_size='24x36in',
         date_created=date(2024, 1, 1),
-        artist_id='TSTART01',
-        storage_id='TST0001'
+        artist_id='CRUDART1',
+        storage_id='CRUD001'
     )
     artwork2 = Artwork(
-        artwork_num='AW000002',
+        artwork_num='CRUDAW02',
         artwork_ttl='Test Artwork 2',
         artwork_medium='Watercolor',
-        artist_id='TSTART02',
-        storage_id='TST0002'
+        artist_id='CRUDART2',
+        storage_id='CRUD002'
     )
     db.session.add_all([artwork1, artwork2])
     db.session.commit()
@@ -150,12 +150,12 @@ class TestListArtworks:
 
     def test_list_artworks_filter_by_artist(self, client, test_data):
         """Test filtering by artist ID."""
-        response = client.get('/api/artworks?artist_id=TSTART01')
+        response = client.get('/api/artworks?artist_id=CRUDART1')
 
         assert response.status_code == 200
         data = response.json
         assert len(data['artworks']) == 1
-        assert data['artworks'][0]['artist']['id'] == 'TSTART01'
+        assert data['artworks'][0]['artist']['id'] == 'CRUDART1'
 
     def test_list_artworks_filter_by_medium(self, client, test_data):
         """Test filtering by medium."""
@@ -172,11 +172,11 @@ class TestGetArtwork:
 
     def test_get_artwork_success(self, client, test_data):
         """Test getting artwork details."""
-        response = client.get('/api/artworks/AW000001')
+        response = client.get('/api/artworks/CRUDAW01')
 
         assert response.status_code == 200
         data = response.json
-        assert data['id'] == 'AW000001'
+        assert data['id'] == 'CRUDAW01'
         assert data['title'] == 'Test Artwork 1'
         assert data['artist']['name'] == 'Test Artist'
         assert data['storage']['location'] == 'Test Rack 1'
@@ -196,8 +196,8 @@ class TestCreateArtwork:
         """Test creating a new artwork as admin."""
         response = client.post('/api/artworks', json={
             'title': 'New Artwork',
-            'artist_id': 'TSTART01',
-            'storage_id': 'TST0001',
+            'artist_id': 'CRUDART1',
+            'storage_id': 'CRUD001',
             'medium': 'Acrylic',
             'artwork_size': '12x16in',
             'date_created': '2024-06-01'
@@ -228,7 +228,7 @@ class TestCreateArtwork:
         response = client.post('/api/artworks', json={
             'title': 'Bad Artist',
             'artist_id': 'NOEXIST',
-            'storage_id': 'TST0001'
+            'storage_id': 'CRUD001'
         })
 
         assert response.status_code == 404
@@ -238,7 +238,7 @@ class TestCreateArtwork:
         """Test creating artwork with non-existent storage."""
         response = client.post('/api/artworks', json={
             'title': 'Bad Storage',
-            'artist_id': 'TSTART01',
+            'artist_id': 'CRUDART1',
             'storage_id': 'NOEXIST'
         })
 
@@ -249,8 +249,8 @@ class TestCreateArtwork:
         """Test that regular users cannot create artworks."""
         response = client.post('/api/artworks', json={
             'title': 'Unauthorized',
-            'artist_id': 'TSTART01',
-            'storage_id': 'TST0001'
+            'artist_id': 'CRUDART1',
+            'storage_id': 'CRUD001'
         })
 
         assert response.status_code == 403
@@ -259,8 +259,8 @@ class TestCreateArtwork:
         """Test that unauthenticated users cannot create artworks."""
         response = client.post('/api/artworks', json={
             'title': 'Unauth',
-            'artist_id': 'TSTART01',
-            'storage_id': 'TST0001'
+            'artist_id': 'CRUDART1',
+            'storage_id': 'CRUD001'
         })
 
         assert response.status_code == 401
@@ -271,7 +271,7 @@ class TestUpdateArtwork:
 
     def test_update_artwork_success(self, client, admin_user, test_data):
         """Test updating an artwork as admin."""
-        response = client.put('/api/artworks/AW000001', json={
+        response = client.put('/api/artworks/CRUDAW01', json={
             'title': 'Updated Title',
             'medium': 'Updated Medium'
         })
@@ -298,7 +298,7 @@ class TestUpdateArtwork:
 
     def test_update_artwork_no_changes(self, client, admin_user, test_data):
         """Test updating artwork with no actual changes."""
-        response = client.put('/api/artworks/AW000001', json={
+        response = client.put('/api/artworks/CRUDAW01', json={
             'title': 'Test Artwork 1'  # Same as current
         })
 
@@ -307,7 +307,7 @@ class TestUpdateArtwork:
 
     def test_update_artwork_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot update artworks."""
-        response = client.put('/api/artworks/AW000001', json={
+        response = client.put('/api/artworks/CRUDAW01', json={
             'title': 'Unauthorized Update'
         })
 
@@ -319,15 +319,15 @@ class TestDeleteArtwork:
 
     def test_delete_artwork_success(self, client, admin_user, test_data):
         """Test deleting an artwork as admin."""
-        response = client.delete('/api/artworks/AW000001')
+        response = client.delete('/api/artworks/CRUDAW01')
 
         assert response.status_code == 200
         data = response.json
         assert 'deleted' in data
-        assert data['deleted']['artwork_id'] == 'AW000001'
+        assert data['deleted']['artwork_id'] == 'CRUDAW01'
 
         # Verify artwork is deleted
-        artwork = Artwork.query.get('AW000001')
+        artwork = Artwork.query.get('CRUDAW01')
         assert artwork is None
 
         # Verify audit log
@@ -335,7 +335,7 @@ class TestDeleteArtwork:
         assert audit is not None
         import json
         details = json.loads(audit.details)
-        assert details['artwork_id'] == 'AW000001'
+        assert details['artwork_id'] == 'CRUDAW01'
 
     def test_delete_artwork_not_found(self, client, admin_user, test_data):
         """Test deleting non-existent artwork."""
@@ -345,12 +345,12 @@ class TestDeleteArtwork:
 
     def test_delete_artwork_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot delete artworks."""
-        response = client.delete('/api/artworks/AW000001')
+        response = client.delete('/api/artworks/CRUDAW01')
 
         assert response.status_code == 403
 
     def test_delete_artwork_unauthenticated_forbidden(self, client, test_data):
         """Test that unauthenticated users cannot delete artworks."""
-        response = client.delete('/api/artworks/AW000001')
+        response = client.delete('/api/artworks/CRUDAW01')
 
         assert response.status_code == 401
