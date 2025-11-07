@@ -1,5 +1,5 @@
 <script>
-    export let data;
+    export let form;
 </script>
 
 <h1>Artwork Upload</h1>
@@ -20,4 +20,27 @@
 
     <button type="submit">Add Artwork</button>
 </form>
+
+<!--
+{#if form?.success}
+    <p>{form.message}</p>
+{:else }
+    <p style="color: red;">{form.message}</p>
+{/if}
+-->
+
+<style>
+    form {
+        width: fit-content;
+        margin: auto;
+        display: flex;
+        flex-direction: column;
+        background-color: #454545;
+        padding: 2em;
+        border: 0.1em solid black;
+        border-radius: 3em;
+        justify-content: space-between;
+        gap: 1em;
+    }
+</style>
 
