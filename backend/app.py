@@ -532,6 +532,273 @@ def get_artwork(artwork_id):
         } for photo in photos]
     })
 
+@app.route('/api/artists', methods=['POST'])
+@login_required
+@admin_required
+def create_artist():
+    """Create a new artist with auto-generated ID.
+        
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Auto-generates artist ID
+        - Audit logged
+    
+    Request Body: 
+        artist_fname (str, required): Artist first name
+        artist_lname (str, required): Artist last name
+        email (str, optional): Arist email
+        artist_site  (str, optional): Arist website or social media
+        artist_bio   (str, optional): Artist biography/description
+        artist_phone (str, optional): Artist phone number - must be formatted as 
+                                                           (123)-456-7890
+        user_id      (str, optional): foreign key to users table
+    Returns:
+        201: Artist created sucessfully
+        400: Validation error
+        403: Permission denied
+        404: User ID not found
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+    
+    # Entry is missing artist_fname and/or arist_lname
+    required_fields = ['artist_fname', 'artist_lname']
+    missing_fields = [field for field in required_fields if not data.get(field)]
+    if missing_fields:
+        return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+    
+    # Verify user exists if provided
+    if data.get('user_id'):
+        user = Artist.query.get(data['user_id'])
+        if not user:
+            return jsonify({'error': f'User not found: {data["user"]}'}), 404
+
+    # Generate artist ID
+    # Find highest existing artist ID starting with 'A'
+    max_id_result = db.session.query(db.func.max(Artist.artist_id)).filter(
+        Artist.artist.like('A%')
+    ).scalar()
+
+    if max_id_result:
+        # Extract number from A0000010 -> 10
+        try:
+            current_num = int(max_id_result[2:])
+            new_num = current_num + 1
+        except ValueError:
+            new_num = 1
+    else:
+        new_num = 1
+
+    # Format as A0000001
+    new_artistid = f"A{new_num:07d}"
+
+    # Handling phone number if provided, as it is a CHAR(8)
+    # Format as (123)-456-7890
+    artist_phone = None
+    if data.get('arist_phone'):
+        try:
+            import re
+            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
+            artist_phone = str(data['artist_phone']).strip()
+            if not phone_regex.match(artist_phone):
+                return jsonify({'error': 'Invalid phone-number format. Expected (123)-456-7890'}), 400
+        except:
+            return jsonify({'error': 'Failed to validate phone-number'}), 400
+
+    # adding artist
+    try:
+        artist = Artist(
+            artist_id = new_artistid,
+            artist_fname = data['artist_fname'],
+            artist_lname = data['artist_lname'],
+            artist_email = data.get('email'),
+            artist_site = data.get('artist_side'),
+            artist_bio = data.get('artist_bio'),
+            artist_phone = artist_phone,
+            user_id = data.get('user_id')
+        )
+
+        db.session.add(artist)
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_created',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': new_artistid,
+                'artist_fname': data['artist_fname'],
+                'artist_lname': data['artist_lname'],
+            })
+        )
+
+        db.session.add(AuditLog)
+        db.session.commit()
+
+        app.logger.info(
+            f"Admin {current_user.email} created artist {new_artistid}: "
+            f"{data['artistfname']} {data['artist_lname']}")
+        
+        return jsonify({
+            'message': 'Artist created successfully',
+            'artist': {
+                'id': new_artistid,
+                'artist_fname': artist.artist_fname,
+                'artist_lname': artist.artist_lname,
+                'email': artist.artist_email,
+                'artist_site': artist.artist_site,
+                'artist_bio': artist.artist_bio,
+                'artist_phone': artist.artist_phone,
+                'user_id': artist.user_id
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artist creation failed")
+        return jsonify({'error': 'Failed to create artist. Please try again.'}), 500
+
+
+@app.route('/api/artists/<artist_id>', methods=['PUT'])
+@login_required
+@admin_required
+def update_artist(artist_id):
+    """Update an existing artist
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Audit logged
+
+    Args:
+        artist_id: The ID of artist to update
+
+    Request Body: 
+        artist_fname (str, required): Artist first name
+        artist_lname (str, required): Artist last name
+        email (str, optional): Arist email
+        artist_site  (str, optional): Arist website or social media
+        artist_bio   (str, optional): Artist biography/description
+        artist_phone (str, optional): Artist phone number - must be formatted as 
+                                                           (123)-456-7890
+        user_id      (str, optional): foriegn key to user table
+    
+    Returns:
+        200: Artist updated successfully
+        400: Validation error
+        403: Permission denied
+        404: Artist not found
+    """
+    # Verify artists exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+
+    # Track changes for audit log
+    changes = {}
+
+    # Update artist first name
+    if 'artist_fname' in data and data['artist_fname'] != artist.artist_fname:
+        changes['artist_fname'] = {'old': artist.artist_fname, 'new': data['artist_fname']}
+        artist.artist_fname = data['artist_fname']
+    
+    # Update artist last name
+    if 'artist_lname' in data and data['artist_lname'] != artist.artist_lname:
+        changes['artist_lname'] = {'old': artist.artist_lname, 'new': data['artist_lname']}
+        artist.artist_lname = data['artist_lname']
+    
+    # Update artist email
+    if 'email' in data and data['email'] != artist.artist_email:
+        changes['email'] = {'old': artist.artist_email, 'new': data['email']}
+        artist.artist_email = data['email']
+
+    # Update artist site
+    if 'artist_site' in data and data['artist_site'] != artist.artist_site:
+        changes['artist_site'] = {'old': artist.artist_site, 'new': data['artist_site']}
+        artist.artist_site = data['artist_site']
+    
+    # Update artist bio
+    if 'artist_bio' in data and data['artist_bio'] != artist.artist_bio:
+        changes['artist_bio'] = {'old': artist.artist_bio, 'new': data['artist_bio']}
+        artist.artist_bio = data['artist_bio']
+    
+    # Update artist phone
+    if 'arist_phone' in data:
+        try:
+            import re
+            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
+            new_phone = str(data['artist_phone']).strip()
+            if not phone_regex.match(new_phone):
+                return jsonify({'error': 'Invalid phone-number format. Expected (123)-456-7890'}), 400
+           
+            if new_phone != artist.artist_phone:
+                changes['artist_phone'] = {
+                    'old': artist.artist_phone,
+                    'new': new_phone
+                }
+                artist.artist_phone = new_phone
+        except:
+            return jsonify({'error': 'Failed to validate phone-number'}), 400
+        
+    # Update user id
+    if 'user_id' in data and data['user_id'] != artist.user_id:
+        user = User.query.get(data['user_id'])
+        if not user:
+            return jsonify({'error': f'User ID not found: {data["user_id"]}'}), 404
+        changes['user_id'] = {'old': artist.user_id, 'new': data['user_id']}
+        artist.user_id = data['user_id']
+    
+    # If no changes, return early
+    if not changes:
+        return jsonify({'message': 'No changes detected', 'artist': {'id': artist_id}}), 200
+
+    try:
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_updated',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': artist_id,
+                'changes': changes
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} updated artist {artist_id}")
+
+        return jsonify({
+            'message': 'Artist updated successfully',
+            'artist': {
+                'artist_id': artist.artist_id,
+                'artist_fname': artist.artist_fname,
+                'artist_lname': artist.artist_lname,
+                'email': artist.artist_email,
+                'artist_site': artist.artist_site,
+                'artist_bio': artist.artist_bio,
+                'artist_phone': artist.artist_phone,
+                'user_id': artist.user_id
+            }
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artist update failed")
+        return jsonify({'error': 'Failed to update artist. Please try again.'}), 500
 
 @app.route('/api/artworks', methods=['POST'])
 @login_required
