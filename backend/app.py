@@ -707,6 +707,80 @@ def update_artist(artist_id):
         return jsonify({'error': 'Failed to update artist. Please try again.'}), 500
 
 
+# TODO(artist CRUD, MK): Add a SOFT deletion for artist
+# will have to alter the db schema in order to do so
+@app.route('/api/artists/<artist_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_artist(artist_id):
+    """ Delete an artist 
+        - will only delete artists with no associated artwork dependencies
+    
+    Security:
+    - Requires authentication
+    - Requires admin role
+    - Cascades deletion to artworks and subsequentially photos
+    - Audit logged
+    
+    Args:
+    - artist_id: the artist to delete
+    
+    Returns:
+        200: Artists deleted successfully
+        400: Artist is unable to be deleted due to existing artworks
+        403: Permission denied
+        404: Artist not found
+    """
+    # verify artist exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+    
+    # verify no data dependencies (will adjust this to soft delete after adjusting schema)
+    artworks = Artwork.query.filter_by(artist_id=artist_id, is_deleted=False).count()
+    if artworks > 0:
+        return jsonify({
+            'error': f'Cannot delete artist {artist_id}: {artworks} artworks still exist. '
+                     'Please delete or reassign artworks first.'
+        }), 400
+    
+    try:
+        # Delete Artist
+        artist_name = f"{artist.artist_fname} {artist.artist_lname}"
+        artist_id = artist.artist_id
+        db.session.delete(artist)
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_deleted',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': artist_id,
+                'artist_name': artist_name
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} deleted artist {artist_id}")
+
+        return jsonify({
+            'message': 'Artist deleted successfully',
+            'deleted': {
+                'artist_id': artist_id,
+                'artist_name': artist_name,
+            }
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artist deletion failed")
+        return jsonify({'error': 'Failed to delete artist. Please try again.'}), 500
+
 
 # Artwork CRUD Endpoints
 @app.route('/api/artworks', methods=['GET'])
