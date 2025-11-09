@@ -101,6 +101,7 @@
   let lastApiCheck = null;
   let apiCheckInterval = null;
   let currentTime = new Date(); // For reactive time display
+  let overallHealthStatus = 'unknown'; // Overall system health status
 
   // CLI state
   let writeMode = false;
@@ -178,10 +179,11 @@
         health = { status: 'unknown', service: 'canvas-clay-backend' };
       }
 
-      // Start periodic API check if health tab is active
-      if (activeTab === 'health') {
-        startPeriodicApiCheck();
-      }
+      // Initialize overall health status from backend health
+      overallHealthStatus = health?.status || 'unknown';
+
+      // Start periodic API check on page load to keep overview tab updated
+      startPeriodicApiCheck();
 
       // Load CLI help
       await loadCLIHelp();
@@ -338,10 +340,8 @@
   const handleTabChange = (tab) => {
     activeTab = tab;
     
-    // Stop periodic checks when leaving health tab
-    if (tab !== 'health') {
-      stopPeriodicApiCheck();
-    }
+    // Keep API checks running regardless of tab (for overview health badge)
+    // Don't stop/start based on tab anymore
     
     if (tab === 'security' && auditLogs.length === 0) {
       loadAuditLogs();
@@ -360,20 +360,37 @@
           commandInputElement.focus();
         }
       }, 100);
-    } else if (tab === 'health') {
-      // Start periodic API health checks when health tab is opened
-      startPeriodicApiCheck();
     }
+    // API checks run continuously, no need to start/stop per tab
   };
 
   const testApiConnection = async () => {
     apiTestLoading = true;
-    apiTestResult = null;
+    // Don't reset apiTestResult to null - keep previous result until new one is ready
+    // This prevents the health badge from flickering back to healthy
     try {
       const response = await fetch(`${PUBLIC_API_BASE_URL}/`, {
         credentials: 'include',
         headers: { accept: 'application/json' }
       });
+      
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const retryMsg = retryAfter ? ` Please wait ${retryAfter} seconds.` : '';
+        const checkTime = new Date();
+        lastApiCheck = checkTime;
+        currentTime = checkTime;
+        apiTestResult = {
+          success: false,
+          message: `Rate limit exceeded. Too many requests.${retryMsg}`
+        };
+        // Update overall health status directly
+        overallHealthStatus = 'unhealthy';
+        if (activeTab === 'cli') {
+          addCLIOutput(`Rate limit warning: API health check rate limited.${retryMsg}`, 'warning');
+        }
+        return;
+      }
       
       const data = await response.json();
       const checkTime = new Date();
@@ -387,23 +404,68 @@
           message: data.message,
           status: data.status
         };
+        // Force reactivity
+        apiTestResult = { ...apiTestResult };
+        // Update overall health status directly
+        overallHealthStatus = health?.status || 'unknown';
       } else {
         apiTestResult = {
           success: false,
           message: `Unexpected response: ${data.message || 'Unknown'}`
         };
+        // Update overall health status directly
+        overallHealthStatus = 'unhealthy';
       }
     } catch (err) {
       const checkTime = new Date();
       lastApiCheck = checkTime;
       // Update currentTime immediately to prevent negative time differences
       currentTime = checkTime;
+      
+      // Provide more helpful error messages
+      let errorMessage = 'Connection failed';
+      if (err.message === 'Failed to fetch') {
+        errorMessage = 'Unable to connect to the API. The backend server may be down or unreachable. Check if the backend is running and accessible.';
+      } else if (err.message.includes('NetworkError') || err.message.includes('network')) {
+        errorMessage = 'Network error: Unable to reach the API server. Check your internet connection and ensure the backend is running.';
+      } else if (err.message.includes('timeout')) {
+        errorMessage = 'Request timed out: The API server took too long to respond. The server may be overloaded or experiencing issues.';
+      } else {
+        errorMessage = `Connection failed: ${err.message}. The API may be unavailable or experiencing issues.`;
+      }
+      
+      // Create new object to ensure Svelte reactivity
       apiTestResult = {
         success: false,
-        message: `Connection failed: ${err.message}`
+        message: errorMessage
       };
+      // Force reactivity by creating a new reference
+      apiTestResult = { ...apiTestResult };
+      // Update overall health status directly
+      overallHealthStatus = 'unhealthy';
     } finally {
       apiTestLoading = false;
+    }
+  };
+
+  const refreshHealthData = async () => {
+    try {
+      const healthRes = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
+        credentials: 'include',
+        headers: {
+          accept: 'application/json'
+        }
+      });
+      
+      if (healthRes.ok) {
+        health = await healthRes.json();
+        // Update overall health status if API test passed (don't override unhealthy from API test)
+        if (apiTestResult && apiTestResult.success) {
+          overallHealthStatus = health?.status || 'unknown';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refresh health data:', err);
     }
   };
 
@@ -415,10 +477,12 @@
     
     // Run initial check
     testApiConnection();
+    refreshHealthData();
     
     // Set up periodic checks every 30 seconds
     apiCheckInterval = setInterval(() => {
       testApiConnection();
+      refreshHealthData();
     }, 30000);
   };
 
@@ -428,6 +492,7 @@
       apiCheckInterval = null;
     }
   };
+
 
   const formatTimeAgo = (date) => {
     if (!date) return 'Never';
@@ -523,6 +588,15 @@
         })
       });
 
+      // Check for rate limiting
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const retryMsg = retryAfter ? ` Please wait ${retryAfter} seconds.` : '';
+        addCLIOutput(`Rate limit exceeded: Too many requests.${retryMsg}`, 'error');
+        addCLIOutput('Please wait before trying again.', 'warning');
+        return;
+      }
+
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
@@ -584,6 +658,17 @@
             confirmation_token: pendingDeleteConfirmation.token
           })
         });
+        
+        // Check for rate limiting on delete
+        if (deleteResponse.status === 429) {
+          const retryAfter = deleteResponse.headers.get('Retry-After');
+          const retryMsg = retryAfter ? ` Please wait ${retryAfter} seconds.` : '';
+          addCLIOutput(`Rate limit exceeded: Too many requests.${retryMsg}`, 'error');
+          addCLIOutput('Please wait before trying again.', 'warning');
+          pendingDeleteConfirmation = null;
+          confirmationStep = 0;
+          return;
+        }
         
         // Check if response is JSON
         const deleteContentType = deleteResponse.headers.get('content-type');
@@ -723,13 +808,18 @@
     cliOutput = [];
   };
 
-  const toggleWriteMode = () => {
-    if (!writeMode) {
+  const toggleWriteMode = (e) => {
+    const newValue = e.target.checked;
+    if (newValue && !writeMode) {
+      // User is trying to enable write mode
       if (!confirm('WARNING: Enabling write mode allows you to modify the database. Are you sure?')) {
+        // User cancelled - revert checkbox
+        e.target.checked = false;
+        writeMode = false;
         return;
       }
     }
-    writeMode = !writeMode;
+    writeMode = newValue;
   };
 
   // Easter egg: randomly show "greetings, J here" message
@@ -761,7 +851,8 @@
   // Explicitly reference currentTime to ensure reactivity
   $: timeAgoDisplay = lastApiCheck && currentTime ? formatTimeAgo(lastApiCheck) : 'Never';
   
-  $: if (activeTab === 'health' && lastApiCheck) {
+  // Update time display continuously when we have a lastApiCheck
+  $: if (lastApiCheck) {
     // Clear existing interval
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
@@ -771,7 +862,7 @@
       currentTime = new Date();
     }, 1000);
   } else {
-    // Clear interval when not on health tab or no lastApiCheck
+    // Clear interval when no lastApiCheck
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
       timeUpdateInterval = null;
@@ -813,12 +904,6 @@
       Overview
     </button>
     <button
-      class:active={activeTab === 'health'}
-      on:click={() => handleTabChange('health')}
-    >
-      Health
-    </button>
-    <button
       class:active={activeTab === 'security'}
       on:click={() => handleTabChange('security')}
     >
@@ -849,9 +934,49 @@
       <div class="overview">
         <div class="health-status">
           <h2>System Health</h2>
-          <div class="status-badge" class:healthy={health?.status === 'healthy'}>
-            {health?.status || 'unknown'}
+          <div class="status-badge" class:healthy={overallHealthStatus === 'healthy'}>
+            {overallHealthStatus}
           </div>
+        </div>
+
+        <div class="api-test-section">
+          <div class="api-test-header">
+            <h3>API Connection Test</h3>
+            <button 
+              on:click={testApiConnection} 
+              disabled={apiTestLoading}
+              class="test-api-btn"
+            >
+              {apiTestLoading ? 'Testing...' : 'Test API Connection'}
+            </button>
+          </div>
+          
+          {#if apiTestResult}
+            <div class="api-test-result" class:success={apiTestResult.success} class:error={!apiTestResult.success}>
+              {#if apiTestResult.success}
+                <p><strong>Success:</strong> {apiTestResult.message}</p>
+              {:else}
+                <p><strong>Error:</strong> {apiTestResult.message}</p>
+              {/if}
+            </div>
+          {/if}
+          
+          {#if lastApiCheck}
+            <div class="last-check">
+              Last checked: {timeAgoDisplay}
+            </div>
+          {/if}
+          
+          <div class="periodic-check-info">
+            <p>Automatic health checks run every 30 seconds while this tab is open.</p>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <h3>Backend Health Details</h3>
+          <div><strong>Database Status:</strong> {health?.database?.status || 'unknown'}</div>
+          <div><strong>Database Engine:</strong> {health?.database?.engine || 'unknown'}</div>
+          <div><strong>Environment:</strong> {health?.environment || 'unknown'}</div>
         </div>
 
         <div class="stats-grid">
@@ -881,52 +1006,6 @@
             <div>New Users: {stats?.recent_activity?.users_last_24h || 0}</div>
             <div>Failed Logins: {stats?.recent_activity?.failed_logins_last_24h || 0}</div>
           </div>
-        </div>
-      </div>
-    {:else if activeTab === 'health'}
-      <div class="health">
-        <h2>System Health</h2>
-        
-        <div class="api-test-section">
-          <div class="api-test-header">
-            <h3>API Connection Test</h3>
-            <button 
-              on:click={testApiConnection} 
-              disabled={apiTestLoading}
-              class="test-api-btn"
-            >
-              {apiTestLoading ? 'Testing...' : 'Test API Connection'}
-            </button>
-          </div>
-          
-          {#if apiTestResult}
-            <div class="api-test-result" class:success={apiTestResult.success} class:error={!apiTestResult.success}>
-              {#if apiTestResult.success}
-                <p><strong>Success:</strong> {apiTestResult.message}</p>
-                <p><strong>Status:</strong> {apiTestResult.status}</p>
-              {:else}
-                <p><strong>Error:</strong> {apiTestResult.message}</p>
-              {/if}
-            </div>
-          {/if}
-          
-          {#if lastApiCheck}
-            <div class="last-check">
-              Last checked: {timeAgoDisplay}
-            </div>
-          {/if}
-          
-          <div class="periodic-check-info">
-            <p>Automatic health checks run every 30 seconds when this tab is active.</p>
-          </div>
-        </div>
-        
-        <div class="info-section">
-          <div><strong>Status:</strong> {health?.status || 'unknown'}</div>
-          <div><strong>Service:</strong> {health?.service || 'unknown'}</div>
-          <div><strong>Database Status:</strong> {health?.database?.status || 'unknown'}</div>
-          <div><strong>Database Engine:</strong> {health?.database?.engine || 'unknown'}</div>
-          <div><strong>Environment:</strong> {health?.environment || 'unknown'}</div>
         </div>
       </div>
     {:else if activeTab === 'security'}
@@ -1095,7 +1174,7 @@
         <div class="cli-controls">
           <div class="write-mode-toggle">
             <label>
-              <input type="checkbox" bind:checked={writeMode} on:change={toggleWriteMode} />
+              <input type="checkbox" checked={writeMode} on:change={toggleWriteMode} />
               <span class:active={writeMode}>Write Mode</span>
             </label>
             {#if writeMode}

@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '$env/static/private';
+import { extractErrorMessage } from '$lib/utils/errorMessages';
 
 export const load = async ({ url, fetch }) => {
   const rawQuery = url.searchParams.get('q') ?? '';
@@ -19,7 +20,8 @@ export const load = async ({ url, fetch }) => {
     );
 
     if (!response.ok) {
-      return { q: rawQuery, results: [], error: `Search failed: HTTP ${response.status}` };
+      const errorMessage = await extractErrorMessage(response, 'perform search');
+      return { q: rawQuery, results: [], error: errorMessage };
     }
 
     const data = await response.json();
@@ -28,8 +30,10 @@ export const load = async ({ url, fetch }) => {
     return { q: rawQuery, results: items, error: null };
     
   } catch (err) {
-      console.error('search load failed for', searchTerm, err);
-      const message = err instanceof Error ? err.message : 'Unexpected error while performing search';
+    console.error('search load failed for', searchTerm, err);
+    const message = err instanceof Error 
+      ? `${err.message}. Suggestion: Check your internet connection and try again.` 
+      : 'Unexpected error while performing search. Suggestion: Refresh the page or try again later.';
     return { q: rawQuery, results: [], error: message };
   }
 };

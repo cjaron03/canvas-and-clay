@@ -43,6 +43,7 @@ def admin_required(f):
 
 
 @auth_bp.route('/csrf-token', methods=['GET'])
+@rate_limit("100 per minute")  # More lenient limit for frequently-called endpoint
 def get_csrf_token():
     """get csrf token for frontend requests.
     
@@ -436,6 +437,7 @@ def logout():
 
 
 @auth_bp.route('/me', methods=['GET'])
+@rate_limit("100 per minute")  # More lenient limit for frequently-called endpoint
 @login_required
 def get_current_user():
     """Get current authenticated user information.

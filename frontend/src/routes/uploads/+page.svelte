@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
+  import { extractErrorMessage } from '$lib/utils/errorMessages';
 
   let activeTab = 'existing'; // 'existing' or 'new'
   let csrfToken = '';
@@ -134,7 +135,7 @@
   // Upload photos to existing artwork
   const uploadToExistingArtwork = async () => {
     if (!artworkId.trim()) {
-      uploadError = 'Please enter an artwork ID';
+      uploadError = 'Please select an artwork from the dropdown';
       return;
     }
 
@@ -175,59 +176,16 @@
         if (response.ok) {
           uploadProgress[i] = { status: 'success', message: 'Uploaded successfully!' };
         } else {
-          // Handle authentication errors specially
-          if (response.status === 401) {
-            uploadProgress[i] = {
-              status: 'error',
-              message: 'Not logged in. Please log in at /auth/login to upload photos.'
-            };
-          } else if (response.status === 409) {
-            // Duplicate file error
-            try {
-              const error = await response.json();
-              uploadProgress[i] = {
-                status: 'error',
-                message: error.error || 'Duplicate file - a photo with this filename already exists'
-              };
-            } catch {
-              uploadProgress[i] = {
-                status: 'error',
-                message: 'Duplicate file - a photo with this filename already exists'
-              };
-            }
-          } else if (response.status === 400) {
-            // CSRF or validation error
-            try {
-              const error = await response.json();
-              uploadProgress[i] = {
-                status: 'error',
-                message: error.error || 'Bad request - check CSRF token or file validation'
-              };
-            } catch {
-              uploadProgress[i] = {
-                status: 'error',
-                message: `Upload failed: HTTP ${response.status} - Possible CSRF token issue. Try refreshing the page.`
-              };
-            }
-          } else {
-            try {
-              const error = await response.json();
-              uploadProgress[i] = {
-                status: 'error',
-                message: error.error || `Upload failed with HTTP ${response.status}`
-              };
-            } catch {
-              uploadProgress[i] = {
-                status: 'error',
-                message: `Upload failed: HTTP ${response.status} - ${response.statusText || 'Server error'}`
-              };
-            }
-          }
+          const errorMessage = await extractErrorMessage(response, 'upload photo');
+          uploadProgress[i] = {
+            status: 'error',
+            message: errorMessage
+          };
         }
       } catch (error) {
         uploadProgress[i] = {
           status: 'error',
-          message: `Upload failed: ${error.message}`
+          message: `Upload failed: ${error.message}. Suggestion: Check your internet connection and try again.`
         };
       }
 
@@ -289,59 +247,16 @@
             message: `Uploaded! Photo ID: ${data.photo.id}`
           };
         } else {
-          // Handle authentication errors specially
-          if (response.status === 401) {
-            orphanedProgress[i] = {
-              status: 'error',
-              message: 'Not logged in. Please log in at /auth/login to upload photos.'
-            };
-          } else if (response.status === 409) {
-            // Duplicate file error
-            try {
-              const error = await response.json();
-              orphanedProgress[i] = {
-                status: 'error',
-                message: error.error || 'Duplicate file - a photo with this filename already exists'
-              };
-            } catch {
-              orphanedProgress[i] = {
-                status: 'error',
-                message: 'Duplicate file - a photo with this filename already exists'
-              };
-            }
-          } else if (response.status === 400) {
-            // CSRF or validation error
-            try {
-              const error = await response.json();
-              orphanedProgress[i] = {
-                status: 'error',
-                message: error.error || 'Bad request - check CSRF token or file validation'
-              };
-            } catch {
-              orphanedProgress[i] = {
-                status: 'error',
-                message: `Upload failed: HTTP ${response.status} - Possible CSRF token issue. Try refreshing the page.`
-              };
-            }
-          } else {
-            try {
-              const error = await response.json();
-              orphanedProgress[i] = {
-                status: 'error',
-                message: error.error || `Upload failed with HTTP ${response.status}`
-              };
-            } catch {
-              orphanedProgress[i] = {
-                status: 'error',
-                message: `Upload failed: HTTP ${response.status} - ${response.statusText || 'Server error'}`
-              };
-            }
-          }
+          const errorMessage = await extractErrorMessage(response, 'upload photo');
+          orphanedProgress[i] = {
+            status: 'error',
+            message: errorMessage
+          };
         }
       } catch (error) {
         orphanedProgress[i] = {
           status: 'error',
-          message: `Upload failed: ${error.message}`
+          message: `Upload failed: ${error.message}. Suggestion: Check your internet connection and try again.`
         };
       }
 
@@ -382,7 +297,7 @@
 {#if activeTab === 'existing'}
   <div class="tab-content">
     <h2>Upload Photos to Existing Artwork</h2>
-    <p>Upload photos for an artwork that already exists in the database.</p>
+    <p>Search for an artwork below and select it to upload photos.</p>
 
     <form on:submit|preventDefault={uploadToExistingArtwork}>
       <div class="form-group artwork-selector">
@@ -420,23 +335,12 @@
         {#if isLoadingArtworks}
           <small>Loading artworks...</small>
         {:else if artworks.length === 0}
-          <small>No artworks found. <a href="/artworks">Browse artworks</a> or enter an ID manually below.</small>
+          <small>No artworks found. <a href="/artworks">Browse artworks</a> to create one first.</small>
         {:else}
-          <small>{artworks.length} artworks available</small>
+          <small>{artworks.length} artworks available. Select one from the dropdown above.</small>
         {/if}
-      </div>
-
-      <div class="form-group">
-        <label for="artwork-id">Or Enter Artwork ID Manually</label>
-        <input
-          id="artwork-id"
-          type="text"
-          bind:value={artworkId}
-          placeholder="Enter artwork ID (e.g., AW000001)"
-          required
-        />
-        {#if artworkId && !artworks.find(a => a.id === artworkId)}
-          <small class="warning">⚠ This artwork ID was not found in the list above</small>
+        {#if !artworkId && artworkSearch}
+          <small class="warning">⚠ Please select an artwork from the dropdown</small>
         {/if}
       </div>
 
@@ -583,7 +487,7 @@
     display: flex;
     gap: 1rem;
     margin-bottom: 2rem;
-    border-bottom: 2px solid #444;
+    border-bottom: 2px solid var(--border-color);
   }
 
   .tabs button {
@@ -594,15 +498,15 @@
     cursor: pointer;
     font-size: 1rem;
     transition: all 0.2s;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .tabs button:hover {
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
   }
 
   .tabs button.active {
-    border-bottom-color: #5a9fd4;
+    border-bottom-color: var(--accent-color);
     font-weight: bold;
   }
 
@@ -618,35 +522,35 @@
     display: block;
     margin-bottom: 0.5rem;
     font-weight: bold;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .form-group input[type="text"],
   .form-group input[type="file"] {
     width: 100%;
     padding: 0.5rem;
-    border: 1px solid #444;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    background: #1e1e1e;
-    color: #e0e0e0;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
   }
 
   .form-group input[type="text"]:focus,
   .form-group input[type="file"]:focus {
     outline: none;
-    border-color: #5a9fd4;
+    border-color: var(--accent-color);
   }
 
   .form-group small {
     display: block;
     margin-top: 0.25rem;
-    color: #999;
+    color: var(--text-secondary);
     font-size: 0.875rem;
   }
 
   button[type="submit"] {
     padding: 0.75rem 1.5rem;
-    background: #5a9fd4;
+    background: var(--accent-color);
     color: white;
     border: none;
     border-radius: 4px;
@@ -655,19 +559,19 @@
   }
 
   button[type="submit"]:hover:not(:disabled) {
-    background: #4a8fc4;
+    background: var(--accent-hover);
   }
 
   button[type="submit"]:disabled {
-    background: #444;
-    color: #666;
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
     cursor: not-allowed;
   }
 
   .file-preview {
     padding: 1rem;
-    background: #1e1e1e;
-    border: 1px solid #444;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     margin-bottom: 1rem;
   }
@@ -681,9 +585,9 @@
   .file-preview li {
     margin: 0.75rem 0;
     padding: 0.5rem;
-    background: #252525;
+    background: var(--bg-tertiary);
     border-radius: 4px;
-    border-left: 3px solid #444;
+    border-left: 3px solid var(--border-color);
   }
 
   .file-item {
@@ -694,14 +598,14 @@
   }
 
   .file-info {
-    color: #e0e0e0;
+    color: var(--text-primary);
     margin-bottom: 0.25rem;
     flex: 1;
   }
 
   .remove-btn {
-    background: #5a2d2d;
-    color: #d5a8a8;
+    background: rgba(211, 47, 47, 0.2);
+    color: var(--error-color);
     border: none;
     border-radius: 4px;
     width: 28px;
@@ -717,7 +621,7 @@
   }
 
   .remove-btn:hover {
-    background: #7a3d3d;
+    background: rgba(211, 47, 47, 0.3);
     transform: scale(1.1);
   }
 
@@ -732,63 +636,63 @@
   }
 
   .status-message.success {
-    background: #1e3a1e;
-    color: #a8d5a8;
-    border: 1px solid #2d5a2d;
+    background: rgba(76, 175, 80, 0.1);
+    color: var(--success-color);
+    border: 1px solid var(--success-color);
   }
 
   .status-message.error {
-    background: #3a1e1e;
-    color: #d5a8a8;
-    border: 1px solid #5a2d2d;
+    background: rgba(211, 47, 47, 0.2);
+    color: var(--error-color);
+    border: 1px solid var(--error-color);
   }
 
   .status-pending {
-    color: #999;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     margin-top: 0.25rem;
   }
 
   .status-uploading {
-    color: #5a9fd4;
+    color: var(--accent-color);
     font-weight: bold;
     font-size: 0.875rem;
     margin-top: 0.25rem;
   }
 
   .status-success {
-    color: #6fbf6f;
+    color: var(--success-color);
     font-weight: bold;
     font-size: 0.875rem;
     margin-top: 0.25rem;
     padding: 0.5rem;
-    background: #1e3a1e;
+    background: rgba(76, 175, 80, 0.1);
     border-radius: 3px;
-    border-left: 3px solid #6fbf6f;
+    border-left: 3px solid var(--success-color);
   }
 
   .status-error {
-    color: #d57676;
+    color: var(--error-color);
     font-weight: bold;
     font-size: 0.875rem;
     margin-top: 0.25rem;
     padding: 0.5rem;
-    background: #3a1e1e;
+    background: rgba(211, 47, 47, 0.2);
     border-radius: 3px;
-    border-left: 3px solid #d57676;
+    border-left: 3px solid var(--error-color);
   }
 
   .photo-ids {
     padding: 1rem;
-    background: #1e2a3a;
-    border: 1px solid #3a4a5a;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     margin: 1rem 0;
   }
 
   .photo-ids code {
-    background: #2a2a2a;
-    color: #e0e0e0;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
     padding: 0.25rem 0.5rem;
     border-radius: 3px;
     font-family: monospace;
@@ -810,8 +714,8 @@
     right: 0;
     max-height: 400px;
     overflow-y: auto;
-    background: #1e1e1e;
-    border: 1px solid #5a9fd4;
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent-color);
     border-radius: 4px;
     margin-top: 0.25rem;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
@@ -823,14 +727,14 @@
     padding: 0.75rem;
     background: none;
     border: none;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid var(--border-color);
     cursor: pointer;
     text-align: left;
     transition: background 0.2s;
   }
 
   .dropdown-item:hover {
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
   }
 
   .dropdown-item:last-child {
@@ -844,8 +748,8 @@
   }
 
   .artwork-id-option code {
-    background: #2a2a2a;
-    color: #5a9fd4;
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
     padding: 0.25rem 0.5rem;
     border-radius: 3px;
     font-family: monospace;
@@ -854,12 +758,12 @@
   }
 
   .artwork-title {
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-weight: 500;
   }
 
   .artwork-artist {
-    color: #999;
+    color: var(--text-secondary);
     font-size: 0.875rem;
   }
 
