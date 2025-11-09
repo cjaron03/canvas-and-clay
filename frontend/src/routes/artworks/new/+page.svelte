@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { auth } from '$lib/stores/auth';
   import { goto } from '$app/navigation';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
 
