@@ -339,8 +339,8 @@
         {:else}
           <small>{artworks.length} artworks available. Select one from the dropdown above.</small>
         {/if}
-        {#if !artworkId && artworkSearch}
-          <small class="warning">⚠ Please select an artwork from the dropdown</small>
+        {#if !artworkId && artworkSearch && selectedFiles.length > 0}
+          <small class="warning">⚠ Please select an artwork from the dropdown before uploading</small>
         {/if}
       </div>
 
