@@ -109,8 +109,6 @@
   let historyIndex = -1;
   let cliOutput = [];
   let cliHelp = null;
-  let autocompleteSuggestions = [];
-  let showAutocomplete = false;
   let pendingDeleteConfirmation = null;
   let confirmationStep = 0; // 0 = none, 1 = first, 2 = second
   let cliOutputElement;
