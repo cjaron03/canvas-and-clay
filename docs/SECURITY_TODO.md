@@ -218,10 +218,10 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
   - [x] Never use raw SQL with user input
   - [x] Parameterize any necessary raw queries
   
-- [ ] **Connection Security**
-  - [ ] Use environment variables for DB credentials
-  - [ ] Implement connection pooling
-  - [ ] Enable SSL for DB connections in production
+- [x] **Connection Security**
+  - [x] Use environment variables for DB credentials (DB_HOST/PORT/NAME/USER/PASSWORD + fallback DATABASE_URL)
+  - [x] Implement connection pooling (SQLALCHEMY_ENGINE_OPTIONS via DB_POOL_* env vars)
+  - [x] Enable SSL for DB connections in production (DB_SSL_MODE + optional DB_SSL_ROOT_CERT)
 
 ### XSS Protection
 - [ ] **Cross-Site Scripting Prevention**
