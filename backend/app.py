@@ -472,98 +472,124 @@ def list_artworks():
     artist_id = request.args.get('artist_id', '').strip()
     medium = request.args.get('medium', '').strip()
 
-    # Build base query
-    query = db.session.query(Artwork, Artist).join(
-        Artist, Artwork.artist_id == Artist.artist_id
-    )
-
-    # Apply filters
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.filter(
-            db.or_(
-                Artwork.artwork_ttl.ilike(search_pattern),
-                Artwork.artwork_medium.ilike(search_pattern),
-                Artist.artist_fname.ilike(search_pattern),
-                Artist.artist_lname.ilike(search_pattern)
-            )
+    try:
+        # Build base query with LEFT JOIN to handle artworks without artists
+        query = db.session.query(Artwork, Artist).outerjoin(
+            Artist, Artwork.artist_id == Artist.artist_id
         )
 
-    if artist_id:
-        query = query.filter(Artwork.artist_id == artist_id)
+        # Apply filters
+        if search:
+            search_pattern = f"%{search}%"
+            # Build search conditions - handle NULL artists gracefully
+            search_conditions = [
+                Artwork.artwork_ttl.ilike(search_pattern),
+                Artwork.artwork_medium.ilike(search_pattern)
+            ]
+            # Add artist search conditions (will be NULL-safe with outerjoin)
+            search_conditions.extend([
+                Artist.artist_fname.ilike(search_pattern),
+                Artist.artist_lname.ilike(search_pattern)
+            ])
+            query = query.filter(db.or_(*search_conditions))
 
-    if medium:
-        query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+        if artist_id:
+            query = query.filter(Artwork.artist_id == artist_id)
 
-    # Get total count before pagination
-    total = query.count()
+        if medium:
+            query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
 
-    # Apply pagination
-    query = query.order_by(Artwork.artwork_num.desc())
-    query = query.offset((page - 1) * per_page).limit(per_page)
+        # Get total count before pagination
+        total = query.count()
 
-    # Execute query
-    results = query.all()
+        # Apply pagination
+        query = query.order_by(Artwork.artwork_num.desc())
+        query = query.offset((page - 1) * per_page).limit(per_page)
 
-    # Build response
-    artworks = []
-    for artwork, artist in results:
-        # Get primary photo or first photo
-        primary_photo = ArtworkPhoto.query.filter_by(
-            artwork_num=artwork.artwork_num,
-            is_primary=True
-        ).first()
+        # Execute query
+        results = query.all()
 
-        if not primary_photo:
+        # Build response
+        artworks = []
+        for artwork, artist in results:
+            # Get primary photo or first photo
             primary_photo = ArtworkPhoto.query.filter_by(
-                artwork_num=artwork.artwork_num
+                artwork_num=artwork.artwork_num,
+                is_primary=True
             ).first()
 
-        # Get photo count
-        photo_count = ArtworkPhoto.query.filter_by(
-            artwork_num=artwork.artwork_num
-        ).count()
+            if not primary_photo:
+                primary_photo = ArtworkPhoto.query.filter_by(
+                    artwork_num=artwork.artwork_num
+                ).first()
 
-        # Get storage info
-        storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+            # Get photo count
+            photo_count = ArtworkPhoto.query.filter_by(
+                artwork_num=artwork.artwork_num
+            ).count()
 
-        artworks.append({
-            'id': artwork.artwork_num,
-            'title': artwork.artwork_ttl,
-            'medium': artwork.artwork_medium,
-            'size': artwork.artwork_size,
-            'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
-            'artist': {
-                'id': artist.artist_id,
-                'name': f"{artist.artist_fname} {artist.artist_lname}",
-                'email': artist.artist_email
-            },
-            'storage': {
-                'id': storage.storage_id,
-                'location': storage.storage_loc,
-                'type': storage.storage_type
-            } if storage else None,
-            'primary_photo': {
-                'id': primary_photo.photo_id,
-                'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
-            } if primary_photo else None,
-            'photo_count': photo_count
-        })
+            # Get storage info
+            storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
 
-    # Calculate pagination metadata
-    total_pages = (total + per_page - 1) // per_page
+            # Build artist info safely
+            artist_info = None
+            if artist:
+                artist_name = 'Unknown Artist'
+                if artist.artist_fname and artist.artist_lname:
+                    artist_name = f"{artist.artist_fname} {artist.artist_lname}"
+                elif artist.artist_fname:
+                    artist_name = artist.artist_fname
+                elif artist.artist_lname:
+                    artist_name = artist.artist_lname
+                
+                artist_info = {
+                    'id': artist.artist_id,
+                    'name': artist_name,
+                    'email': artist.artist_email
+                }
+            else:
+                artist_info = {
+                    'id': None,
+                    'name': 'Unknown Artist',
+                    'email': None
+                }
 
-    return jsonify({
-        'artworks': artworks,
-        'pagination': {
-            'page': page,
-            'per_page': per_page,
-            'total': total,
-            'total_pages': total_pages,
-            'has_next': page < total_pages,
-            'has_prev': page > 1
-        }
-    })
+            artworks.append({
+                'id': artwork.artwork_num,
+                'title': artwork.artwork_ttl,
+                'medium': artwork.artwork_medium,
+                'size': artwork.artwork_size,
+                'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'artist': artist_info,
+                'storage': {
+                    'id': storage.storage_id,
+                    'location': storage.storage_loc or '',
+                    'type': storage.storage_type or ''
+                } if storage else None,
+                'primary_photo': {
+                    'id': primary_photo.photo_id,
+                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+                } if primary_photo else None,
+                'photo_count': photo_count
+            })
+
+        # Calculate pagination metadata
+        total_pages = (total + per_page - 1) // per_page
+
+        return jsonify({
+            'artworks': artworks,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'total_pages': total_pages,
+                'has_next': page < total_pages,
+                'has_prev': page > 1
+            }
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to list artworks")
+        return jsonify({'error': 'Failed to load artworks. Please try again.'}), 500
 
 
 @app.route('/api/artworks/<artwork_id>', methods=['GET'])
@@ -929,6 +955,7 @@ def update_artwork(artwork_id):
 
 
 @app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
+@csrf.exempt  # Exempt from CSRF - already protected by auth and admin checks
 @login_required
 @admin_required
 def delete_artwork(artwork_id):

@@ -34,26 +34,63 @@
     deleteError = null;
 
     try {
+      // Ensure we have a CSRF token
+      let csrfToken = $auth.csrfToken;
+      if (!csrfToken) {
+        // Fetch CSRF token if we don't have one
+        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+          credentials: 'include'
+        });
+        if (csrfResponse.ok) {
+          const csrfData = await csrfResponse.json();
+          csrfToken = csrfData.csrf_token;
+        }
+      }
+
       const response = await fetch(
-        `${PUBLIC_API_BASE_URL}/api/artworks/${data.artwork.id}`,
+        `${PUBLIC_API_BASE_URL}/api/artworks/${encodeURIComponent(data.artwork.id)}`,
         {
           method: 'DELETE',
           headers: {
-            'X-CSRFToken': $auth.csrfToken
+            'X-CSRFToken': csrfToken || '',
+            'Content-Type': 'application/json'
           },
           credentials: 'include'
         }
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to delete artwork');
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type') || '';
+        let errorMessage = 'Failed to delete artwork';
+        
+        if (contentType.includes('application/json')) {
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            // JSON parsing failed, use default message
+          }
+        } else {
+          // Non-JSON response (likely HTML error page)
+          if (response.status === 400) {
+            errorMessage = 'Bad request. The artwork may have associated photos that cannot be deleted, or the request is invalid.';
+          } else if (response.status === 403) {
+            errorMessage = 'Permission denied. You do not have permission to delete artworks.';
+          } else if (response.status === 404) {
+            errorMessage = 'Artwork not found. It may have already been deleted.';
+          } else {
+            errorMessage = `Failed to delete artwork (HTTP ${response.status}). Please try again.`;
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
 
       // Redirect to artworks list after successful deletion
       goto('/artworks');
     } catch (err) {
-      deleteError = err.message;
+      deleteError = err.message || 'An unexpected error occurred while deleting the artwork.';
       isDeleting = false;
       deleteConfirm = false;
     }

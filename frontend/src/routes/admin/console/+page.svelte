@@ -237,7 +237,32 @@
   const formatDate = (dateString) => {
     if (!dateString) return 'Never';
     try {
-      return new Date(dateString).toLocaleString();
+      // Parse the date string - if it doesn't have timezone info, assume UTC
+      let date;
+      if (dateString.endsWith('Z') || dateString.includes('+') || dateString.includes('-', 10)) {
+        // Has timezone info, parse directly
+        date = new Date(dateString);
+      } else {
+        // No timezone info, assume UTC and append 'Z'
+        date = new Date(dateString + (dateString.includes('T') ? 'Z' : ''));
+      }
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return dateString;
+      }
+      
+      // Format in local timezone (automatically converts from UTC)
+      return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        timeZoneName: 'short'
+      });
     } catch {
       return dateString;
     }

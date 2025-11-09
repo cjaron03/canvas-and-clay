@@ -99,12 +99,145 @@
     }
   };
 
+  // Validate file
+  const validateFile = (file) => {
+    const maxSize = 10 * 1024 * 1024; // 10MB in bytes
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+    
+    if (!file.type || !allowedTypes.includes(file.type)) {
+      return {
+        valid: false,
+        error: `"${file.name}" is not a supported image format. Accepted formats: JPG, PNG, WebP, AVIF.`
+      };
+    }
+    
+    if (file.size > maxSize) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      return {
+        valid: false,
+        error: `"${file.name}" is too large (${sizeMB}MB). Maximum file size is 10MB.`
+      };
+    }
+    
+    return { valid: true };
+  };
+
   // Handle file selection for existing artwork
   const handleFileSelect = (event) => {
-    selectedFiles = Array.from(event.target.files);
-    uploadStatus = '';
-    uploadError = '';
-    uploadProgress = selectedFiles.map(() => ({ status: 'pending', message: '' }));
+    const files = event.target.files || event.dataTransfer?.files;
+    if (files) {
+      const fileArray = Array.from(files);
+      const errors = [];
+      const validFiles = [];
+      
+      fileArray.forEach(file => {
+        const validation = validateFile(file);
+        if (validation.valid) {
+          validFiles.push(file);
+        } else {
+          errors.push(validation.error);
+        }
+      });
+      
+      selectedFiles = validFiles;
+      uploadStatus = '';
+      
+      if (errors.length > 0) {
+        uploadError = errors.join(' ');
+      } else {
+        uploadError = '';
+      }
+      
+      uploadProgress = validFiles.map(() => ({ status: 'pending', message: '' }));
+    }
+  };
+
+  // Drag and drop handlers for existing artwork
+  let isDraggingExisting = false;
+  let fileInputWrapperExisting;
+
+  const handleDragEnterExisting = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+      isDraggingExisting = true;
+    }
+  };
+
+  const handleDragOverExisting = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+      if (!isDraggingExisting) {
+        isDraggingExisting = true;
+      }
+    }
+  };
+
+  const handleDragLeaveExisting = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Use a timeout to check if we're still dragging over
+    setTimeout(() => {
+      if (fileInputWrapperExisting) {
+        const rect = fileInputWrapperExisting.getBoundingClientRect();
+        const x = e.clientX;
+        const y = e.clientY;
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+          isDraggingExisting = false;
+        }
+      }
+    }, 50);
+  };
+
+  const handleDropExisting = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingExisting = false;
+    
+    const files = e.dataTransfer.files;
+    
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files);
+      const errors = [];
+      const validFiles = [];
+      
+      fileArray.forEach(file => {
+        const validation = validateFile(file);
+        if (validation.valid) {
+          validFiles.push(file);
+        } else {
+          errors.push(validation.error);
+        }
+      });
+      
+      // Update state with valid files
+      selectedFiles = validFiles;
+      uploadStatus = '';
+      
+      if (errors.length > 0) {
+        uploadError = errors.join(' ');
+      } else {
+        uploadError = '';
+      }
+      
+      uploadProgress = validFiles.map(() => ({ status: 'pending', message: '' }));
+      
+      // Also update the file input for form submission
+      try {
+        const fileInput = document.getElementById('file-input-existing');
+        if (fileInput && validFiles.length > 0) {
+          const dataTransfer = new DataTransfer();
+          validFiles.forEach(file => {
+            dataTransfer.items.add(file);
+          });
+          fileInput.files = dataTransfer.files;
+        }
+      } catch (err) {
+        console.error('Error setting file input:', err);
+      }
+    }
   };
 
   // Remove a file from the existing artwork upload queue
@@ -117,11 +250,122 @@
 
   // Handle file selection for orphaned photos
   const handleOrphanedFileSelect = (event) => {
-    orphanedFiles = Array.from(event.target.files);
-    orphanedStatus = '';
-    orphanedError = '';
-    orphanedProgress = orphanedFiles.map(() => ({ status: 'pending', message: '' }));
-    uploadedPhotoIds = [];
+    const files = event.target.files || event.dataTransfer?.files;
+    if (files) {
+      const fileArray = Array.from(files);
+      const errors = [];
+      const validFiles = [];
+      
+      fileArray.forEach(file => {
+        const validation = validateFile(file);
+        if (validation.valid) {
+          validFiles.push(file);
+        } else {
+          errors.push(validation.error);
+        }
+      });
+      
+      orphanedFiles = validFiles;
+      orphanedStatus = '';
+      
+      if (errors.length > 0) {
+        orphanedError = errors.join(' ');
+      } else {
+        orphanedError = '';
+      }
+      
+      orphanedProgress = validFiles.map(() => ({ status: 'pending', message: '' }));
+      uploadedPhotoIds = [];
+    }
+  };
+
+  // Drag and drop handlers for orphaned photos
+  let isDraggingOrphaned = false;
+  let fileInputWrapperOrphaned;
+
+  const handleDragEnterOrphaned = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+      isDraggingOrphaned = true;
+    }
+  };
+
+  const handleDragOverOrphaned = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+      if (!isDraggingOrphaned) {
+        isDraggingOrphaned = true;
+      }
+    }
+  };
+
+  const handleDragLeaveOrphaned = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Use a timeout to check if we're still dragging over
+    setTimeout(() => {
+      if (fileInputWrapperOrphaned) {
+        const rect = fileInputWrapperOrphaned.getBoundingClientRect();
+        const x = e.clientX;
+        const y = e.clientY;
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+          isDraggingOrphaned = false;
+        }
+      }
+    }, 50);
+  };
+
+  const handleDropOrphaned = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingOrphaned = false;
+    
+    const files = e.dataTransfer.files;
+    
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files);
+      const errors = [];
+      const validFiles = [];
+      
+      fileArray.forEach(file => {
+        const validation = validateFile(file);
+        if (validation.valid) {
+          validFiles.push(file);
+        } else {
+          errors.push(validation.error);
+        }
+      });
+      
+      // Update state with valid files
+      orphanedFiles = validFiles;
+      orphanedStatus = '';
+      
+      if (errors.length > 0) {
+        orphanedError = errors.join(' ');
+      } else {
+        orphanedError = '';
+      }
+      
+      orphanedProgress = validFiles.map(() => ({ status: 'pending', message: '' }));
+      uploadedPhotoIds = [];
+      
+      // Also update the file input for form submission
+      try {
+        const fileInput = document.getElementById('file-input-orphaned');
+        if (fileInput && validFiles.length > 0) {
+          const dataTransfer = new DataTransfer();
+          validFiles.forEach(file => {
+            dataTransfer.items.add(file);
+          });
+          fileInput.files = dataTransfer.files;
+        }
+      } catch (err) {
+        console.error('Error setting file input:', err);
+      }
+    }
   };
 
   // Remove a file from the orphaned photos upload queue
@@ -282,22 +526,30 @@
 <div class="tabs">
   <button
     class:active={activeTab === 'existing'}
+    class:tab-existing={activeTab === 'existing'}
     on:click={() => activeTab = 'existing'}
   >
-    Upload to Existing Artwork
+    <span class="tab-icon">Link</span>
+    <span class="tab-label">Upload to Existing Artwork</span>
+    <span class="tab-description">Add photos to artworks already in the database</span>
   </button>
   <button
     class:active={activeTab === 'new'}
+    class:tab-new={activeTab === 'new'}
     on:click={() => activeTab = 'new'}
   >
-    Upload New Photos
+    <span class="tab-icon">Upload</span>
+    <span class="tab-label">Upload New Photos</span>
+    <span class="tab-description">Upload photos to associate with artworks later</span>
   </button>
 </div>
 
 {#if activeTab === 'existing'}
-  <div class="tab-content">
-    <h2>Upload Photos to Existing Artwork</h2>
-    <p>Search for an artwork below and select it to upload photos.</p>
+  <div class="tab-content tab-content-existing">
+    <div class="tab-header">
+      <h2>Upload Photos to Existing Artwork</h2>
+      <p class="tab-subtitle">Search for an artwork below and select it to upload photos.</p>
+    </div>
 
     <form on:submit|preventDefault={uploadToExistingArtwork}>
       <div class="form-group artwork-selector">
@@ -346,22 +598,57 @@
 
       <div class="form-group">
         <label for="file-input-existing">Select Photos</label>
-        <input
-          id="file-input-existing"
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/avif"
-          multiple
-          on:change={handleFileSelect}
-          required
-        />
+        <div 
+          class="file-input-wrapper"
+          class:dragging={isDraggingExisting}
+          bind:this={fileInputWrapperExisting}
+          role="button"
+          tabindex="0"
+          aria-label="File drop zone. Drag and drop files here or click Browse to select files."
+          on:dragenter={handleDragEnterExisting}
+          on:dragover={handleDragOverExisting}
+          on:dragleave={handleDragLeaveExisting}
+          on:drop={handleDropExisting}
+        >
+          <input
+            id="file-input-existing"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/avif"
+            multiple
+            on:change={handleFileSelect}
+            required
+            class="file-input-hidden"
+          />
+          <label 
+            for="file-input-existing" 
+            class="file-input-label"
+          >
+            {#if selectedFiles.length > 0}
+              <span class="file-input-text">
+                {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''} selected
+              </span>
+            {:else}
+              <span class="file-input-text">Choose files or drag and drop</span>
+            {/if}
+            <span class="file-input-button">Browse</span>
+          </label>
+          {#if isDraggingExisting}
+            <div class="drag-overlay">
+              <div class="drag-indicator">
+                <div class="drag-icon">Drop</div>
+                <div class="drag-text">Drop files here</div>
+              </div>
+            </div>
+          {/if}
+        </div>
         <small>Accepted formats: JPG, PNG, WebP, AVIF. Max 10MB per file.</small>
       </div>
 
       {#if selectedFiles.length > 0}
-        <div class="form-group">
-          <label>
-            <input type="checkbox" bind:checked={isPrimary} />
-            Set first photo as primary
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={isPrimary} class="checkbox-input" />
+            <span>Set first photo as primary</span>
           </label>
         </div>
 
@@ -408,21 +695,58 @@
   </div>
 
 {:else if activeTab === 'new'}
-  <div class="tab-content">
-    <h2>Upload New Photos</h2>
-    <p>Upload photos that will be available to associate with artworks later.</p>
+  <div class="tab-content tab-content-new">
+    <div class="tab-header">
+      <h2>Upload New Photos</h2>
+      <p class="tab-subtitle">Upload photos that will be available to associate with artworks later.</p>
+    </div>
 
     <form on:submit|preventDefault={uploadOrphanedPhotos}>
       <div class="form-group">
         <label for="file-input-orphaned">Select Photos</label>
-        <input
-          id="file-input-orphaned"
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/avif"
-          multiple
-          on:change={handleOrphanedFileSelect}
-          required
-        />
+        <div 
+          class="file-input-wrapper"
+          class:dragging={isDraggingOrphaned}
+          bind:this={fileInputWrapperOrphaned}
+          role="button"
+          tabindex="0"
+          aria-label="File drop zone. Drag and drop files here or click Browse to select files."
+          on:dragenter={handleDragEnterOrphaned}
+          on:dragover={handleDragOverOrphaned}
+          on:dragleave={handleDragLeaveOrphaned}
+          on:drop={handleDropOrphaned}
+        >
+          <input
+            id="file-input-orphaned"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/avif"
+            multiple
+            on:change={handleOrphanedFileSelect}
+            required
+            class="file-input-hidden"
+          />
+          <label 
+            for="file-input-orphaned" 
+            class="file-input-label"
+          >
+            {#if orphanedFiles.length > 0}
+              <span class="file-input-text">
+                {orphanedFiles.length} file{orphanedFiles.length !== 1 ? 's' : ''} selected
+              </span>
+            {:else}
+              <span class="file-input-text">Choose files or drag and drop</span>
+            {/if}
+            <span class="file-input-button">Browse</span>
+          </label>
+          {#if isDraggingOrphaned}
+            <div class="drag-overlay">
+              <div class="drag-indicator">
+                <div class="drag-icon">Drop</div>
+                <div class="drag-text">Drop files here</div>
+              </div>
+            </div>
+          {/if}
+        </div>
         <small>Accepted formats: JPG, PNG, WebP, AVIF. Max 10MB per file.</small>
       </div>
 
@@ -484,110 +808,402 @@
 
 <style>
   .tabs {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 1rem;
     margin-bottom: 2rem;
-    border-bottom: 2px solid var(--border-color);
   }
 
   .tabs button {
-    padding: 0.75rem 1.5rem;
-    background: none;
-    border: none;
-    border-bottom: 3px solid transparent;
+    padding: 1.5rem;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
     cursor: pointer;
     font-size: 1rem;
     transition: all 0.2s;
     color: var(--text-primary);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    position: relative;
   }
 
   .tabs button:hover {
+    border-color: var(--accent-color);
     background: var(--bg-tertiary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 
   .tabs button.active {
-    border-bottom-color: var(--accent-color);
-    font-weight: bold;
+    border-color: var(--accent-color);
+    background: var(--bg-tertiary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .tabs button.tab-existing.active {
+    border-left: 4px solid var(--accent-color);
+  }
+
+  .tabs button.tab-new.active {
+    border-left: 4px solid #4caf50;
+  }
+
+  .tab-icon {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+  }
+
+  .tabs button.active .tab-icon {
+    color: var(--accent-color);
+  }
+
+  .tabs button.tab-new.active .tab-icon {
+    color: #4caf50;
+  }
+
+  .tab-label {
+    font-weight: 600;
+    font-size: 1.125rem;
+    color: var(--text-primary);
+  }
+
+  .tab-description {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  .tabs button.active .tab-label {
+    color: var(--accent-color);
+  }
+
+  .tabs button.tab-new.active .tab-label {
+    color: #4caf50;
   }
 
   .tab-content {
-    padding: 1rem 0;
+    padding: 2rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 1rem;
+  }
+
+  .tab-content-existing {
+    border-left: 4px solid var(--accent-color);
+  }
+
+  .tab-content-new {
+    border-left: 4px solid #4caf50;
+  }
+
+  .tab-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .tab-header h2 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .tab-subtitle {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 1rem;
+  }
+
+  form {
+    max-width: 600px;
+    margin: 0 auto;
   }
 
   .form-group {
-    margin-bottom: 1.5rem;
+    margin-bottom: 2rem;
   }
 
   .form-group label {
     display: block;
     margin-bottom: 0.5rem;
-    font-weight: bold;
+    font-weight: 500;
+    font-size: 0.875rem;
     color: var(--text-primary);
+    letter-spacing: 0.1px;
   }
 
-  .form-group input[type="text"],
-  .form-group input[type="file"] {
+  .form-group input[type="text"] {
     width: 100%;
-    padding: 0.5rem;
+    padding: 0.75rem 1rem;
     border: 1px solid var(--border-color);
-    border-radius: 4px;
-    background: var(--bg-secondary);
+    border-radius: 8px;
+    background: var(--bg-primary);
     color: var(--text-primary);
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
 
-  .form-group input[type="text"]:focus,
-  .form-group input[type="file"]:focus {
+  .form-group input[type="text"]:hover {
+    border-color: var(--text-tertiary);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  }
+
+  .form-group input[type="text"]:focus {
     outline: none;
     border-color: var(--accent-color);
+    border-width: 2px;
+    box-shadow: 0 0 0 3px rgba(90, 159, 212, 0.1);
+  }
+
+  .file-input-wrapper {
+    position: relative;
+    width: 100%;
+  }
+
+  .file-input-label {
+    pointer-events: none;
+  }
+
+  .file-input-label .file-input-button {
+    pointer-events: auto;
+  }
+
+  .file-input-wrapper.dragging .file-input-label {
+    border-color: var(--accent-color);
+    border-style: solid;
+    background: var(--bg-secondary);
+    box-shadow: 0 0 0 3px rgba(90, 159, 212, 0.15);
+  }
+
+  .drag-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(90, 159, 212, 0.1);
+    border: 3px dashed var(--accent-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    pointer-events: none;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.9;
+      transform: scale(1.02);
+    }
+  }
+
+  .drag-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 2rem;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .drag-icon {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent-color);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    padding: 1rem 2rem;
+    background: rgba(90, 159, 212, 0.1);
+    border: 2px solid var(--accent-color);
+    border-radius: 8px;
+    animation: bounce 1s ease-in-out infinite;
+  }
+
+  @keyframes bounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-5px);
+    }
+  }
+
+  .drag-text {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--accent-color);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .file-input-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .file-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 1rem 1.25rem;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    gap: 1rem;
+  }
+
+  .file-input-label:hover {
+    border-color: var(--accent-color);
+    background: var(--bg-secondary);
+    border-style: solid;
+  }
+
+  .file-input-label:focus-within {
+    outline: none;
+    border-color: var(--accent-color);
+    border-style: solid;
+    box-shadow: 0 0 0 3px rgba(90, 159, 212, 0.1);
+  }
+
+
+  .file-input-text {
+    flex: 1;
+    text-align: left;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-input-label:hover .file-input-text {
+    color: var(--accent-color);
+  }
+
+  .file-input-button {
+    padding: 0.5rem 1rem;
+    background: var(--accent-color);
+    color: white;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+  }
+
+  .file-input-label:hover .file-input-button {
+    background: var(--accent-hover);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 
   .form-group small {
     display: block;
-    margin-top: 0.25rem;
+    margin-top: 0.5rem;
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+    line-height: 1.5;
   }
 
   button[type="submit"] {
-    padding: 0.75rem 1.5rem;
+    padding: 0.75rem 2rem;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    letter-spacing: 0.25px;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+    min-width: 120px;
   }
 
   button[type="submit"]:hover:not(:disabled) {
     background: var(--accent-hover);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
+    transform: translateY(-1px);
+  }
+
+  button[type="submit"]:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   }
 
   button[type="submit"]:disabled {
     background: var(--bg-tertiary);
     color: var(--text-tertiary);
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
   }
 
   .file-preview {
-    padding: 1rem;
-    background: var(--bg-secondary);
+    padding: 1.5rem;
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+
+  .file-preview strong {
+    display: block;
     margin-bottom: 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .file-preview ul {
-    margin: 0.5rem 0 0 0;
-    padding-left: 1.5rem;
+    margin: 0;
+    padding: 0;
     list-style: none;
   }
 
   .file-preview li {
     margin: 0.75rem 0;
-    padding: 0.5rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
-    border-left: 3px solid var(--border-color);
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    transition: all 0.2s ease;
+  }
+
+  .file-preview li:hover {
+    border-color: var(--accent-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   }
 
   .file-item {
@@ -714,31 +1330,36 @@
     right: 0;
     max-height: 400px;
     overflow-y: auto;
-    background: var(--bg-secondary);
-    border: 1px solid var(--accent-color);
-    border-radius: 4px;
-    margin-top: 0.25rem;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-top: 0.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
     z-index: 10;
   }
 
   .dropdown-item {
     width: 100%;
-    padding: 0.75rem;
+    padding: 1rem;
     background: none;
     border: none;
     border-bottom: 1px solid var(--border-color);
     cursor: pointer;
     text-align: left;
-    transition: background 0.2s;
+    transition: background 0.15s ease;
   }
 
   .dropdown-item:hover {
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
+  }
+
+  .dropdown-item:first-child {
+    border-radius: 8px 8px 0 0;
   }
 
   .dropdown-item:last-child {
     border-bottom: none;
+    border-radius: 0 0 8px 8px;
   }
 
   .artwork-option {
@@ -765,6 +1386,27 @@
   .artwork-artist {
     color: var(--text-secondary);
     font-size: 0.875rem;
+  }
+
+  .checkbox-group {
+    margin-bottom: 1.5rem;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+  }
+
+  .checkbox-input {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent-color);
   }
 
   .form-group small.warning {
