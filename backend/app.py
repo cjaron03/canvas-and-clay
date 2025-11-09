@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request, send_from_directory
 import os
 import json
 from datetime import timedelta, datetime, timezone
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -13,6 +14,71 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 load_dotenv()
+
+
+def get_env_int(name, default):
+    """Safely parse integer environment variables with defaults."""
+    value = os.getenv(name)
+    if value is None or value == '':
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def build_database_uri():
+    """Construct database URI from environment variables."""
+    existing_uri = os.getenv('DATABASE_URL')
+    if existing_uri:
+        return existing_uri
+
+    db_name = os.getenv('DB_NAME')
+    db_host = os.getenv('DB_HOST')
+
+    # Fall back to sqlite for local dev if not fully configured
+    if not db_name or not db_host:
+        return 'sqlite:///app.db'
+
+    db_port = os.getenv('DB_PORT', '5432')
+    db_engine = os.getenv('DB_ENGINE', 'postgresql')
+    db_user = os.getenv('DB_USER')
+    db_password = os.getenv('DB_PASSWORD')
+
+    auth = ''
+    if db_user:
+        auth = quote_plus(db_user)
+        if db_password:
+            auth += f":{quote_plus(db_password)}"
+        auth += '@'
+
+    host_part = f"{db_host}:{db_port}" if db_port else db_host
+    return f"{db_engine}://{auth}{host_part}/{db_name}"
+
+
+def build_engine_options(database_uri):
+    """Configure SQLAlchemy engine options such as pooling and SSL."""
+    # SQLite (default/testing) uses NullPool; skip pool configuration
+    if database_uri.startswith('sqlite'):
+        return {}
+
+    engine_options = {
+        'pool_size': get_env_int('DB_POOL_SIZE', 5),
+        'max_overflow': get_env_int('DB_POOL_MAX_OVERFLOW', 10),
+        'pool_timeout': get_env_int('DB_POOL_TIMEOUT', 30),
+        'pool_recycle': get_env_int('DB_POOL_RECYCLE', 1800),
+        'pool_pre_ping': os.getenv('DB_POOL_PRE_PING', 'true').lower() == 'true',
+    }
+
+    ssl_mode = os.getenv('DB_SSL_MODE')
+    if ssl_mode and database_uri.startswith('postgresql'):
+        connect_args = {'sslmode': ssl_mode}
+        ssl_root_cert = os.getenv('DB_SSL_ROOT_CERT')
+        if ssl_root_cert:
+            connect_args['sslrootcert'] = ssl_root_cert
+        engine_options['connect_args'] = connect_args
+
+    return engine_options
 
 app = Flask(__name__)
 
@@ -30,7 +96,11 @@ CORS(app,
 
 # Basic configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app.db')
+database_uri = build_database_uri()
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
+engine_options = build_engine_options(database_uri)
+if engine_options:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Session security configuration
@@ -117,6 +187,22 @@ def set_security_headers(response):
     # Additional security headers
     # XSS Protection (legacy, but helps older browsers)
     response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # Content-Security-Policy - prevent XSS attacks
+    # strict policy for JSON API: only allow resources from same origin
+    csp_policy = os.getenv('CSP_POLICY', (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ))
+    response.headers['Content-Security-Policy'] = csp_policy
     
     return response
 

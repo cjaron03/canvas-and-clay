@@ -71,6 +71,7 @@ npm run dev
 
 **Environment Configuration:**
 - Backend `.env`: Configure database connection and Flask settings
+- Database credentials can be provided as a single `DATABASE_URL` **or** via granular settings (`DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_ENGINE`). Optional security/perf variables include `DB_SSL_MODE`, `DB_SSL_ROOT_CERT`, and pooling controls (`DB_POOL_SIZE`, `DB_POOL_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`, `DB_POOL_RECYCLE`, `DB_POOL_PRE_PING`).
 - Frontend `.env`: Configure API base URL (default: `http://localhost:5001`)
   - `PUBLIC_API_BASE_URL`: Points to the backend API (must be prefixed with `PUBLIC_` for SvelteKit)
 
