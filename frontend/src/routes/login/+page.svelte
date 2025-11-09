@@ -1,17 +1,26 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { auth } from '$lib/stores/auth';
 
 	let email = '';
 	let password = '';
 	let remember = false;
 	let error = '';
+	let success = '';
 	let loading = false;
 
 	// Initialize auth store on mount
 	onMount(async () => {
 		await auth.init();
+
+		// Check for logout success message
+		if ($page.url.searchParams.get('logout') === 'success') {
+			success = 'Successfully logged out';
+			// Clear the query parameter
+			goto('/login', { replaceState: true });
+		}
 
 		// If already logged in, redirect to uploads
 		const unsubscribe = auth.subscribe((state) => {
@@ -25,15 +34,28 @@
 
 	const handleLogin = async () => {
 		error = '';
+		success = '';
 		loading = true;
 
 		try {
 			await auth.login(email, password, remember);
-			// Successful login will trigger redirect via store subscription
-			goto('/uploads');
+			success = 'Successfully logged in. Welcome';
+			loading = false;
+			// Wait a moment to show success message before redirect
+			setTimeout(() => {
+				goto('/uploads');
+			}, 1500);
 		} catch (err) {
 			loading = false;
-			error = err.message || 'Login failed. Please try again.';
+			if (err.rateLimited) {
+				const retryMsg = err.retryAfter ? ` Please wait ${err.retryAfter} seconds.` : '';
+				error = `Rate limit exceeded: ${err.message}${retryMsg}`;
+			} else if (err.message) {
+				// Use the descriptive error message from the auth store
+				error = err.message;
+			} else {
+				error = 'Login failed. Please check your credentials and try again.';
+			}
 		}
 	};
 </script>
@@ -73,6 +95,12 @@
 			</label>
 		</div>
 
+		{#if success}
+			<div class="success-message">
+				{success}
+			</div>
+		{/if}
+
 		{#if error}
 			<div class="error-message">
 				{error}
@@ -89,15 +117,6 @@
 		<p>Email: <code>admin@canvas-clay.local</code></p>
 		<p>Password: <code>ChangeMe123</code></p>
 	</div>
-
-	<div class="security-info">
-		<p><strong>Security Features:</strong></p>
-		<ul>
-			<li>Account lockout after 5 failed attempts (15 min)</li>
-			<li>Session timeout after 30 minutes of inactivity</li>
-			<li>Secure cookie-based sessions</li>
-		</ul>
-	</div>
 </div>
 
 <style>
@@ -105,8 +124,8 @@
 		max-width: 400px;
 		margin: 2rem auto;
 		padding: 2rem;
-		background: #1e1e1e;
-		border: 1px solid #444;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
 		border-radius: 8px;
 	}
 
@@ -121,7 +140,7 @@
 	label {
 		display: block;
 		margin-bottom: 0.5rem;
-		color: #e0e0e0;
+		color: var(--text-primary);
 		font-weight: bold;
 	}
 
@@ -129,17 +148,17 @@
 	input[type='password'] {
 		width: 100%;
 		padding: 0.75rem;
-		background: #2a2a2a;
-		border: 1px solid #444;
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-color);
 		border-radius: 4px;
-		color: #e0e0e0;
+		color: var(--text-primary);
 		font-size: 1rem;
 	}
 
 	input[type='email']:focus,
 	input[type='password']:focus {
 		outline: none;
-		border-color: #5a9fd4;
+		border-color: var(--accent-color);
 	}
 
 	input:disabled {
@@ -162,7 +181,7 @@
 	button[type='submit'] {
 		width: 100%;
 		padding: 0.75rem;
-		background: #5a9fd4;
+		background: var(--accent-color);
 		color: white;
 		border: none;
 		border-radius: 4px;
@@ -173,66 +192,53 @@
 	}
 
 	button[type='submit']:hover:not(:disabled) {
-		background: #4a8fc4;
+		background: var(--accent-hover);
 	}
 
 	button[type='submit']:disabled {
-		background: #444;
-		color: #666;
+		background: var(--bg-tertiary);
+		color: var(--text-tertiary);
 		cursor: not-allowed;
+	}
+
+	.success-message {
+		padding: 1rem;
+		margin-bottom: 1rem;
+		background: rgba(76, 175, 80, 0.2);
+		color: var(--success-color);
+		border: 1px solid var(--success-color);
+		border-radius: 4px;
+		font-weight: bold;
 	}
 
 	.error-message {
 		padding: 1rem;
 		margin-bottom: 1rem;
-		background: #3a1e1e;
-		color: #d57676;
-		border: 1px solid #5a2d2d;
+		background: rgba(211, 47, 47, 0.2);
+		color: var(--error-color);
+		border: 1px solid var(--error-color);
 		border-radius: 4px;
 		font-weight: bold;
 	}
 
 	.info {
 		padding: 1rem;
-		background: #1e2a3a;
-		border: 1px solid #3a4a5a;
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-color);
 		border-radius: 4px;
 		margin-bottom: 1rem;
 	}
 
 	.info p {
 		margin: 0.5rem 0;
-		color: #e0e0e0;
+		color: var(--text-primary);
 	}
 
 	.info code {
-		background: #2a2a2a;
+		background: var(--bg-secondary);
 		padding: 0.25rem 0.5rem;
 		border-radius: 3px;
-		color: #5a9fd4;
+		color: var(--accent-color);
 		font-family: monospace;
-	}
-
-	.security-info {
-		padding: 1rem;
-		background: #1e3a1e;
-		border: 1px solid #2d5a2d;
-		border-radius: 4px;
-	}
-
-	.security-info p {
-		margin: 0 0 0.5rem 0;
-		color: #a8d5a8;
-		font-weight: bold;
-	}
-
-	.security-info ul {
-		margin: 0;
-		padding-left: 1.5rem;
-		color: #a8d5a8;
-	}
-
-	.security-info li {
-		margin: 0.25rem 0;
 	}
 </style>

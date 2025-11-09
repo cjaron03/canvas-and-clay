@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '$env/static/private';
+import { extractErrorMessage } from '$lib/utils/errorMessages';
 
 export const load = async ({ url, fetch }) => {
   const page = parseInt(url.searchParams.get('page') ?? '1', 10);
@@ -26,10 +27,11 @@ export const load = async ({ url, fetch }) => {
     );
 
     if (!response.ok) {
+      const errorMessage = await extractErrorMessage(response, 'load artworks');
       return {
         artworks: [],
         pagination: null,
-        error: `Failed to load artworks: HTTP ${response.status}`,
+        error: errorMessage,
         filters: { search, artistId, medium }
       };
     }
@@ -45,7 +47,9 @@ export const load = async ({ url, fetch }) => {
 
   } catch (err) {
     console.error('artworks load failed:', err);
-    const message = err instanceof Error ? err.message : 'Unexpected error while loading artworks';
+    const message = err instanceof Error 
+      ? `${err.message}. Suggestion: Check your internet connection and try again.` 
+      : 'Unexpected error while loading artworks. Suggestion: Refresh the page or try again later.';
     return {
       artworks: [],
       pagination: null,
