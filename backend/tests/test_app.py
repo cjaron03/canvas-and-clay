@@ -54,6 +54,14 @@ def test_security_headers(client):
     assert response.headers.get('Referrer-Policy') == 'no-referrer'
     assert response.headers.get('Permissions-Policy') == 'geolocation=(), microphone=(), camera=()'
     assert response.headers.get('X-XSS-Protection') == '1; mode=block'
+    
+    # Check Content-Security-Policy header is present
+    csp = response.headers.get('Content-Security-Policy')
+    assert csp is not None, "Content-Security-Policy header is missing"
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "object-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
 
 def test_security_headers_on_all_endpoints(client):
     """Test that security headers are applied to all endpoints."""
@@ -64,3 +72,4 @@ def test_security_headers_on_all_endpoints(client):
         assert response.headers.get('X-Frame-Options') == 'DENY', f"Missing X-Frame-Options on {endpoint}"
         assert response.headers.get('X-Content-Type-Options') == 'nosniff', f"Missing X-Content-Type-Options on {endpoint}"
         assert response.headers.get('Referrer-Policy') == 'no-referrer', f"Missing Referrer-Policy on {endpoint}"
+        assert response.headers.get('Content-Security-Policy') is not None, f"Missing Content-Security-Policy on {endpoint}"

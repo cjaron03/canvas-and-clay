@@ -188,6 +188,22 @@ def set_security_headers(response):
     # XSS Protection (legacy, but helps older browsers)
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
+    # Content-Security-Policy - prevent XSS attacks
+    # strict policy for JSON API: only allow resources from same origin
+    csp_policy = os.getenv('CSP_POLICY', (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ))
+    response.headers['Content-Security-Policy'] = csp_policy
+    
     return response
 
 
