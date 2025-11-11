@@ -2,12 +2,15 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { auth } from '$lib/stores/auth';
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
 
   export let data;
 
   let deleteConfirm = false;
   let deleteError = null;
   let isDeleting = false;
+  let selectedPhoto = null;
+  let modalElement;
 
   const getThumbnailUrl = (path) => {
     if (!path) return null;
@@ -31,26 +34,63 @@
     deleteError = null;
 
     try {
+      // Ensure we have a CSRF token
+      let csrfToken = $auth.csrfToken;
+      if (!csrfToken) {
+        // Fetch CSRF token if we don't have one
+        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+          credentials: 'include'
+        });
+        if (csrfResponse.ok) {
+          const csrfData = await csrfResponse.json();
+          csrfToken = csrfData.csrf_token;
+        }
+      }
+
       const response = await fetch(
-        `${PUBLIC_API_BASE_URL}/api/artworks/${data.artwork.id}`,
+        `${PUBLIC_API_BASE_URL}/api/artworks/${encodeURIComponent(data.artwork.id)}`,
         {
           method: 'DELETE',
           headers: {
-            'X-CSRFToken': $auth.csrfToken
+            'X-CSRFToken': csrfToken || '',
+            'Content-Type': 'application/json'
           },
           credentials: 'include'
         }
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to delete artwork');
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type') || '';
+        let errorMessage = 'Failed to delete artwork';
+        
+        if (contentType.includes('application/json')) {
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            // JSON parsing failed, use default message
+          }
+        } else {
+          // Non-JSON response (likely HTML error page)
+          if (response.status === 400) {
+            errorMessage = 'Bad request. The artwork may have associated photos that cannot be deleted, or the request is invalid.';
+          } else if (response.status === 403) {
+            errorMessage = 'Permission denied. You do not have permission to delete artworks.';
+          } else if (response.status === 404) {
+            errorMessage = 'Artwork not found. It may have already been deleted.';
+          } else {
+            errorMessage = `Failed to delete artwork (HTTP ${response.status}). Please try again.`;
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
 
       // Redirect to artworks list after successful deletion
       goto('/artworks');
     } catch (err) {
-      deleteError = err.message;
+      deleteError = err.message || 'An unexpected error occurred while deleting the artwork.';
       isDeleting = false;
       deleteConfirm = false;
     }
@@ -59,6 +99,36 @@
   const cancelDelete = () => {
     deleteConfirm = false;
   };
+
+  const openPhotoModal = (photo) => {
+    selectedPhoto = photo;
+  };
+
+  const closePhotoModal = () => {
+    selectedPhoto = null;
+  };
+
+  const handleModalClick = (e) => {
+    // Close modal if clicking outside the image
+    if (e.target === modalElement) {
+      closePhotoModal();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    // Close modal on ESC key
+    if (e.key === 'Escape' && selectedPhoto) {
+      closePhotoModal();
+    }
+  };
+
+  onMount(() => {
+    // Add global keydown listener for ESC key
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  });
 </script>
 
 <div class="container">
@@ -91,20 +161,25 @@
       {#if data.artwork.photos && data.artwork.photos.length > 0}
         <div class="photo-gallery">
           {#each data.artwork.photos as photo}
-            <a
-              href={getThumbnailUrl(photo.url)}
-              target="_blank"
-              rel="noopener noreferrer"
+            {@const thumbnailUrl = photo.thumbnail_url || photo.thumbnail}
+            <button
+              type="button"
               class="photo-item"
+              on:click={() => openPhotoModal(photo)}
+              disabled={!thumbnailUrl}
             >
-              <img
-                src={getThumbnailUrl(photo.thumbnail)}
-                alt={photo.filename}
-              />
-              <div class="photo-overlay">
-                <span>View Full Size</span>
-              </div>
-            </a>
+              {#if thumbnailUrl}
+                <img
+                  src={getThumbnailUrl(thumbnailUrl)}
+                  alt={photo.filename || 'Artwork photo'}
+                />
+                <div class="photo-overlay">
+                  <span>View Full Size</span>
+                </div>
+              {:else}
+                <div class="no-image-placeholder">No Image</div>
+              {/if}
+            </button>
           {/each}
         </div>
       {:else}
@@ -195,6 +270,42 @@
   </div>
 </div>
 
+<!-- Photo Modal -->
+{#if selectedPhoto}
+  {@const fullPhotoUrl = selectedPhoto.url ? getThumbnailUrl(selectedPhoto.url) : (selectedPhoto.thumbnail_url || selectedPhoto.thumbnail ? getThumbnailUrl(selectedPhoto.thumbnail_url || selectedPhoto.thumbnail) : null)}
+  <div
+    class="photo-modal"
+    bind:this={modalElement}
+    on:click={handleModalClick}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Full size image view"
+    tabindex="-1"
+  >
+    <div class="photo-modal-content">
+      <button
+        class="photo-modal-close"
+        on:click={closePhotoModal}
+        aria-label="Close image view"
+      >
+        ×
+      </button>
+      {#if fullPhotoUrl}
+        <img
+          src={fullPhotoUrl}
+          alt={selectedPhoto.filename || 'Full size artwork photo'}
+          class="photo-modal-image"
+        />
+      {:else}
+        <div class="photo-modal-placeholder">No image available</div>
+      {/if}
+      {#if selectedPhoto.filename}
+        <div class="photo-modal-caption">{selectedPhoto.filename}</div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <style>
   .container {
     max-width: 1400px;
@@ -210,13 +321,13 @@
   }
 
   .back-link {
-    color: #5a9fd4;
+    color: var(--accent-color);
     text-decoration: none;
     transition: color 0.2s;
   }
 
   .back-link:hover {
-    color: #4a8fc4;
+    color: var(--accent-hover);
   }
 
   .actions {
@@ -230,19 +341,19 @@
     gap: 0.5rem;
     align-items: center;
     padding: 0.5rem 1rem;
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
     border-radius: 4px;
   }
 
   .delete-confirm span {
-    color: #ff6b6b;
+    color: var(--error-color);
     font-size: 0.875rem;
     font-weight: 500;
   }
 
   .btn-primary {
     padding: 0.5rem 1rem;
-    background: #5a9fd4;
+    background: var(--accent-color);
     color: white;
     border: none;
     border-radius: 4px;
@@ -253,14 +364,14 @@
   }
 
   .btn-primary:hover {
-    background: #4a8fc4;
+    background: var(--accent-hover);
   }
 
   .btn-secondary {
     padding: 0.5rem 1rem;
-    background: #444;
-    color: #e0e0e0;
-    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     cursor: pointer;
     text-decoration: none;
@@ -269,12 +380,13 @@
   }
 
   .btn-secondary:hover:not(:disabled) {
-    background: #555;
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
   }
 
   .btn-danger {
     padding: 0.5rem 1rem;
-    background: #d32f2f;
+    background: var(--error-color);
     color: white;
     border: none;
     border-radius: 4px;
@@ -296,7 +408,7 @@
 
   .error {
     padding: 1rem;
-    background: #d32f2f;
+    background: var(--error-color);
     color: white;
     border-radius: 4px;
     margin-bottom: 1rem;
@@ -309,7 +421,7 @@
   }
 
   .photos-section {
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
     border-radius: 8px;
     padding: 1.5rem;
   }
@@ -327,6 +439,15 @@
     overflow: hidden;
     cursor: pointer;
     display: block;
+    width: 100%;
+    border: none;
+    padding: 0;
+    background: transparent;
+  }
+
+  .photo-item:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   .photo-item img {
@@ -367,22 +488,33 @@
   .no-photos {
     text-align: center;
     padding: 3rem;
-    color: #999;
+    color: var(--text-secondary);
   }
 
   .no-photos p {
     margin: 0 0 1rem 0;
   }
 
+  .no-image-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+    color: var(--text-tertiary);
+    font-size: 0.875rem;
+  }
+
   .info-section {
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
     border-radius: 8px;
     padding: 1.5rem;
   }
 
   h1 {
     margin: 0 0 1.5rem 0;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 1.75rem;
   }
 
@@ -395,25 +527,34 @@
   .meta-item {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .meta-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
   }
 
   .meta-label {
     font-size: 0.75rem;
     text-transform: uppercase;
-    color: #999;
-    font-weight: 500;
+    color: var(--text-secondary);
+    font-weight: 600;
     letter-spacing: 0.5px;
+    margin-bottom: 0.25rem;
   }
 
   .meta-value {
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 1rem;
+    line-height: 1.5;
   }
 
   .meta-value code {
-    background: #1e1e1e;
-    color: #5a9fd4;
+    background: var(--bg-secondary);
+    color: var(--accent-color);
     padding: 0.25rem 0.5rem;
     border-radius: 3px;
     font-family: monospace;
@@ -422,20 +563,92 @@
   }
 
   .storage-type {
-    color: #777;
+    color: var(--text-tertiary);
     font-size: 0.875rem;
   }
 
   .actions-bottom {
     margin-top: 2rem;
     padding-top: 1.5rem;
-    border-top: 1px solid #444;
+    border-top: 1px solid var(--border-color);
   }
 
   @media (max-width: 1024px) {
     .artwork-detail {
       grid-template-columns: 1fr;
     }
+  }
+
+  .photo-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 2rem;
+    cursor: pointer;
+  }
+
+  .photo-modal-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: default;
+  }
+
+  .photo-modal-close {
+    position: absolute;
+    top: -2.5rem;
+    right: 0;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    z-index: 1001;
+  }
+
+  .photo-modal-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  .photo-modal-image {
+    max-width: 100%;
+    max-height: 85vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .photo-modal-placeholder {
+    padding: 4rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 1.125rem;
+  }
+
+  .photo-modal-caption {
+    margin-top: 1rem;
+    color: white;
+    text-align: center;
+    font-size: 0.875rem;
+    opacity: 0.9;
   }
 
   @media (max-width: 768px) {
@@ -447,6 +660,21 @@
 
     .photo-gallery {
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+
+    .photo-modal {
+      padding: 1rem;
+    }
+
+    .photo-modal-close {
+      top: -3rem;
+      width: 2rem;
+      height: 2rem;
+      font-size: 1.25rem;
+    }
+
+    .photo-modal-image {
+      max-height: 80vh;
     }
   }
 </style>

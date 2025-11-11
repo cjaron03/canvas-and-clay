@@ -9,6 +9,7 @@ def client():
     """Create a test client with a fresh database."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
     app.config['WTF_CSRF_ENABLED'] = False
     app.config['SESSION_COOKIE_SECURE'] = False
     app.config['RATELIMIT_ENABLED'] = False

@@ -8,6 +8,7 @@ def client():
     """Create a test client with a fresh database and CSRF disabled for convenience."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
     app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
@@ -29,6 +30,7 @@ def csrf_client():
     """Create a test client with CSRF protection enabled."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
@@ -550,4 +552,3 @@ class TestCSRFProtection:
         
         # should fail with 400
         assert response.status_code == 400
-

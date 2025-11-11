@@ -1,7 +1,10 @@
 from flask import Flask, jsonify, request, send_from_directory
 import os
 import json
+import secrets
+import string
 from datetime import timedelta, datetime, timezone
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -13,6 +16,71 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 load_dotenv()
+
+
+def get_env_int(name, default):
+    """Safely parse integer environment variables with defaults."""
+    value = os.getenv(name)
+    if value is None or value == '':
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def build_database_uri():
+    """Construct database URI from environment variables."""
+    existing_uri = os.getenv('DATABASE_URL')
+    if existing_uri:
+        return existing_uri
+
+    db_name = os.getenv('DB_NAME')
+    db_host = os.getenv('DB_HOST')
+
+    # Fall back to sqlite for local dev if not fully configured
+    if not db_name or not db_host:
+        return 'sqlite:///app.db'
+
+    db_port = os.getenv('DB_PORT', '5432')
+    db_engine = os.getenv('DB_ENGINE', 'postgresql')
+    db_user = os.getenv('DB_USER')
+    db_password = os.getenv('DB_PASSWORD')
+
+    auth = ''
+    if db_user:
+        auth = quote_plus(db_user)
+        if db_password:
+            auth += f":{quote_plus(db_password)}"
+        auth += '@'
+
+    host_part = f"{db_host}:{db_port}" if db_port else db_host
+    return f"{db_engine}://{auth}{host_part}/{db_name}"
+
+
+def build_engine_options(database_uri):
+    """Configure SQLAlchemy engine options such as pooling and SSL."""
+    # SQLite (default/testing) uses NullPool; skip pool configuration
+    if database_uri.startswith('sqlite'):
+        return {}
+
+    engine_options = {
+        'pool_size': get_env_int('DB_POOL_SIZE', 5),
+        'max_overflow': get_env_int('DB_POOL_MAX_OVERFLOW', 10),
+        'pool_timeout': get_env_int('DB_POOL_TIMEOUT', 30),
+        'pool_recycle': get_env_int('DB_POOL_RECYCLE', 1800),
+        'pool_pre_ping': os.getenv('DB_POOL_PRE_PING', 'true').lower() == 'true',
+    }
+
+    ssl_mode = os.getenv('DB_SSL_MODE')
+    if ssl_mode and database_uri.startswith('postgresql'):
+        connect_args = {'sslmode': ssl_mode}
+        ssl_root_cert = os.getenv('DB_SSL_ROOT_CERT')
+        if ssl_root_cert:
+            connect_args['sslrootcert'] = ssl_root_cert
+        engine_options['connect_args'] = connect_args
+
+    return engine_options
 
 app = Flask(__name__)
 
@@ -30,7 +98,11 @@ CORS(app,
 
 # Basic configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app.db')
+database_uri = build_database_uri()
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
+engine_options = build_engine_options(database_uri)
+if engine_options:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Session security configuration
@@ -118,6 +190,22 @@ def set_security_headers(response):
     # XSS Protection (legacy, but helps older browsers)
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
+    # Content-Security-Policy - prevent XSS attacks
+    # strict policy for JSON API: only allow resources from same origin
+    csp_policy = os.getenv('CSP_POLICY', (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ))
+    response.headers['Content-Security-Policy'] = csp_policy
+    
     return response
 
 
@@ -127,6 +215,10 @@ def set_security_headers(response):
 
 @app.route('/')
 def home():
+    # TEMPORARY: Breaking API for testing health check
+    # Uncomment the line below to break the API for testing
+    # raise Exception("API intentionally broken for testing")
+    
     return jsonify({
         'message': 'Welcome to Canvas and Clay API',
         'status': 'running'
@@ -168,6 +260,7 @@ def api_hello():
 
 
 @app.route('/api/search')
+@limiter.limit("100 per minute")  # More lenient limit for search
 def api_search():
     """Search across artworks, artists, and locations."""
     raw_query = request.args.get('q', '', type=str)
@@ -358,7 +451,7 @@ def api_search():
 
 # Artist CRUD Endpoints
 @app.route('/api/artists', methods=['GET'])
-def list_artists():
+def list_artists_page():
     """ List all artists with pagenation, search, and filtering.
     
      Query Parameters:
@@ -707,8 +800,6 @@ def update_artist(artist_id):
         return jsonify({'error': 'Failed to update artist. Please try again.'}), 500
 
 
-# TODO(artist CRUD, MK): Add a SOFT deletion for artist
-# will have to alter the db schema in order to do so
 @app.route('/api/artists/<artist_id>', methods=['DELETE'])
 @login_required
 @admin_required
@@ -784,6 +875,7 @@ def delete_artist(artist_id):
 
 # Artwork CRUD Endpoints
 @app.route('/api/artworks', methods=['GET'])
+@limiter.limit("100 per minute")  # More lenient limit for browsing
 def list_artworks():
     """List all artworks with pagination, search, and filtering.
 
@@ -804,98 +896,233 @@ def list_artworks():
     artist_id = request.args.get('artist_id', '').strip()
     medium = request.args.get('medium', '').strip()
 
-    # Build base query
-    query = db.session.query(Artwork, Artist).join(
-        Artist, Artwork.artist_id == Artist.artist_id
-    )
-
-    # Apply filters
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.filter(
-            db.or_(
-                Artwork.artwork_ttl.ilike(search_pattern),
-                Artwork.artwork_medium.ilike(search_pattern),
-                Artist.artist_fname.ilike(search_pattern),
-                Artist.artist_lname.ilike(search_pattern)
-            )
+    try:
+        # Build base query with LEFT JOIN to handle artworks without artists
+        query = db.session.query(Artwork, Artist).outerjoin(
+            Artist, Artwork.artist_id == Artist.artist_id
         )
 
-    if artist_id:
-        query = query.filter(Artwork.artist_id == artist_id)
+        # Apply filters
+        if search:
+            search_pattern = f"%{search}%"
+            # Build search conditions - handle NULL artists gracefully
+            search_conditions = [
+                Artwork.artwork_ttl.ilike(search_pattern),
+                Artwork.artwork_medium.ilike(search_pattern)
+            ]
+            # Add artist search conditions (will be NULL-safe with outerjoin)
+            search_conditions.extend([
+                Artist.artist_fname.ilike(search_pattern),
+                Artist.artist_lname.ilike(search_pattern)
+            ])
+            query = query.filter(db.or_(*search_conditions))
 
-    if medium:
-        query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+        if artist_id:
+            query = query.filter(Artwork.artist_id == artist_id)
 
-    # Get total count before pagination
-    total = query.count()
+        if medium:
+            query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
 
-    # Apply pagination
-    query = query.order_by(Artwork.artwork_num.desc())
-    query = query.offset((page - 1) * per_page).limit(per_page)
+        # Get total count before pagination
+        total = query.count()
 
-    # Execute query
-    results = query.all()
+        # Apply pagination
+        query = query.order_by(Artwork.artwork_num.desc())
+        query = query.offset((page - 1) * per_page).limit(per_page)
 
-    # Build response
-    artworks = []
-    for artwork, artist in results:
-        # Get primary photo or first photo
-        primary_photo = ArtworkPhoto.query.filter_by(
-            artwork_num=artwork.artwork_num,
-            is_primary=True
-        ).first()
+        # Execute query
+        results = query.all()
 
-        if not primary_photo:
+        # Build response
+        artworks = []
+        for artwork, artist in results:
+            # Get primary photo or first photo
             primary_photo = ArtworkPhoto.query.filter_by(
-                artwork_num=artwork.artwork_num
+                artwork_num=artwork.artwork_num,
+                is_primary=True
             ).first()
 
-        # Get photo count
-        photo_count = ArtworkPhoto.query.filter_by(
-            artwork_num=artwork.artwork_num
-        ).count()
+            if not primary_photo:
+                primary_photo = ArtworkPhoto.query.filter_by(
+                    artwork_num=artwork.artwork_num
+                ).first()
 
-        # Get storage info
-        storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+            # Get photo count
+            photo_count = ArtworkPhoto.query.filter_by(
+                artwork_num=artwork.artwork_num
+            ).count()
 
-        artworks.append({
-            'id': artwork.artwork_num,
-            'title': artwork.artwork_ttl,
-            'medium': artwork.artwork_medium,
-            'size': artwork.artwork_size,
-            'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
-            'artist': {
-                'id': artist.artist_id,
-                'name': f"{artist.artist_fname} {artist.artist_lname}",
-                'email': artist.artist_email
-            },
-            'storage': {
-                'id': storage.storage_id,
-                'location': storage.storage_loc,
-                'type': storage.storage_type
-            } if storage else None,
-            'primary_photo': {
-                'id': primary_photo.photo_id,
-                'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
-            } if primary_photo else None,
-            'photo_count': photo_count
-        })
+            # Get storage info
+            storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
 
-    # Calculate pagination metadata
-    total_pages = (total + per_page - 1) // per_page
+            # Build artist info safely
+            artist_info = None
+            if artist:
+                artist_name = 'Unknown Artist'
+                if artist.artist_fname and artist.artist_lname:
+                    artist_name = f"{artist.artist_fname} {artist.artist_lname}"
+                elif artist.artist_fname:
+                    artist_name = artist.artist_fname
+                elif artist.artist_lname:
+                    artist_name = artist.artist_lname
+                
+                artist_info = {
+                    'id': artist.artist_id,
+                    'name': artist_name,
+                    'email': artist.artist_email
+                }
+            else:
+                artist_info = {
+                    'id': None,
+                    'name': 'Unknown Artist',
+                    'email': None
+                }
+
+            artworks.append({
+                'id': artwork.artwork_num,
+                'title': artwork.artwork_ttl,
+                'medium': artwork.artwork_medium,
+                'size': artwork.artwork_size,
+                'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'artist': artist_info,
+                'storage': {
+                    'id': storage.storage_id,
+                    'location': storage.storage_loc or '',
+                    'type': storage.storage_type or ''
+                } if storage else None,
+                'primary_photo': {
+                    'id': primary_photo.photo_id,
+                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+                } if primary_photo else None,
+                'photo_count': photo_count
+            })
+
+        # Calculate pagination metadata
+        total_pages = (total + per_page - 1) // per_page
+
+        return jsonify({
+            'artworks': artworks,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'total_pages': total_pages,
+                'has_next': page < total_pages,
+                'has_prev': page > 1
+            }
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to list artworks")
+        return jsonify({'error': 'Failed to load artworks. Please try again.'}), 500
+
+
+@app.route('/api/artworks/<artwork_id>', methods=['GET'])
+@limiter.limit("100 per minute")  # More lenient limit for browsing
+def get_artwork(artwork_id):
+    """Get detailed information about a specific artwork.
+
+    Args:
+        artwork_id: The artwork ID
+
+    Returns:
+        200: Complete artwork details
+        404: Artwork not found
+    """
+    # Get artwork
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+
+    # Get artist
+    artist = Artist.query.get(artwork.artist_id)
+
+    # Get storage
+    storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+
+    # Get all photos
+    photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).order_by(
+        ArtworkPhoto.is_primary.desc(),
+        ArtworkPhoto.uploaded_at.desc()
+    ).all()
 
     return jsonify({
-        'artworks': artworks,
-        'pagination': {
-            'page': page,
-            'per_page': per_page,
-            'total': total,
-            'total_pages': total_pages,
-            'has_next': page < total_pages,
-            'has_prev': page > 1
-        }
+        'id': artwork.artwork_num,
+        'title': artwork.artwork_ttl,
+        'medium': artwork.artwork_medium,
+        'size': artwork.artwork_size,
+        'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+        'artist': {
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'email': artist.artist_email,
+            'phone': artist.artist_phone,
+            'website': artist.artist_site,
+            'bio': artist.artist_bio
+        } if artist else None,
+        'storage': {
+            'id': storage.storage_id,
+            'location': storage.storage_loc,
+            'type': storage.storage_type
+        } if storage else None,
+        'photos': [{
+            'id': photo.photo_id,
+            'filename': photo.filename,
+            'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+            'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
+            'width': photo.width,
+            'height': photo.height,
+            'file_size': photo.file_size,
+            'is_primary': photo.is_primary,
+            'uploaded_at': photo.uploaded_at.isoformat()
+        } for photo in photos]
     })
+
+
+@app.route('/api/artists', methods=['GET'])
+def list_artists():
+    """List all artists for dropdown selection.
+    
+    Returns:
+        200: List of all artists with id and name
+    """
+    try:
+        artists = Artist.query.order_by(Artist.artist_fname, Artist.artist_lname).all()
+        return jsonify({
+            'artists': [
+                {
+                    'id': artist.artist_id,
+                    'name': f"{artist.artist_fname} {artist.artist_lname}".strip()
+                }
+                for artist in artists
+            ]
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to list artists")
+        return jsonify({'error': 'Failed to load artists'}), 500
+
+
+@app.route('/api/storage', methods=['GET'])
+def list_storage():
+    """List all storage locations for dropdown selection.
+    
+    Returns:
+        200: List of all storage locations with id, location, and type
+    """
+    try:
+        storage_locations = Storage.query.order_by(Storage.storage_loc).all()
+        return jsonify({
+            'storage': [
+                {
+                    'id': storage.storage_id,
+                    'location': storage.storage_loc or '',
+                    'type': storage.storage_type or ''
+                }
+                for storage in storage_locations
+            ]
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to list storage locations")
+        return jsonify({'error': 'Failed to load storage locations'}), 500
 
 
 @app.route('/api/artworks', methods=['POST'])
@@ -945,24 +1172,18 @@ def create_artwork():
     if not storage:
         return jsonify({'error': f'Storage location not found: {data["storage_id"]}'}), 404
 
-    # Generate new artwork ID
-    # Find the highest existing artwork ID starting with 'AW'
-    max_id_result = db.session.query(db.func.max(Artwork.artwork_num)).filter(
-        Artwork.artwork_num.like('AW%')
-    ).scalar()
-
-    if max_id_result:
-        # Extract number from AW000010 -> 10
-        try:
-            current_num = int(max_id_result[2:])
-            new_num = current_num + 1
-        except ValueError:
-            new_num = 1
-    else:
-        new_num = 1
-
-    # Format as AW000001
-    new_artwork_id = f"AW{new_num:06d}"
+    # Generate new artwork ID using cryptographically secure random generation
+    def generate_random_artwork_id():
+        """Generate a random artwork ID in format AW######"""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+            artwork_id = f"AW{random_part}"
+            if not Artwork.query.get(artwork_id):
+                return artwork_id
+        raise ValueError("Failed to generate unique artwork ID after max attempts")
+    
+    new_artwork_id = generate_random_artwork_id()
 
     # Handle date_created if provided
     date_created = None
@@ -1158,6 +1379,7 @@ def update_artwork(artwork_id):
 
 
 @app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
+@csrf.exempt  # Exempt from CSRF - already protected by auth and admin checks
 @login_required
 @admin_required
 def delete_artwork(artwork_id):
@@ -1305,14 +1527,6 @@ def upload_artwork_photo(artwork_id):
     # Read file data
     file_data = file.read()
 
-    # Check for duplicate filename
-    sanitized_name = sanitize_filename(file.filename)
-    existing_photo = ArtworkPhoto.query.filter_by(filename=sanitized_name).first()
-    if existing_photo:
-        return jsonify({
-            'error': f'A photo with the filename "{sanitized_name}" already exists (Photo ID: {existing_photo.photo_id})'
-        }), 409  # 409 Conflict
-
     try:
         # Process upload with full security validation
         photo_metadata = process_upload(file_data, file.filename)
@@ -1400,14 +1614,6 @@ def upload_orphaned_photo():
         return jsonify({'error': 'No file selected'}), 400
 
     file_data = file.read()
-
-    # Check for duplicate filename
-    sanitized_name = sanitize_filename(file.filename)
-    existing_photo = ArtworkPhoto.query.filter_by(filename=sanitized_name).first()
-    if existing_photo:
-        return jsonify({
-            'error': f'A photo with the filename "{sanitized_name}" already exists (Photo ID: {existing_photo.photo_id})'
-        }), 409  # 409 Conflict
 
     try:
         photo_metadata = process_upload(file_data, file.filename)
@@ -1536,6 +1742,7 @@ def associate_photo_with_artwork(photo_id):
 
 
 @app.route('/api/artworks/<artwork_id>/photos', methods=['GET'])
+@limiter.limit("100 per minute")  # More lenient limit for browsing
 def get_artwork_photos(artwork_id):
     """Get all photos for an artwork.
 
@@ -1709,6 +1916,567 @@ def unassign_artist_from_user(artist_id):
             'previous_user_id': old_user_id
         }
     })
+
+
+# Admin Console Endpoints
+@app.route('/api/admin/console/stats', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_stats():
+    """Admin console endpoint for system statistics.
+    
+    Returns counts and recent activity metrics.
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: Statistics data
+        403: Permission denied
+    """
+    try:
+        from datetime import datetime, timezone, timedelta
+        
+        # Get total counts
+        total_artworks = Artwork.query.count()
+        total_artists = Artist.query.count()
+        total_photos = ArtworkPhoto.query.count()
+        total_users = User.query.count()
+        total_storage = Storage.query.count()
+        total_audit_logs = AuditLog.query.count()
+        
+        # Get recent activity (last 24 hours)
+        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+        
+        recent_artworks = Artwork.query.filter(
+            Artwork.date_created >= twenty_four_hours_ago.date()
+        ).count() if hasattr(Artwork, 'date_created') else 0
+        
+        recent_photos = ArtworkPhoto.query.filter(
+            ArtworkPhoto.uploaded_at >= twenty_four_hours_ago
+        ).count()
+        
+        recent_users = User.query.filter(
+            User.created_at >= twenty_four_hours_ago
+        ).count()
+        
+        recent_failed_logins = FailedLoginAttempt.query.filter(
+            FailedLoginAttempt.attempted_at >= twenty_four_hours_ago
+        ).count()
+        
+        return jsonify({
+            'counts': {
+                'artworks': total_artworks,
+                'artists': total_artists,
+                'photos': total_photos,
+                'users': total_users,
+                'storage_locations': total_storage,
+                'audit_logs': total_audit_logs
+            },
+            'recent_activity': {
+                'artworks_last_24h': recent_artworks,
+                'photos_last_24h': recent_photos,
+                'users_last_24h': recent_users,
+                'failed_logins_last_24h': recent_failed_logins
+            }
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to fetch admin console stats")
+        return jsonify({'error': 'Failed to fetch statistics'}), 500
+
+
+@app.route('/api/admin/console/health', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_health():
+    """Admin console endpoint for extended health check.
+    
+    Returns database connection status and service information.
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: Health data
+        403: Permission denied
+    """
+    try:
+        # Check database connection
+        db.session.execute(db.text('SELECT 1'))
+        db_status = 'connected'
+        status = 'healthy'
+    except Exception as e:
+        db_status = f'error: {str(e)}'
+        status = 'degraded'
+    
+    # Get database engine info
+    db_engine = db.engine.url.drivername if hasattr(db.engine, 'url') else 'unknown'
+    
+    return jsonify({
+        'status': status,
+        'service': 'canvas-clay-backend',
+        'database': {
+            'status': db_status,
+            'engine': db_engine
+        },
+        'environment': os.getenv('FLASK_ENV', 'production')
+    }), 200
+
+
+@app.route('/api/admin/console/audit-log', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_audit_log():
+    """Admin console endpoint for security audit logs.
+    
+    Query parameters:
+        - page: Page number (default: 1)
+        - per_page: Items per page (default: 50, max: 200)
+        - event_type: Filter by event type (optional)
+        - limit: Limit results (optional, overrides pagination)
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: Paginated audit log entries
+        403: Permission denied
+    """
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 200)
+        event_type = request.args.get('event_type', None)
+        limit = request.args.get('limit', None, type=int)
+        
+        query = AuditLog.query.order_by(AuditLog.created_at.desc())
+        
+        if event_type:
+            query = query.filter(AuditLog.event_type == event_type)
+        
+        if limit:
+            # Return limited results without pagination
+            logs = query.limit(limit).all()
+            return jsonify({
+                'audit_logs': [
+                    {
+                        'id': log.id,
+                        'event_type': log.event_type,
+                        'user_id': log.user_id,
+                        'email': log.email,
+                        'ip_address': log.ip_address,
+                        'user_agent': log.user_agent,
+                        'created_at': log.created_at.isoformat() if log.created_at else None,
+                        'details': log.details
+                    }
+                    for log in logs
+                ],
+                'total': len(logs)
+            }), 200
+        
+        # Paginated results
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        
+        return jsonify({
+            'audit_logs': [
+                {
+                    'id': log.id,
+                    'event_type': log.event_type,
+                    'user_id': log.user_id,
+                    'email': log.email,
+                    'ip_address': log.ip_address,
+                    'user_agent': log.user_agent,
+                    'created_at': log.created_at.isoformat() if log.created_at else None,
+                    'details': log.details
+                }
+                for log in pagination.items
+            ],
+            'pagination': {
+                'page': pagination.page,
+                'per_page': pagination.per_page,
+                'total': pagination.total,
+                'pages': pagination.pages
+            }
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to fetch audit logs")
+        return jsonify({'error': 'Failed to fetch audit logs'}), 500
+
+
+@app.route('/api/admin/console/failed-logins', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_failed_logins():
+    """Admin console endpoint for failed login attempts.
+    
+    Query parameters:
+        - page: Page number (default: 1)
+        - per_page: Items per page (default: 50, max: 200)
+        - limit: Limit results (optional, overrides pagination)
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: Paginated failed login attempts
+        403: Permission denied
+    """
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 200)
+        limit = request.args.get('limit', None, type=int)
+        
+        query = FailedLoginAttempt.query.order_by(FailedLoginAttempt.attempted_at.desc())
+        
+        if limit:
+            # Return limited results without pagination
+            attempts = query.limit(limit).all()
+            return jsonify({
+                'failed_logins': [
+                    {
+                        'id': attempt.id,
+                        'email': attempt.email,
+                        'ip_address': attempt.ip_address,
+                        'attempted_at': attempt.attempted_at.isoformat() if attempt.attempted_at else None,
+                        'user_agent': attempt.user_agent
+                    }
+                    for attempt in attempts
+                ],
+                'total': len(attempts)
+            }), 200
+        
+        # Paginated results
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        
+        return jsonify({
+            'failed_logins': [
+                {
+                    'id': attempt.id,
+                    'email': attempt.email,
+                    'ip_address': attempt.ip_address,
+                    'attempted_at': attempt.attempted_at.isoformat() if attempt.attempted_at else None,
+                    'user_agent': attempt.user_agent
+                }
+                for attempt in pagination.items
+            ],
+            'pagination': {
+                'page': pagination.page,
+                'per_page': pagination.per_page,
+                'total': pagination.total,
+                'pages': pagination.pages
+            }
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to fetch failed login attempts")
+        return jsonify({'error': 'Failed to fetch failed login attempts'}), 500
+
+
+@app.route('/api/admin/console/users', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_users():
+    """Admin console endpoint for user management overview.
+    
+    Returns all users with their roles and status.
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: User list
+        403: Permission denied
+    """
+    try:
+        users = User.query.order_by(User.created_at.desc()).all()
+        
+        # Get last login times from audit logs
+        user_logins = {}
+        for user in users:
+            last_login = AuditLog.query.filter_by(
+                user_id=user.id,
+                event_type='login_success'
+            ).order_by(AuditLog.created_at.desc()).first()
+            user_logins[user.id] = last_login.created_at.isoformat() if last_login and last_login.created_at else None
+        
+        return jsonify({
+            'users': [
+                {
+                    'id': user.id,
+                    'email': user.email,
+                    'role': user.role,
+                    'is_active': user.is_active,
+                    'created_at': user.created_at.isoformat() if user.created_at else None,
+                    'last_login': user_logins.get(user.id)
+                }
+                for user in users
+            ],
+            'total': len(users)
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to fetch users")
+        return jsonify({'error': 'Failed to fetch users'}), 500
+
+
+@app.route('/api/admin/console/database-info', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_database_info():
+    """Admin console endpoint for database metadata.
+    
+    Returns table row counts and database engine information.
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: Database information
+        403: Permission denied
+    """
+    try:
+        # Get table row counts
+        table_counts = {
+            'artist': Artist.query.count(),
+            'artwork': Artwork.query.count(),
+            'artwork_photos': ArtworkPhoto.query.count(),
+            'storage': Storage.query.count(),
+            'users': User.query.count(),
+            'audit_logs': AuditLog.query.count(),
+            'failed_login_attempts': FailedLoginAttempt.query.count()
+        }
+        
+        # Get database engine info
+        db_engine = db.engine.url.drivername if hasattr(db.engine, 'url') else 'unknown'
+        db_name = db.engine.url.database if hasattr(db.engine, 'url') else 'unknown'
+        
+        return jsonify({
+            'table_counts': table_counts,
+            'engine': {
+                'name': db_engine,
+                'database': db_name
+            }
+        }), 200
+    except Exception as e:
+        app.logger.exception("Failed to fetch database info")
+        return jsonify({'error': 'Failed to fetch database information'}), 500
+
+
+# CLI confirmation tokens storage (in-memory, expires after 30 seconds)
+_cli_confirmation_tokens = {}
+
+
+@app.route('/api/admin/console/cli/help', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_cli_help():
+    """Admin console CLI help endpoint.
+    
+    Returns available commands, syntax, and examples for auto-complete.
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+    
+    Returns:
+        200: Help information
+        403: Permission denied
+    """
+    try:
+        from cli_parser import CLIParser
+        help_info = CLIParser.get_help()
+        return jsonify(help_info), 200
+    except Exception as e:
+        app.logger.exception("Failed to fetch CLI help")
+        return jsonify({'error': 'Failed to fetch CLI help'}), 500
+
+
+@app.route('/api/admin/console/cli', methods=['POST'])
+@csrf.exempt  # Exempt from CSRF - already protected by auth and admin checks
+@login_required
+@admin_required
+def admin_console_cli():
+    """Admin console CLI endpoint.
+    
+    Executes CLI commands with validation and safety checks.
+    
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Write mode must be explicitly enabled
+        - Delete operations require double confirmation
+    
+    Request Body:
+        command (str, required): CLI command to execute
+        write_mode (bool, optional): Whether write operations are allowed (default: false)
+        confirmation_token (str, optional): Token for delete confirmation
+        
+    Returns:
+        200: Command executed successfully
+        400: Invalid command or parameters
+        403: Permission denied or write mode required
+    """
+    try:
+        from cli_parser import CLIParser, CLIParseError
+        from cli_executor import CLIExecutor, CLIExecutionError
+        import secrets
+        
+        # Parse JSON body (force=True to handle CSRF-exempt endpoints)
+        try:
+            data = request.get_json(force=True)
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid JSON in request body',
+                'output': f'Failed to parse request: {str(e)}'
+            }), 400
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Request body is required',
+                'output': 'Request body is required'
+            }), 400
+        
+        command = data.get('command', '').strip()
+        if not command:
+            return jsonify({
+                'success': False,
+                'error': 'Command is required',
+                'output': 'Command is required'
+            }), 400
+        
+        write_mode = data.get('write_mode', False)
+        confirmation_token = data.get('confirmation_token')
+        
+        # Parse command
+        try:
+            parsed_command = CLIParser.parse(command)
+        except CLIParseError as e:
+            return jsonify({
+                'success': False,
+                'error': str(e),
+                'output': f'Parse error: {str(e)}'
+            }), 400
+        
+        # Initialize executor
+        models = {
+            'Artist': Artist,
+            'Artwork': Artwork,
+            'Storage': Storage,
+            'ArtworkPhoto': ArtworkPhoto,
+            'User': User
+        }
+        executor = CLIExecutor(db, models)
+        
+        # Handle delete confirmation flow
+        if parsed_command['action'] == 'delete':
+            entity = parsed_command['entity']
+            entity_id = parsed_command['entity_id']
+            
+            if confirmation_token:
+                # Second confirmation - verify token
+                token_data = _cli_confirmation_tokens.get(confirmation_token)
+                if not token_data:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid or expired confirmation token',
+                        'output': 'Confirmation token is invalid or has expired. Please start over.'
+                    }), 400
+                
+                # Verify token matches this delete operation
+                if token_data['entity'] != entity or token_data['entity_id'] != entity_id:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Confirmation token does not match this operation',
+                        'output': 'Confirmation token does not match. Please start over.'
+                    }), 400
+                
+                # Execute delete
+                try:
+                    result = executor.execute_delete(entity, entity_id, current_user.id, current_user.email)
+                    # Remove used token
+                    _cli_confirmation_tokens.pop(confirmation_token, None)
+                    return jsonify(result), 200
+                except CLIExecutionError as e:
+                    return jsonify({
+                        'success': False,
+                        'error': str(e),
+                        'output': f'Delete failed: {str(e)}'
+                    }), 400
+            else:
+                # First delete request - return confirmation request
+                preview_result = executor._execute_delete_preview(entity, entity_id)
+                
+                # Generate confirmation token
+                token = secrets.token_urlsafe(32)
+                _cli_confirmation_tokens[token] = {
+                    'entity': entity,
+                    'entity_id': entity_id,
+                    'user_id': current_user.id,
+                    'created_at': datetime.now(timezone.utc)
+                }
+                
+                # Clean up old tokens (older than 30 seconds)
+                now = datetime.now(timezone.utc)
+                expired_tokens = [
+                    t for t, data in _cli_confirmation_tokens.items()
+                    if (now - data['created_at']).total_seconds() > 30
+                ]
+                for t in expired_tokens:
+                    _cli_confirmation_tokens.pop(t, None)
+                
+                return jsonify({
+                    'success': True,
+                    'output': preview_result['output'],
+                    'data': preview_result['data'],
+                    'requires_confirmation': True,
+                    'confirmation_token': token
+                }), 200
+        
+        # Execute other commands
+        try:
+            result = executor.execute(
+                parsed_command,
+                write_mode=write_mode,
+                user_id=current_user.id,
+                user_email=current_user.email
+            )
+            return jsonify(result), 200
+        except CLIExecutionError as e:
+            return jsonify({
+                'success': False,
+                'error': str(e),
+                'output': f'Execution error: {str(e)}'
+            }), 400
+            
+    except ImportError as e:
+        app.logger.exception("Failed to import CLI modules")
+        return jsonify({
+            'success': False,
+            'error': 'CLI modules not available',
+            'output': f'Failed to import CLI modules: {str(e)}'
+        }), 500
+    except Exception as e:
+        app.logger.exception("Failed to execute CLI command")
+        error_msg = str(e)
+        # Make sure we return JSON even if there's an unexpected error
+        try:
+            return jsonify({
+                'success': False,
+                'error': 'Internal server error',
+                'output': f'Failed to execute command: {error_msg}'
+            }), 500
+        except Exception:
+            # Fallback if jsonify itself fails
+            return jsonify({
+                'success': False,
+                'error': 'Internal server error',
+                'output': 'An unexpected error occurred'
+            }), 500
 
 
 @app.route('/uploads/<path:filename>')

@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '$env/static/private';
 import { error } from '@sveltejs/kit';
+import { extractErrorMessage } from '$lib/utils/errorMessages';
 
 export const load = async ({ params, fetch }) => {
   const { id } = params;
@@ -15,11 +16,12 @@ export const load = async ({ params, fetch }) => {
     );
 
     if (response.status === 404) {
-      throw error(404, 'Artwork not found');
+      throw error(404, 'Artwork not found. Suggestion: Check the artwork ID or browse artworks to find what you\'re looking for.');
     }
 
     if (!response.ok) {
-      throw error(response.status, `Failed to load artwork: HTTP ${response.status}`);
+      const errorMessage = await extractErrorMessage(response, 'load artwork details');
+      throw error(response.status, errorMessage);
     }
 
     const artwork = await response.json();
@@ -30,6 +32,9 @@ export const load = async ({ params, fetch }) => {
     if (err.status) {
       throw err;
     }
-    throw error(500, err instanceof Error ? err.message : 'Failed to load artwork');
+    const message = err instanceof Error 
+      ? `${err.message}. Suggestion: Check your internet connection and try again.` 
+      : 'Failed to load artwork. Suggestion: Refresh the page or try again later.';
+    throw error(500, message);
   }
 };

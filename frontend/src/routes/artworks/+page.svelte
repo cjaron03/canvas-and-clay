@@ -78,9 +78,9 @@
       {#each data.artworks as artwork}
         <a href="/artworks/{artwork.id}" class="artwork-card">
           <div class="artwork-thumbnail">
-            {#if artwork.primary_photo?.thumbnail}
+            {#if artwork.primary_photo?.thumbnail_url}
               <img
-                src={getThumbnailUrl(artwork.primary_photo.thumbnail)}
+                src={getThumbnailUrl(artwork.primary_photo.thumbnail_url)}
                 alt={artwork.title}
               />
             {:else}
@@ -151,7 +151,7 @@
 
   h1 {
     margin: 0;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .filters {
@@ -159,7 +159,7 @@
     gap: 1rem;
     margin-bottom: 2rem;
     padding: 1.5rem;
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
     border-radius: 8px;
     flex-wrap: wrap;
     align-items: flex-end;
@@ -175,25 +175,25 @@
 
   .filter-group label {
     font-size: 0.875rem;
-    color: #999;
+    color: var(--text-secondary);
   }
 
   .filter-group input {
     padding: 0.5rem;
-    background: #1e1e1e;
-    border: 1px solid #444;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .filter-group input:focus {
     outline: none;
-    border-color: #5a9fd4;
+    border-color: var(--accent-color);
   }
 
   .btn-primary {
     padding: 0.5rem 1rem;
-    background: #5a9fd4;
+    background: var(--accent-color);
     color: white;
     border: none;
     border-radius: 4px;
@@ -204,14 +204,14 @@
   }
 
   .btn-primary:hover {
-    background: #4a8fc4;
+    background: var(--accent-hover);
   }
 
   .btn-secondary {
     padding: 0.5rem 1rem;
-    background: #444;
-    color: #e0e0e0;
-    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     cursor: pointer;
     text-decoration: none;
@@ -220,7 +220,8 @@
   }
 
   .btn-secondary:hover:not(:disabled) {
-    background: #555;
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
   }
 
   .btn-secondary:disabled {
@@ -230,7 +231,7 @@
 
   .error {
     padding: 1rem;
-    background: #d32f2f;
+    background: var(--error-color);
     color: white;
     border-radius: 4px;
     margin-bottom: 1rem;
@@ -238,19 +239,20 @@
 
   .no-results {
     text-align: center;
-    color: #999;
+    color: var(--text-secondary);
     padding: 3rem;
   }
 
   .artwork-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 350px));
     gap: 1.5rem;
     margin-bottom: 2rem;
+    justify-content: center;
   }
 
   .artwork-card {
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
     border-radius: 8px;
     overflow: hidden;
     text-decoration: none;
@@ -258,6 +260,8 @@
     transition: transform 0.2s, box-shadow 0.2s;
     display: flex;
     flex-direction: column;
+    width: 100%;
+    height: 100%;
   }
 
   .artwork-card:hover {
@@ -268,7 +272,7 @@
   .artwork-thumbnail {
     width: 100%;
     height: 200px;
-    background: #1e1e1e;
+    background: var(--bg-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -282,7 +286,7 @@
   }
 
   .no-image {
-    color: #666;
+    color: var(--text-tertiary);
     font-size: 0.875rem;
   }
 
@@ -292,7 +296,7 @@
 
   .artwork-info h3 {
     margin: 0 0 0.5rem 0;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 1.1rem;
   }
 
@@ -302,8 +306,8 @@
   }
 
   .artwork-id code {
-    background: #1e1e1e;
-    color: #5a9fd4;
+    background: var(--bg-secondary);
+    color: var(--accent-color);
     padding: 0.25rem 0.5rem;
     border-radius: 3px;
     font-family: monospace;
@@ -311,19 +315,19 @@
   }
 
   .artist-name {
-    color: #5a9fd4;
+    color: var(--accent-color);
     font-weight: 500;
     margin: 0 0 0.25rem 0;
   }
 
   .medium {
-    color: #999;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     margin: 0 0 0.25rem 0;
   }
 
   .storage {
-    color: #777;
+    color: var(--text-tertiary);
     font-size: 0.75rem;
     margin: 0;
   }
@@ -333,12 +337,12 @@
     justify-content: space-between;
     align-items: center;
     padding: 1.5rem;
-    background: #2a2a2a;
+    background: var(--bg-tertiary);
     border-radius: 8px;
   }
 
   .pagination-info {
-    color: #999;
+    color: var(--text-secondary);
     font-size: 0.875rem;
   }
 
@@ -349,7 +353,7 @@
   }
 
   .page-number {
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 0.875rem;
   }
 

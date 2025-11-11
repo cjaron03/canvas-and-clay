@@ -218,17 +218,17 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
   - [x] Never use raw SQL with user input
   - [x] Parameterize any necessary raw queries
   
-- [ ] **Connection Security**
-  - [ ] Use environment variables for DB credentials
-  - [ ] Implement connection pooling
-  - [ ] Enable SSL for DB connections in production
+- [x] **Connection Security**
+  - [x] Use environment variables for DB credentials (DB_HOST/PORT/NAME/USER/PASSWORD + fallback DATABASE_URL)
+  - [x] Implement connection pooling (SQLALCHEMY_ENGINE_OPTIONS via DB_POOL_* env vars)
+  - [x] Enable SSL for DB connections in production (DB_SSL_MODE + optional DB_SSL_ROOT_CERT)
 
 ### XSS Protection
-- [ ] **Cross-Site Scripting Prevention**
-  - [ ] Escape all user-generated content
-  - [ ] Set Content-Security-Policy headers
-  - [ ] Sanitize HTML in artwork descriptions
-  - [ ] Use secure templating practices
+- [x] **Cross-Site Scripting Prevention** - COMPLETED (implement-xss-protection branch)
+  - [x] Escape all user-generated content - HTML escaping utility added (defense-in-depth)
+  - [x] Set Content-Security-Policy headers - Strict CSP policy implemented for JSON API
+  - [x] Sanitize HTML in artwork descriptions - HTML sanitization utility added (ready for future use)
+  - [x] Use secure templating practices - Frontend uses Svelte's automatic escaping, JSON responses use jsonify()
 
 ### API Security
 - [ ] **JWT Token Implementation**
@@ -273,6 +273,7 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
 - [x] X-Content-Type-Options: nosniff
 - [x] Referrer-Policy: no-referrer
 - [x] Permissions-Policy
+- [x] Content-Security-Policy - Strict policy for JSON API (default-src 'self', script-src 'self', object-src 'none', frame-ancestors 'none')
 
 ### Penetration Testing
 - [ ] SQL injection testing
