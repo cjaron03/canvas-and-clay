@@ -1,6 +1,7 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth';
 
@@ -10,70 +11,7 @@
   let health = null;
   let loadError = null;
   let isLoading = true;
-
-  // Load data client-side with credentials
-  onMount(async () => {
-    await auth.init();
-    
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
-      goto('/');
-      return;
-    }
-
-    // Load stats and health data
-    try {
-      const [statsRes, healthRes] = await Promise.all([
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        }),
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        })
-      ]);
-
-      if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        goto('/');
-        return;
-      }
-      if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Authentication required';
-        goto('/login');
-        return;
-      }
-
-      if (statsRes.ok) {
-        stats = await statsRes.json();
-      } else {
-        loadError = `Failed to load stats: HTTP ${statsRes.status}`;
-      }
-
-      if (healthRes.ok) {
-        health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
-      }
-
-      if (!health) {
-        health = { status: 'unknown', service: 'canvas-clay-backend' };
-      }
-    } catch (err) {
-      console.error('Failed to load admin console data:', err);
-      loadError = err instanceof Error ? err.message : 'Failed to load admin console data';
-    } finally {
-      isLoading = false;
-    }
-  });
+  let isInitialized = false; // prevent multiple initializations
 
   let activeTab = 'overview';
   let loading = {
@@ -114,23 +52,62 @@
   let confirmationStep = 0; // 0 = none, 1 = first, 2 = second
   let cliOutputElement;
   let commandInputElement;
+  let shouldAutoScroll = true; // track if we should auto-scroll (user at bottom)
 
-  // Auto-scroll output to bottom whenever cliOutput changes
-  afterUpdate(() => {
-    if (cliOutputElement && cliOutput.length > 0) {
-      cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-    }
-  });
+  // check if user is at bottom of scroll (within 50px threshold)
+  const isAtBottom = () => {
+    if (!cliOutputElement) return false;
+    const threshold = 50;
+    const scrollTop = cliOutputElement.scrollTop;
+    const scrollHeight = cliOutputElement.scrollHeight;
+    const clientHeight = cliOutputElement.clientHeight;
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  };
+
+  // handle scroll events to track if user manually scrolled up
+  const handleCLIScroll = () => {
+    shouldAutoScroll = isAtBottom();
+  };
 
   // Load command history from localStorage
   onMount(async () => {
-    await auth.init();
+    // Prevent multiple initializations (e.g., from hot reload or navigation)
+    if (isInitialized) {
+      return;
+    }
+    isInitialized = true;
     
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Small delay to ensure store updates from login have propagated
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Check current auth state first (user might have just logged in)
+    let authState = get(auth);
+    
+    // Only call auth.init() if we're not already authenticated
+    // This prevents clearing auth state if user just logged in
+    if (!authState.isAuthenticated) {
+      await auth.init();
+      authState = get(auth);
+    } else if (!authState.csrfToken) {
+      // If authenticated but missing CSRF token, fetch it
+      try {
+        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+          credentials: 'include'
+        });
+        if (csrfResponse.ok) {
+          const data = await csrfResponse.json();
+          auth.update((state) => ({ ...state, csrfToken: data.csrf_token }));
+        }
+      } catch (err) {
+        console.error('Failed to fetch CSRF token:', err);
+      }
+    }
+    
+    // Re-read auth state after potential updates
+    authState = get(auth);
     
     // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
+    if (!authState.isAuthenticated || authState.user?.role !== 'admin') {
       goto('/');
       return;
     }
@@ -165,25 +142,53 @@
 
       if (statsRes.ok) {
         stats = await statsRes.json();
-      } else {
+      } else if (statsRes.status !== 429) {
+        // Don't show error for rate limit (429) - it's expected
         loadError = `Failed to load stats: HTTP ${statsRes.status}`;
       }
 
+      // Track if we successfully loaded health data
+      let healthLoadedSuccessfully = false;
+      
       if (healthRes.ok) {
         health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
+        healthLoadedSuccessfully = true;
+      } else if (healthRes.status === 429) {
+        // Rate limited - preserve existing health status, don't overwrite with unknown
+        // Only set to unknown if we have no health data at all
+        if (!health) {
+          health = { status: 'unknown', service: 'canvas-clay-backend' };
+        }
+        // Don't update overallHealthStatus if rate limited - keep existing value
+      } else {
+        // Actual error (not rate limit)
+        if (!loadError) {
+          loadError = `Failed to load health: HTTP ${healthRes.status}`;
+        }
+        // Only set to unknown on actual errors (not rate limits) if we have no data
+        if (!health) {
+          health = { status: 'unknown', service: 'canvas-clay-backend' };
+        }
       }
 
+      // Only set default if we truly have no health data
       if (!health) {
         health = { status: 'unknown', service: 'canvas-clay-backend' };
       }
 
       // Initialize overall health status from backend health
-      overallHealthStatus = health?.status || 'unknown';
+      // Only update if we successfully loaded health (not rate limited or error)
+      if (healthLoadedSuccessfully) {
+        overallHealthStatus = health?.status || 'unknown';
+      } else if (!overallHealthStatus || overallHealthStatus === 'unknown') {
+        // Only set to unknown if we don't have a previous status and couldn't load
+        overallHealthStatus = health?.status || 'unknown';
+      }
+      // If rate limited/error and we have a previous status, preserve it
 
       // Start periodic API check on page load to keep overview tab updated
-      startPeriodicApiCheck();
+      // Don't run immediate check since we just fetched health data
+      startPeriodicApiCheck(false);
 
       // Load CLI help
       await loadCLIHelp();
@@ -488,21 +493,27 @@
         if (apiTestResult && apiTestResult.success) {
           overallHealthStatus = health?.status || 'unknown';
         }
+      } else if (healthRes.status === 429) {
+        // Rate limited - preserve existing health status, don't overwrite
+        // Don't update health or overallHealthStatus
+        return;
       }
     } catch (err) {
       console.error('Failed to refresh health data:', err);
     }
   };
 
-  const startPeriodicApiCheck = () => {
+  const startPeriodicApiCheck = (runImmediate = true) => {
     // Clear existing interval if any
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
     }
     
-    // Run initial check
-    testApiConnection();
-    refreshHealthData();
+    // Run initial check only if requested (skip if we just fetched data)
+    if (runImmediate) {
+      testApiConnection();
+      refreshHealthData();
+    }
     
     // Set up periodic checks every 30 seconds
     apiCheckInterval = setInterval(() => {
@@ -573,8 +584,11 @@
     commandInput = '';
     historyIndex = commandHistory.length;
 
+    // when user executes a command, force scroll to show it
+    shouldAutoScroll = true;
+
     // Add command to output
-    addCLIOutput(`> ${command}`, 'command');
+    addCLIOutput(`> ${command}`, 'command', true);
 
     // Auto-focus input after clearing (like a real CLI)
     setTimeout(() => {
@@ -742,9 +756,9 @@
         }
       }
       
-      // Force scroll to bottom after all output is added
+      // Auto-scroll to bottom after command execution only if user is at bottom
       setTimeout(() => {
-        if (cliOutputElement) {
+        if (cliOutputElement && shouldAutoScroll) {
           cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
         }
         // Auto-focus input after command execution (like a real CLI)
@@ -766,7 +780,7 @@
     }
   };
 
-  const addCLIOutput = (text, type = 'info') => {
+  const addCLIOutput = (text, type = 'info', forceScroll = false) => {
     cliOutput = [...cliOutput, {
       text,
       type,
@@ -776,22 +790,16 @@
     if (cliOutput.length > 1000) {
       cliOutput = cliOutput.slice(-1000);
     }
-    // Auto-scroll to bottom after output is added (multiple attempts to ensure it works)
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 0);
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 10);
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 50);
+    // Auto-scroll to bottom only if user is at bottom (or forced)
+    if (forceScroll || shouldAutoScroll) {
+      setTimeout(() => {
+        if (cliOutputElement) {
+          cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
+          // update shouldAutoScroll after scrolling
+          shouldAutoScroll = isAtBottom();
+        }
+      }, 0);
+    }
   };
 
   const formatCLIData = (data) => {
@@ -831,6 +839,7 @@
 
   const clearCLIOutput = () => {
     cliOutput = [];
+    shouldAutoScroll = true; // reset to auto-scroll after clear
   };
 
   const toggleWriteMode = (e) => {
@@ -896,6 +905,8 @@
 
   // Cleanup intervals on component destroy
   onDestroy(() => {
+    // Reset initialization flag when component is destroyed
+    isInitialized = false;
     stopPeriodicApiCheck();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
@@ -908,7 +919,7 @@
 
   {#if isLoading}
     <div class="loading">Loading console data...</div>
-  {:else if loadError}
+  {:else if loadError && (!stats && !health)}
     <div class="error-message">
       {loadError}
       {#if loadError === 'Access denied: Admin role required' || loadError === 'Authentication required'}
@@ -917,7 +928,7 @@
         </div>
       {/if}
     </div>
-  {:else if !stats}
+  {:else if !stats && !health}
     <div class="loading">Failed to load data</div>
   {:else}
 
@@ -1266,7 +1277,7 @@
           </div>
         {/if}
 
-        <div class="cli-output" bind:this={cliOutputElement}>
+        <div class="cli-output" bind:this={cliOutputElement} on:scroll={handleCLIScroll}>
           {#each cliOutput as output}
             <div class="output-line" class:command={output.type === 'command'} class:success={output.type === 'success'} class:error={output.type === 'error'} class:warning={output.type === 'warning'} class:data={output.type === 'data'}>
               {#if output.type === 'command'}
