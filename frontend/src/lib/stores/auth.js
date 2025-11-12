@@ -10,50 +10,74 @@ function createAuthStore() {
 		csrfToken: null
 	});
 
+	let initPromise = null; // Track ongoing initialization to prevent duplicate calls
+
 	return {
 		subscribe,
 
 		// Initialize: fetch CSRF token and check authentication status
 		async init() {
-			try {
-				// Get CSRF token
-				const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
-					credentials: 'include'
-				});
-				if (csrfResponse.ok) {
-					const data = await csrfResponse.json();
-					update((state) => ({ ...state, csrfToken: data.csrf_token }));
-				}
+			// If initialization is already in progress, return the existing promise
+			if (initPromise) {
+				return initPromise;
+			}
 
-				// Check if already logged in
-				const meResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/me`, {
-					credentials: 'include'
-				});
-				if (meResponse.ok) {
-					const data = await meResponse.json();
-					// Preserve existing CSRF token if /auth/me doesn't return one
-					update((state) => ({
-						user: data.user,
-						isAuthenticated: true,
-						csrfToken: data.csrf_token || state.csrfToken
-					}));
-				} else {
-					// Explicitly clear auth state if not authenticated
+			// Create a new initialization promise
+			initPromise = (async () => {
+				try {
+					// Get CSRF token
+					const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+						credentials: 'include'
+					});
+					if (csrfResponse.ok) {
+						const data = await csrfResponse.json();
+						update((state) => ({ ...state, csrfToken: data.csrf_token }));
+					}
+
+					// Check if already logged in
+					const meResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/me`, {
+						credentials: 'include'
+					});
+					if (meResponse.ok) {
+						const data = await meResponse.json();
+						// Preserve existing CSRF token if /auth/me doesn't return one
+						update((state) => ({
+							user: data.user,
+							isAuthenticated: true,
+							csrfToken: data.csrf_token || state.csrfToken
+						}));
+					} else if (meResponse.status === 401) {
+						// 401 is expected when not logged in - silently clear auth state
+						// Note: Browser console will still show the HTTP 401, but this is expected behavior
+						set({
+							user: null,
+							isAuthenticated: false,
+							csrfToken: null
+						});
+					} else {
+						// Other errors (403, 500, etc.) - log but still clear state
+						console.warn('Auth check failed with unexpected status:', meResponse.status);
+						set({
+							user: null,
+							isAuthenticated: false,
+							csrfToken: null
+						});
+					}
+				} catch (error) {
+					console.error('Auth init failed:', error);
+					// Clear auth state on error
 					set({
 						user: null,
 						isAuthenticated: false,
 						csrfToken: null
 					});
+				} finally {
+					// Clear the promise so future calls can initialize again
+					initPromise = null;
 				}
-			} catch (error) {
-				console.error('Auth init failed:', error);
-				// Clear auth state on error
-				set({
-					user: null,
-					isAuthenticated: false,
-					csrfToken: null
-				});
-			}
+			})();
+
+			return initPromise;
 		},
 
 		// Login
