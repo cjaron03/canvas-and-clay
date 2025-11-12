@@ -100,31 +100,17 @@
     // Small delay to ensure store updates from login have propagated
     await new Promise(resolve => setTimeout(resolve, 50));
     
-    // Check current auth state first (user might have just logged in)
+    // Always initialize auth state (auth.init() preserves existing state)
+    // It fetches CSRF token and verifies session, preserving CSRF token if /auth/me doesn't return one
+    await auth.init();
     let authState = get(auth);
     
-    // Only call auth.init() if we're not already authenticated
-    // This prevents clearing auth state if user just logged in
-    if (!authState.isAuthenticated) {
-      await auth.init();
-      authState = get(auth);
-    } else if (!authState.csrfToken) {
-      // If authenticated but missing CSRF token, fetch it
-      try {
-        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
-          credentials: 'include'
-        });
-        if (csrfResponse.ok) {
-          const data = await csrfResponse.json();
-          auth.update((state) => ({ ...state, csrfToken: data.csrf_token }));
-        }
-      } catch (err) {
-        console.error('Failed to fetch CSRF token:', err);
-      }
+    // Verify CSRF token is present - if not, that's a real error
+    if (!authState.csrfToken) {
+      console.error('CSRF token missing after auth.init() - authentication failed');
+      goto('/login');
+      return;
     }
-    
-    // Re-read auth state after potential updates
-    authState = get(auth);
     
     // Check if user is admin
     if (!authState.isAuthenticated || authState.user?.role !== 'admin') {
