@@ -136,11 +136,27 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
+# Custom key function for rate limiting - exempts admin users
+def rate_limit_key_func():
+    """Rate limit key function that exempts admin users from rate limiting.
+    
+    Returns None for admin users (which disables rate limiting),
+    otherwise returns the remote address for IP-based limiting.
+    """
+    try:
+        # Check if user is authenticated and is admin
+        if current_user.is_authenticated and hasattr(current_user, 'is_admin') and current_user.is_admin:
+            return None  # None disables rate limiting for this request
+    except Exception:
+        # If there's any error checking user (e.g., not logged in), fall back to IP-based limiting
+        pass
+    return get_remote_address()
+
 # Initialize rate limiter
 # rate limiting can be disabled via limiter.enabled = False in tests
 limiter = Limiter(
     app=app,
-    key_func=get_remote_address,
+    key_func=rate_limit_key_func,
     default_limits=["200 per day", "50 per hour"],
     storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
 )

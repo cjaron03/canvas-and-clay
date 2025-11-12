@@ -40,6 +40,7 @@
   let apiCheckInterval = null;
   let currentTime = new Date(); // For reactive time display
   let overallHealthStatus = 'unknown'; // Overall system health status
+  let isTabVisible = true; // Track if browser tab is visible
 
   // CLI state
   let writeMode = false;
@@ -67,6 +68,25 @@
   // handle scroll events to track if user manually scrolled up
   const handleCLIScroll = () => {
     shouldAutoScroll = isAtBottom();
+  };
+
+  // Save CLI output to localStorage for persistence
+  const saveCLIOutput = () => {
+    // Keep last 1000 lines (same limit as in-memory)
+    const toSave = cliOutput.slice(-1000);
+    try {
+      localStorage.setItem('admin_cli_output', JSON.stringify(toSave));
+    } catch (err) {
+      // If localStorage is full, try saving less
+      console.warn('Failed to save CLI output, localStorage may be full:', err);
+      try {
+        localStorage.setItem('admin_cli_output', JSON.stringify(toSave.slice(-500)));
+      } catch {
+        // If still fails, clear old output and try again
+        console.warn('Clearing old CLI output due to storage limit');
+        localStorage.removeItem('admin_cli_output');
+      }
+    }
   };
 
   // Load command history from localStorage
@@ -187,8 +207,8 @@
       // If rate limited/error and we have a previous status, preserve it
 
       // Start periodic API check on page load to keep overview tab updated
-      // Don't run immediate check since we just fetched health data
-      startPeriodicApiCheck(false);
+      // Run immediate check to get fresh API connection status
+      startPeriodicApiCheck(true);
 
       // Load CLI help
       await loadCLIHelp();
@@ -201,6 +221,27 @@
         } catch {
           commandHistory = [];
         }
+      }
+
+      // Load CLI output history
+      const storedOutput = localStorage.getItem('admin_cli_output');
+      if (storedOutput) {
+        try {
+          cliOutput = JSON.parse(storedOutput);
+          // Ensure we don't exceed 1000 lines
+          if (cliOutput.length > 1000) {
+            cliOutput = cliOutput.slice(-1000);
+            saveCLIOutput();
+          }
+        } catch {
+          cliOutput = [];
+        }
+      }
+
+      // Set up page visibility listener to pause/resume API checks
+      if (typeof document !== 'undefined') {
+        isTabVisible = document.visibilityState === 'visible';
+        document.addEventListener('visibilitychange', handleVisibilityChange);
       }
     } catch (err) {
       console.error('Failed to load admin console data:', err);
@@ -368,10 +409,30 @@
   };
 
   const handleTabChange = (tab) => {
+    const previousTab = activeTab;
     activeTab = tab;
     
-    // Keep API checks running regardless of tab (for overview health badge)
-    // Don't stop/start based on tab anymore
+    // Stop API checks when leaving Overview tab, restart when returning
+    if (previousTab === 'overview' && tab !== 'overview') {
+      // Leaving Overview - stop API checks to free resources
+      stopPeriodicApiCheck();
+      // Stop time update interval
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
+    } else if (previousTab !== 'overview' && tab === 'overview') {
+      // Returning to Overview - restart API checks with immediate refresh
+      startPeriodicApiCheck(true);
+      // Restart time update interval if we have a lastApiCheck
+      if (lastApiCheck && !timeUpdateInterval && isTabVisible) {
+        timeUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible' && activeTab === 'overview') {
+            currentTime = new Date();
+          }
+        }, 1000);
+      }
+    }
     
     if (tab === 'security' && auditLogs.length === 0) {
       loadAuditLogs();
@@ -391,7 +452,6 @@
         }
       }, 100);
     }
-    // API checks run continuously, no need to start/stop per tab
   };
 
   const testApiConnection = async () => {
@@ -507,6 +567,12 @@
     // Clear existing interval if any
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
+      apiCheckInterval = null;
+    }
+    
+    // Only start if browser tab is visible and Overview tab is active
+    if (!isTabVisible || activeTab !== 'overview') {
+      return;
     }
     
     // Run initial check only if requested (skip if we just fetched data)
@@ -515,10 +581,13 @@
       refreshHealthData();
     }
     
-    // Set up periodic checks every 30 seconds
+    // Set up periodic checks every 30 seconds (only when Overview tab is active and browser tab is visible)
     apiCheckInterval = setInterval(() => {
-      testApiConnection();
-      refreshHealthData();
+      // Only run if Overview tab is active and browser tab is visible
+      if (activeTab === 'overview' && isTabVisible && document.visibilityState === 'visible') {
+        testApiConnection();
+        refreshHealthData();
+      }
     }, 30000);
   };
 
@@ -526,6 +595,38 @@
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
       apiCheckInterval = null;
+    }
+  };
+
+  // Handle page visibility changes (pause/resume when browser tab is hidden/shown)
+  const handleVisibilityChange = () => {
+    const wasVisible = isTabVisible;
+    isTabVisible = document.visibilityState === 'visible';
+    
+    // Only manage API checks if Overview tab is active
+    if (activeTab !== 'overview') {
+      return;
+    }
+    
+    if (!wasVisible && isTabVisible) {
+      // Browser tab became visible - restart periodic checks and time updates
+      // Run immediate check to get fresh data
+      startPeriodicApiCheck(true);
+      // Restart time update interval if we have a lastApiCheck
+      if (lastApiCheck && !timeUpdateInterval) {
+        timeUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible' && activeTab === 'overview') {
+            currentTime = new Date();
+          }
+        }, 1000);
+      }
+    } else if (wasVisible && !isTabVisible) {
+      // Browser tab became hidden - stop periodic checks and time updates to free resources
+      stopPeriodicApiCheck();
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
     }
   };
 
@@ -790,6 +891,8 @@
     if (cliOutput.length > 1000) {
       cliOutput = cliOutput.slice(-1000);
     }
+    // Save to localStorage for persistence
+    saveCLIOutput();
     // Auto-scroll to bottom only if user is at bottom (or forced)
     if (forceScroll || shouldAutoScroll) {
       setTimeout(() => {
@@ -840,6 +943,8 @@
   const clearCLIOutput = () => {
     cliOutput = [];
     shouldAutoScroll = true; // reset to auto-scroll after clear
+    // Clear from localStorage as well
+    localStorage.removeItem('admin_cli_output');
   };
 
   const toggleWriteMode = (e) => {
@@ -885,18 +990,21 @@
   // Explicitly reference currentTime to ensure reactivity
   $: timeAgoDisplay = lastApiCheck && currentTime ? formatTimeAgo(lastApiCheck) : 'Never';
   
-  // Update time display continuously when we have a lastApiCheck
-  $: if (lastApiCheck) {
+  // Update time display continuously when we have a lastApiCheck, tab is visible, and Overview tab is active
+  $: if (lastApiCheck && isTabVisible && activeTab === 'overview') {
     // Clear existing interval
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
     }
     // Start new interval to update time display
     timeUpdateInterval = setInterval(() => {
-      currentTime = new Date();
+      // Only update if tab is still visible and Overview is active
+      if (document.visibilityState === 'visible' && activeTab === 'overview') {
+        currentTime = new Date();
+      }
     }, 1000);
   } else {
-    // Clear interval when no lastApiCheck
+    // Clear interval when no lastApiCheck, tab is hidden, or not on Overview tab
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
       timeUpdateInterval = null;
@@ -910,6 +1018,11 @@
     stopPeriodicApiCheck();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
+      timeUpdateInterval = null;
+    }
+    // Remove visibility change listener
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     }
   });
 </script>
