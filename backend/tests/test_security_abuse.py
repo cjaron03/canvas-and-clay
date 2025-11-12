@@ -233,12 +233,13 @@ class TestRateLimiting:
     """Ensure brute-force protection trips correctly."""
 
     def test_login_rate_limit_enforced(self, client):
-        """Sixth login attempt from same IP should receive 429."""
+        """21st login attempt from same IP should receive 429 (rate limit is 20 per 15 minutes)."""
         limiter.enabled = True
         try:
             _register_and_login(client, 'rate@test.com', 'RatePass123!')
 
-            for _ in range(5):
+            # Make 20 successful login attempts (within rate limit)
+            for _ in range(20):
                 resp = client.post(
                     '/auth/login',
                     json={'email': 'rate@test.com', 'password': 'RatePass123!'},
@@ -246,12 +247,13 @@ class TestRateLimiting:
                 )
                 assert resp.status_code == 200
 
-            sixth = client.post(
+            # 21st attempt should be rate limited
+            twenty_first = client.post(
                 '/auth/login',
                 json={'email': 'rate@test.com', 'password': 'RatePass123!'},
                 environ_base={'REMOTE_ADDR': '203.0.113.10'}
             )
-            assert sixth.status_code == 429
+            assert twenty_first.status_code == 429
         finally:
             limiter.enabled = False
 
