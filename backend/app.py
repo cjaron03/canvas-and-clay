@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, session
 import os
 import json
 import secrets
@@ -136,30 +136,57 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
-# Custom key function for rate limiting - exempts admin users
-def rate_limit_key_func():
-    """Rate limit key function that exempts admin users from rate limiting.
+# Custom key function factory - will be called after User model is defined
+def create_rate_limit_key_func():
+    """Create rate limit key function that exempts admin users from rate limiting.
     
     Returns None for admin users (which disables rate limiting),
     otherwise returns the remote address for IP-based limiting.
+    
+    Note: This runs before route decorators, so we manually check the session
+    to load the user if they're authenticated.
     """
-    try:
-        # Check if user is authenticated and is admin
-        if current_user.is_authenticated and hasattr(current_user, 'is_admin') and current_user.is_admin:
-            return None  # None disables rate limiting for this request
-    except Exception:
-        # If there's any error checking user (e.g., not logged in), fall back to IP-based limiting
-        pass
-    return get_remote_address()
+    def rate_limit_key_func():
+        try:
+            # First try current_user (might be loaded by Flask-Login already)
+            if current_user.is_authenticated and hasattr(current_user, 'is_admin') and current_user.is_admin:
+                return None  # None disables rate limiting for this request
+        except Exception:
+            pass
+        
+        # If current_user isn't available, manually check session
+        # Flask-Login stores user ID in session['_user_id'] or session['_id']
+        try:
+            from flask import has_request_context
+            if not has_request_context():
+                return get_remote_address()
+            
+            # Check all possible Flask-Login session keys
+            # Flask-Login uses '_user_id' by default, but check other possibilities
+            user_id = session.get('_user_id') or session.get('_id') or session.get('user_id')
+            
+            if user_id:
+                # Access User model (captured in closure after it's defined)
+                # User is available at runtime since this function is created after init_models
+                try:
+                    user = User.query.get(int(user_id)) if user_id else None
+                    if user:
+                        if hasattr(user, 'is_admin') and user.is_admin:
+                            return None  # None disables rate limiting for this request
+                except (NameError, AttributeError, ValueError) as e:
+                    # User model not available or invalid user_id
+                    pass
+        except Exception as e:
+            # If there's any error checking user, fall back to IP-based limiting
+            pass
+        
+        return get_remote_address()
+    
+    return rate_limit_key_func
 
-# Initialize rate limiter
-# rate limiting can be disabled via limiter.enabled = False in tests
-limiter = Limiter(
-    app=app,
-    key_func=rate_limit_key_func,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
-)
+# Initialize rate limiter with a placeholder - will be updated after User is defined
+# We'll create the actual key function after User model is initialized
+limiter = None  # Will be initialized after User model is available
 
 # Return 401 instead of redirect for unauthorized API requests
 @login_manager.unauthorized_handler
@@ -171,6 +198,15 @@ def unauthorized():
 # Initialize models
 from models import init_models
 User, FailedLoginAttempt, AuditLog = init_models(db)
+
+# Now initialize rate limiter with key function that can access User model
+rate_limit_key_func = create_rate_limit_key_func()
+limiter = Limiter(
+    app=app,
+    key_func=rate_limit_key_func,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
+)
 
 # Initialize db tables
 from create_tbls import init_tables

@@ -21,16 +21,13 @@
 			// Clear the query parameter
 			goto('/login', { replaceState: true });
 		}
-
-		// If already logged in, redirect to uploads
-		const unsubscribe = auth.subscribe((state) => {
-			if (state.isAuthenticated) {
-				goto('/uploads');
-			}
-		});
-
-		return unsubscribe;
 	});
+
+	// Reactive statement: redirect to uploads if authenticated and on login page
+	// This only fires when both auth state AND route change, preventing unwanted redirects
+	$: if ($auth.isAuthenticated && $page.url.pathname === '/login') {
+		goto('/uploads');
+	}
 
 	const handleLogin = async () => {
 		error = '';

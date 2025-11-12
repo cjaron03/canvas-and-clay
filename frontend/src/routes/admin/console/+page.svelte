@@ -2,7 +2,8 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate, beforeNavigate } from '$app/navigation';
+  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth';
 
   export let data;
@@ -12,6 +13,9 @@
   let loadError = null;
   let isLoading = true;
   let isInitialized = false; // prevent multiple initializations
+  let previousAuthState = null; // track auth state changes
+  let isNavigatingAway = false; // prevent afterNavigate from running during redirects
+  let isInitializing = false; // prevent concurrent initialization calls
 
   let activeTab = 'overview';
   let loading = {
@@ -89,13 +93,180 @@
     }
   };
 
-  // Load command history from localStorage
+  // Load CLI history from localStorage (runs once on mount)
   onMount(async () => {
-    // Prevent multiple initializations (e.g., from hot reload or navigation)
-    if (isInitialized) {
+    // Load CLI output history
+    const storedOutput = localStorage.getItem('admin_cli_output');
+    if (storedOutput) {
+      try {
+        cliOutput = JSON.parse(storedOutput);
+        // Ensure we don't exceed 1000 lines
+        if (cliOutput.length > 1000) {
+          cliOutput = cliOutput.slice(-1000);
+          saveCLIOutput();
+        }
+        // Scroll to bottom after loading
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (cliOutputElement && shouldAutoScroll) {
+          cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
+        }
+      } catch {
+        cliOutput = [];
+      }
+    }
+  });
+
+  // Clear intervals when leaving the page
+  beforeNavigate(({ to, cancel }) => {
+    console.log('[ADMIN CONSOLE] beforeNavigate called', {
+      to: to?.url.pathname,
+      from: $page.url.pathname,
+      isNavigatingAway,
+      isInitializing,
+      stackTrace: new Error().stack
+    });
+    
+    // Only mark as navigating away if we're actually leaving /admin/console
+    if (to && !to.url.pathname.startsWith('/admin/console')) {
+      console.log('[ADMIN CONSOLE] Navigating away from console to:', to.url.pathname);
+      
+      // If we're currently initializing and navigating away, cancel the navigation
+      // This prevents accidental navigation during initialization
+      if (isInitializing && $page.url.pathname.startsWith('/admin/console')) {
+        console.warn('[ADMIN CONSOLE] WARNING: Navigation away during initialization! Cancelling navigation.');
+        console.warn('[ADMIN CONSOLE] Stack trace:', new Error().stack);
+        cancel(); // Cancel the navigation
+        return;
+      }
+      
+      isNavigatingAway = true;
+      // Clear intervals when navigating away from /admin/console
+      stopPeriodicApiCheck();
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
+    } else {
+      console.log('[ADMIN CONSOLE] Navigation is within console, not marking as navigating away');
+    }
+  });
+
+  // Reactive initialization - ensures it runs when route or auth state changes
+  // Note: Reactive statements can't await, so we call the async function without await
+  // Watch both route and auth state to catch login -> console navigation
+  // Also watch auth state so it fires when user logs in while on console page
+  $: routePath = $page.url.pathname;
+  $: authStateReactive = $auth; // Watch auth store for changes
+  $: if (routePath.startsWith('/admin/console') && 
+         !isNavigatingAway && 
+         !isInitializing &&
+         !isInitialized) {
+    // Trigger initialization when route matches and not already initializing/initialized
+    // The !isInitialized check prevents the reactive statement from firing multiple times
+    // initializeConsole will handle auth state changes and reset isInitialized if needed
+    console.log('[ADMIN CONSOLE] Reactive statement triggering initialization', {
+      route: routePath,
+      isNavigatingAway,
+      isInitializing,
+      isInitialized,
+      authState: authStateReactive
+    });
+    initializeConsole();
+  }
+
+  // Auth check and data loading runs on navigation to this page
+  afterNavigate(async ({ to, from }) => {
+    console.log('[ADMIN CONSOLE] afterNavigate called', {
+      to: to?.url.pathname,
+      from: from?.url.pathname,
+      currentPath: $page.url.pathname,
+      isNavigatingAway,
+      isInitialized,
+      isInitializing
+    });
+    
+    // Clear stale intervals first
+    stopPeriodicApiCheck();
+    if (timeUpdateInterval) {
+      clearInterval(timeUpdateInterval);
+      timeUpdateInterval = null;
+    }
+    
+    // Reset isNavigatingAway if we're on the console page
+    if ($page.url.pathname.startsWith('/admin/console')) {
+      isNavigatingAway = false;
+    }
+    
+    // Trigger initialization on navigation
+    if (!$page.url.pathname.startsWith('/admin/console') || isNavigatingAway) {
+      console.log('[ADMIN CONSOLE] afterNavigate skipping - wrong route or navigating away');
       return;
     }
-    isInitialized = true;
+    
+    // Only initialize if not already initialized or initializing
+    if (!isInitialized && !isInitializing) {
+      console.log('[ADMIN CONSOLE] afterNavigate triggering initialization');
+      initializeConsole();
+    } else {
+      console.log('[ADMIN CONSOLE] afterNavigate skipping - already initialized or initializing', {
+        isInitialized,
+        isInitializing
+      });
+    }
+  });
+
+  // Centralized initialization function
+  const initializeConsole = async () => {
+    console.log('[ADMIN CONSOLE] initializeConsole called', {
+      isNavigatingAway,
+      route: $page.url.pathname,
+      isInitialized,
+      isInitializing,
+      isLoading,
+      authState: get(auth),
+      windowLocation: typeof window !== 'undefined' ? window.location.pathname : 'N/A'
+    });
+    
+    // Check if we're still on the console route before proceeding
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin/console')) {
+      console.log('[ADMIN CONSOLE] Skipping - window.location shows we\'re not on console route:', window.location.pathname);
+      return;
+    }
+    
+    // Prevent re-entry if already initializing, navigating away, or wrong route
+    if (isNavigatingAway || !$page.url.pathname.startsWith('/admin/console') || isInitializing) {
+      console.log('[ADMIN CONSOLE] Skipping - navigating away, wrong route, or already initializing');
+      return;
+    }
+    
+    // Get current auth state first (before any init)
+    let authState = get(auth);
+    
+    // Re-initialize if auth state changed (user logged in/out)
+    if (authState.user?.id !== previousAuthState?.user?.id) {
+      console.log('[ADMIN CONSOLE] Auth state changed, resetting isInitialized');
+      isInitialized = false;
+      isLoading = true; // Reset loading state when auth changes
+    }
+    previousAuthState = authState;
+    
+    // Skip if already initialized for this session
+    if (isInitialized) {
+      console.log('[ADMIN CONSOLE] Already initialized, skipping');
+      return;
+    }
+    
+    // Mark as initializing to prevent concurrent calls
+    isInitializing = true;
+    isLoading = true; // Ensure loading state is set
+    console.log('[ADMIN CONSOLE] Starting initialization...');
+    
+    // CRITICAL: Clear any stale intervals FIRST before doing anything else
+    stopPeriodicApiCheck();
+    if (timeUpdateInterval) {
+      clearInterval(timeUpdateInterval);
+      timeUpdateInterval = null;
+    }
     
     // Small delay to ensure store updates from login have propagated
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -103,51 +274,89 @@
     // Always initialize auth state (auth.init() preserves existing state)
     // It fetches CSRF token and verifies session, preserving CSRF token if /auth/me doesn't return one
     await auth.init();
-    let authState = get(auth);
+    // Small delay to ensure session cookie is fully set
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // Reassign to get updated state after auth.init() - this is intentional and necessary
+    authState = get(auth);
+    
+    console.log('[ADMIN CONSOLE] After auth.init()', {
+      csrfToken: authState.csrfToken ? 'present' : 'missing',
+      isAuthenticated: authState.isAuthenticated,
+      userRole: authState.user?.role,
+      userId: authState.user?.id
+    });
     
     // Verify CSRF token is present - if not, that's a real error
     if (!authState.csrfToken) {
-      console.error('CSRF token missing after auth.init() - authentication failed');
+      console.error('[ADMIN CONSOLE] CSRF token missing after auth.init() - authentication failed');
+      isNavigatingAway = true;
+      isLoading = false;
+      isInitializing = false;
       goto('/login');
       return;
     }
     
     // Check if user is admin
     if (!authState.isAuthenticated || authState.user?.role !== 'admin') {
+      console.error('[ADMIN CONSOLE] Not authenticated or not admin', {
+        isAuthenticated: authState.isAuthenticated,
+        role: authState.user?.role
+      });
+      isNavigatingAway = true;
+      isLoading = false;
+      isInitialized = false; // Reset so we can try again if auth state changes
+      isInitializing = false;
       goto('/');
+      return;
+    }
+    
+    console.log('[ADMIN CONSOLE] Auth checks passed, loading data...');
+    
+    // Double-check we're still on the console route before loading data
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin/console')) {
+      console.log('[ADMIN CONSOLE] Aborting data load - navigated away from console:', window.location.pathname);
       return;
     }
 
     // Load stats and health data
     try {
+      // Build headers with CSRF token
+      const headers = {
+        accept: 'application/json'
+      };
+      if (authState.csrfToken) {
+        headers['X-CSRFToken'] = authState.csrfToken;
+      }
+      
       const [statsRes, healthRes] = await Promise.all([
         fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
           credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
+          headers: headers
         }),
         fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
           credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
+          headers: headers
         })
       ]);
 
       if (statsRes.status === 403 || healthRes.status === 403) {
         loadError = 'Access denied: Admin role required';
+        isLoading = false;
+        isInitializing = false;
         goto('/');
         return;
       }
       if (statsRes.status === 401 || healthRes.status === 401) {
         loadError = 'Authentication required';
+        isLoading = false;
+        isInitializing = false;
         goto('/login');
         return;
       }
 
       if (statsRes.ok) {
         stats = await statsRes.json();
+        console.log('[ADMIN CONSOLE] Stats loaded:', stats);
       } else if (statsRes.status !== 429) {
         // Don't show error for rate limit (429) - it's expected
         loadError = `Failed to load stats: HTTP ${statsRes.status}`;
@@ -159,6 +368,7 @@
       if (healthRes.ok) {
         health = await healthRes.json();
         healthLoadedSuccessfully = true;
+        console.log('[ADMIN CONSOLE] Health loaded:', health);
       } else if (healthRes.status === 429) {
         // Rate limited - preserve existing health status, don't overwrite with unknown
         // Only set to unknown if we have no health data at all
@@ -209,21 +419,6 @@
         }
       }
 
-      // Load CLI output history
-      const storedOutput = localStorage.getItem('admin_cli_output');
-      if (storedOutput) {
-        try {
-          cliOutput = JSON.parse(storedOutput);
-          // Ensure we don't exceed 1000 lines
-          if (cliOutput.length > 1000) {
-            cliOutput = cliOutput.slice(-1000);
-            saveCLIOutput();
-          }
-        } catch {
-          cliOutput = [];
-        }
-      }
-
       // Set up page visibility listener to pause/resume API checks
       if (typeof document !== 'undefined') {
         isTabVisible = document.visibilityState === 'visible';
@@ -234,8 +429,16 @@
       loadError = err instanceof Error ? err.message : 'Failed to load admin console data';
     } finally {
       isLoading = false;
+      isInitializing = false; // Clear initializing flag when done
+      isInitialized = true; // Mark as initialized only after async work completes
+      console.log('[ADMIN CONSOLE] Initialization complete', {
+        isLoading,
+        hasStats: !!stats,
+        hasHealth: !!health,
+        loadError
+      });
     }
-  });
+  };
 
   const loadCLIHelp = async () => {
     try {
@@ -543,9 +746,15 @@
         // Rate limited - preserve existing health status, don't overwrite
         // Don't update health or overallHealthStatus
         return;
+      } else if (healthRes.status === 401 || healthRes.status === 403) {
+        // Auth error - don't redirect here, just log and return
+        // The main afterNavigate will handle redirects
+        console.warn('[ADMIN CONSOLE] Health check returned', healthRes.status, '- auth may have expired');
+        return;
       }
     } catch (err) {
       console.error('Failed to refresh health data:', err);
+      // Don't redirect on errors - just log
     }
   };
 
@@ -554,6 +763,11 @@
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
       apiCheckInterval = null;
+    }
+    
+    // Check route first - only run if we're on the admin console page
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin/console')) {
+      return;
     }
     
     // Only start if browser tab is visible and Overview tab is active
@@ -569,8 +783,12 @@
     
     // Set up periodic checks every 30 seconds (only when Overview tab is active and browser tab is visible)
     apiCheckInterval = setInterval(() => {
-      // Only run if Overview tab is active and browser tab is visible
-      if (activeTab === 'overview' && isTabVisible && document.visibilityState === 'visible') {
+      // Check route AND visibility before running
+      if (typeof window !== 'undefined' && 
+          window.location.pathname.startsWith('/admin/console') &&
+          activeTab === 'overview' && 
+          isTabVisible && 
+          document.visibilityState === 'visible') {
         testApiConnection();
         refreshHealthData();
       }
@@ -1000,7 +1218,10 @@
   // Cleanup intervals on component destroy
   onDestroy(() => {
     // Reset initialization flag when component is destroyed
+    // This allows re-initialization when navigating back to the page
     isInitialized = false;
+    previousAuthState = null; // Reset auth state tracking
+    isNavigatingAway = false; // Reset navigation flag
     stopPeriodicApiCheck();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);

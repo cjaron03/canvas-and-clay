@@ -303,12 +303,12 @@ def clear_failed_login_attempts(email):
 
 
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit("5 per 15 minutes")
+@rate_limit("20 per 15 minutes")  # Increased from 5 to allow for testing/logout-login cycles
 def login():
     """Login with email and password.
     
     security features:
-    - rate limiting: 5 attempts per 15 minutes per IP address (applied via decorator)
+    - rate limiting: 20 attempts per 15 minutes per IP address (applied via decorator)
     - account lockout: 5 failed attempts per email = 15 minute lockout
     - audit logging: all login attempts (success and failure) are logged
     
