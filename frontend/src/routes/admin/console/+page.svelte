@@ -1,6 +1,7 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth';
 
@@ -10,70 +11,7 @@
   let health = null;
   let loadError = null;
   let isLoading = true;
-
-  // Load data client-side with credentials
-  onMount(async () => {
-    await auth.init();
-    
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
-      goto('/');
-      return;
-    }
-
-    // Load stats and health data
-    try {
-      const [statsRes, healthRes] = await Promise.all([
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        }),
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        })
-      ]);
-
-      if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        goto('/');
-        return;
-      }
-      if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Authentication required';
-        goto('/login');
-        return;
-      }
-
-      if (statsRes.ok) {
-        stats = await statsRes.json();
-      } else {
-        loadError = `Failed to load stats: HTTP ${statsRes.status}`;
-      }
-
-      if (healthRes.ok) {
-        health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
-      }
-
-      if (!health) {
-        health = { status: 'unknown', service: 'canvas-clay-backend' };
-      }
-    } catch (err) {
-      console.error('Failed to load admin console data:', err);
-      loadError = err instanceof Error ? err.message : 'Failed to load admin console data';
-    } finally {
-      isLoading = false;
-    }
-  });
+  let isInitialized = false; // prevent multiple initializations
 
   let activeTab = 'overview';
   let loading = {
@@ -102,6 +40,7 @@
   let apiCheckInterval = null;
   let currentTime = new Date(); // For reactive time display
   let overallHealthStatus = 'unknown'; // Overall system health status
+  let isTabVisible = true; // Track if browser tab is visible
 
   // CLI state
   let writeMode = false;
@@ -114,23 +53,67 @@
   let confirmationStep = 0; // 0 = none, 1 = first, 2 = second
   let cliOutputElement;
   let commandInputElement;
+  let shouldAutoScroll = true; // track if we should auto-scroll (user at bottom)
 
-  // Auto-scroll output to bottom whenever cliOutput changes
-  afterUpdate(() => {
-    if (cliOutputElement && cliOutput.length > 0) {
-      cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
+  // check if user is at bottom of scroll (within 50px threshold)
+  const isAtBottom = () => {
+    if (!cliOutputElement) return false;
+    const threshold = 50;
+    const scrollTop = cliOutputElement.scrollTop;
+    const scrollHeight = cliOutputElement.scrollHeight;
+    const clientHeight = cliOutputElement.clientHeight;
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  };
+
+  // handle scroll events to track if user manually scrolled up
+  const handleCLIScroll = () => {
+    shouldAutoScroll = isAtBottom();
+  };
+
+  // Save CLI output to localStorage for persistence
+  const saveCLIOutput = () => {
+    // Keep last 1000 lines (same limit as in-memory)
+    const toSave = cliOutput.slice(-1000);
+    try {
+      localStorage.setItem('admin_cli_output', JSON.stringify(toSave));
+    } catch (err) {
+      // If localStorage is full, try saving less
+      console.warn('Failed to save CLI output, localStorage may be full:', err);
+      try {
+        localStorage.setItem('admin_cli_output', JSON.stringify(toSave.slice(-500)));
+      } catch {
+        // If still fails, clear old output and try again
+        console.warn('Clearing old CLI output due to storage limit');
+        localStorage.removeItem('admin_cli_output');
+      }
     }
-  });
+  };
 
   // Load command history from localStorage
   onMount(async () => {
-    await auth.init();
+    // Prevent multiple initializations (e.g., from hot reload or navigation)
+    if (isInitialized) {
+      return;
+    }
+    isInitialized = true;
     
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Small delay to ensure store updates from login have propagated
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Always initialize auth state (auth.init() preserves existing state)
+    // It fetches CSRF token and verifies session, preserving CSRF token if /auth/me doesn't return one
+    await auth.init();
+    let authState = get(auth);
+    
+    // Verify CSRF token is present - if not, that's a real error
+    if (!authState.csrfToken) {
+      console.error('CSRF token missing after auth.init() - authentication failed');
+      goto('/login');
+      return;
+    }
     
     // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
+    if (!authState.isAuthenticated || authState.user?.role !== 'admin') {
       goto('/');
       return;
     }
@@ -165,25 +148,53 @@
 
       if (statsRes.ok) {
         stats = await statsRes.json();
-      } else {
+      } else if (statsRes.status !== 429) {
+        // Don't show error for rate limit (429) - it's expected
         loadError = `Failed to load stats: HTTP ${statsRes.status}`;
       }
 
+      // Track if we successfully loaded health data
+      let healthLoadedSuccessfully = false;
+      
       if (healthRes.ok) {
         health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
+        healthLoadedSuccessfully = true;
+      } else if (healthRes.status === 429) {
+        // Rate limited - preserve existing health status, don't overwrite with unknown
+        // Only set to unknown if we have no health data at all
+        if (!health) {
+          health = { status: 'unknown', service: 'canvas-clay-backend' };
+        }
+        // Don't update overallHealthStatus if rate limited - keep existing value
+      } else {
+        // Actual error (not rate limit)
+        if (!loadError) {
+          loadError = `Failed to load health: HTTP ${healthRes.status}`;
+        }
+        // Only set to unknown on actual errors (not rate limits) if we have no data
+        if (!health) {
+          health = { status: 'unknown', service: 'canvas-clay-backend' };
+        }
       }
 
+      // Only set default if we truly have no health data
       if (!health) {
         health = { status: 'unknown', service: 'canvas-clay-backend' };
       }
 
       // Initialize overall health status from backend health
-      overallHealthStatus = health?.status || 'unknown';
+      // Only update if we successfully loaded health (not rate limited or error)
+      if (healthLoadedSuccessfully) {
+        overallHealthStatus = health?.status || 'unknown';
+      } else if (!overallHealthStatus || overallHealthStatus === 'unknown') {
+        // Only set to unknown if we don't have a previous status and couldn't load
+        overallHealthStatus = health?.status || 'unknown';
+      }
+      // If rate limited/error and we have a previous status, preserve it
 
       // Start periodic API check on page load to keep overview tab updated
-      startPeriodicApiCheck();
+      // Run immediate check to get fresh API connection status
+      startPeriodicApiCheck(true);
 
       // Load CLI help
       await loadCLIHelp();
@@ -196,6 +207,27 @@
         } catch {
           commandHistory = [];
         }
+      }
+
+      // Load CLI output history
+      const storedOutput = localStorage.getItem('admin_cli_output');
+      if (storedOutput) {
+        try {
+          cliOutput = JSON.parse(storedOutput);
+          // Ensure we don't exceed 1000 lines
+          if (cliOutput.length > 1000) {
+            cliOutput = cliOutput.slice(-1000);
+            saveCLIOutput();
+          }
+        } catch {
+          cliOutput = [];
+        }
+      }
+
+      // Set up page visibility listener to pause/resume API checks
+      if (typeof document !== 'undefined') {
+        isTabVisible = document.visibilityState === 'visible';
+        document.addEventListener('visibilitychange', handleVisibilityChange);
       }
     } catch (err) {
       console.error('Failed to load admin console data:', err);
@@ -363,10 +395,30 @@
   };
 
   const handleTabChange = (tab) => {
+    const previousTab = activeTab;
     activeTab = tab;
     
-    // Keep API checks running regardless of tab (for overview health badge)
-    // Don't stop/start based on tab anymore
+    // Stop API checks when leaving Overview tab, restart when returning
+    if (previousTab === 'overview' && tab !== 'overview') {
+      // Leaving Overview - stop API checks to free resources
+      stopPeriodicApiCheck();
+      // Stop time update interval
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
+    } else if (previousTab !== 'overview' && tab === 'overview') {
+      // Returning to Overview - restart API checks with immediate refresh
+      startPeriodicApiCheck(true);
+      // Restart time update interval if we have a lastApiCheck
+      if (lastApiCheck && !timeUpdateInterval && isTabVisible) {
+        timeUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible' && activeTab === 'overview') {
+            currentTime = new Date();
+          }
+        }, 1000);
+      }
+    }
     
     if (tab === 'security' && auditLogs.length === 0) {
       loadAuditLogs();
@@ -386,7 +438,6 @@
         }
       }, 100);
     }
-    // API checks run continuously, no need to start/stop per tab
   };
 
   const testApiConnection = async () => {
@@ -488,26 +539,41 @@
         if (apiTestResult && apiTestResult.success) {
           overallHealthStatus = health?.status || 'unknown';
         }
+      } else if (healthRes.status === 429) {
+        // Rate limited - preserve existing health status, don't overwrite
+        // Don't update health or overallHealthStatus
+        return;
       }
     } catch (err) {
       console.error('Failed to refresh health data:', err);
     }
   };
 
-  const startPeriodicApiCheck = () => {
+  const startPeriodicApiCheck = (runImmediate = true) => {
     // Clear existing interval if any
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
+      apiCheckInterval = null;
     }
     
-    // Run initial check
-    testApiConnection();
-    refreshHealthData();
+    // Only start if browser tab is visible and Overview tab is active
+    if (!isTabVisible || activeTab !== 'overview') {
+      return;
+    }
     
-    // Set up periodic checks every 30 seconds
-    apiCheckInterval = setInterval(() => {
+    // Run initial check only if requested (skip if we just fetched data)
+    if (runImmediate) {
       testApiConnection();
       refreshHealthData();
+    }
+    
+    // Set up periodic checks every 30 seconds (only when Overview tab is active and browser tab is visible)
+    apiCheckInterval = setInterval(() => {
+      // Only run if Overview tab is active and browser tab is visible
+      if (activeTab === 'overview' && isTabVisible && document.visibilityState === 'visible') {
+        testApiConnection();
+        refreshHealthData();
+      }
     }, 30000);
   };
 
@@ -515,6 +581,38 @@
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
       apiCheckInterval = null;
+    }
+  };
+
+  // Handle page visibility changes (pause/resume when browser tab is hidden/shown)
+  const handleVisibilityChange = () => {
+    const wasVisible = isTabVisible;
+    isTabVisible = document.visibilityState === 'visible';
+    
+    // Only manage API checks if Overview tab is active
+    if (activeTab !== 'overview') {
+      return;
+    }
+    
+    if (!wasVisible && isTabVisible) {
+      // Browser tab became visible - restart periodic checks and time updates
+      // Run immediate check to get fresh data
+      startPeriodicApiCheck(true);
+      // Restart time update interval if we have a lastApiCheck
+      if (lastApiCheck && !timeUpdateInterval) {
+        timeUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible' && activeTab === 'overview') {
+            currentTime = new Date();
+          }
+        }, 1000);
+      }
+    } else if (wasVisible && !isTabVisible) {
+      // Browser tab became hidden - stop periodic checks and time updates to free resources
+      stopPeriodicApiCheck();
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
     }
   };
 
@@ -573,8 +671,11 @@
     commandInput = '';
     historyIndex = commandHistory.length;
 
+    // when user executes a command, force scroll to show it
+    shouldAutoScroll = true;
+
     // Add command to output
-    addCLIOutput(`> ${command}`, 'command');
+    addCLIOutput(`> ${command}`, 'command', true);
 
     // Auto-focus input after clearing (like a real CLI)
     setTimeout(() => {
@@ -742,9 +843,9 @@
         }
       }
       
-      // Force scroll to bottom after all output is added
+      // Auto-scroll to bottom after command execution only if user is at bottom
       setTimeout(() => {
-        if (cliOutputElement) {
+        if (cliOutputElement && shouldAutoScroll) {
           cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
         }
         // Auto-focus input after command execution (like a real CLI)
@@ -766,7 +867,7 @@
     }
   };
 
-  const addCLIOutput = (text, type = 'info') => {
+  const addCLIOutput = (text, type = 'info', forceScroll = false) => {
     cliOutput = [...cliOutput, {
       text,
       type,
@@ -776,22 +877,18 @@
     if (cliOutput.length > 1000) {
       cliOutput = cliOutput.slice(-1000);
     }
-    // Auto-scroll to bottom after output is added (multiple attempts to ensure it works)
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 0);
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 10);
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 50);
+    // Save to localStorage for persistence
+    saveCLIOutput();
+    // Auto-scroll to bottom only if user is at bottom (or forced)
+    if (forceScroll || shouldAutoScroll) {
+      setTimeout(() => {
+        if (cliOutputElement) {
+          cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
+          // update shouldAutoScroll after scrolling
+          shouldAutoScroll = isAtBottom();
+        }
+      }, 0);
+    }
   };
 
   const formatCLIData = (data) => {
@@ -831,6 +928,9 @@
 
   const clearCLIOutput = () => {
     cliOutput = [];
+    shouldAutoScroll = true; // reset to auto-scroll after clear
+    // Clear from localStorage as well
+    localStorage.removeItem('admin_cli_output');
   };
 
   const toggleWriteMode = (e) => {
@@ -876,18 +976,21 @@
   // Explicitly reference currentTime to ensure reactivity
   $: timeAgoDisplay = lastApiCheck && currentTime ? formatTimeAgo(lastApiCheck) : 'Never';
   
-  // Update time display continuously when we have a lastApiCheck
-  $: if (lastApiCheck) {
+  // Update time display continuously when we have a lastApiCheck, tab is visible, and Overview tab is active
+  $: if (lastApiCheck && isTabVisible && activeTab === 'overview') {
     // Clear existing interval
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
     }
     // Start new interval to update time display
     timeUpdateInterval = setInterval(() => {
-      currentTime = new Date();
+      // Only update if tab is still visible and Overview is active
+      if (document.visibilityState === 'visible' && activeTab === 'overview') {
+        currentTime = new Date();
+      }
     }, 1000);
   } else {
-    // Clear interval when no lastApiCheck
+    // Clear interval when no lastApiCheck, tab is hidden, or not on Overview tab
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
       timeUpdateInterval = null;
@@ -896,9 +999,16 @@
 
   // Cleanup intervals on component destroy
   onDestroy(() => {
+    // Reset initialization flag when component is destroyed
+    isInitialized = false;
     stopPeriodicApiCheck();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
+      timeUpdateInterval = null;
+    }
+    // Remove visibility change listener
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     }
   });
 </script>
@@ -908,7 +1018,7 @@
 
   {#if isLoading}
     <div class="loading">Loading console data...</div>
-  {:else if loadError}
+  {:else if loadError && (!stats && !health)}
     <div class="error-message">
       {loadError}
       {#if loadError === 'Access denied: Admin role required' || loadError === 'Authentication required'}
@@ -917,7 +1027,7 @@
         </div>
       {/if}
     </div>
-  {:else if !stats}
+  {:else if !stats && !health}
     <div class="loading">Failed to load data</div>
   {:else}
 
@@ -1266,7 +1376,7 @@
           </div>
         {/if}
 
-        <div class="cli-output" bind:this={cliOutputElement}>
+        <div class="cli-output" bind:this={cliOutputElement} on:scroll={handleCLIScroll}>
           {#each cliOutput as output}
             <div class="output-line" class:command={output.type === 'command'} class:success={output.type === 'success'} class:error={output.type === 'error'} class:warning={output.type === 'warning'} class:data={output.type === 'data'}>
               {#if output.type === 'command'}

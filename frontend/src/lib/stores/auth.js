@@ -31,11 +31,12 @@ function createAuthStore() {
 				});
 				if (meResponse.ok) {
 					const data = await meResponse.json();
-					set({
+					// Preserve existing CSRF token if /auth/me doesn't return one
+					update((state) => ({
 						user: data.user,
 						isAuthenticated: true,
-						csrfToken: data.csrf_token || null
-					});
+						csrfToken: data.csrf_token || state.csrfToken
+					}));
 				} else {
 					// Explicitly clear auth state if not authenticated
 					set({
