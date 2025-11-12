@@ -1,6 +1,6 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth';
