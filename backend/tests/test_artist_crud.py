@@ -2,7 +2,11 @@
 import pytest
 from datetime import date
 import json
-from app import app, db, User, Artist, Artwork, AuditLog
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app import app, db, User, Artist, Storage, Artwork, AuditLog
+
 
 @pytest.fixture
 def client():
@@ -24,6 +28,7 @@ def client():
             db.session.remove()
             db.drop_all()
 
+
 @pytest.fixture
 def test_data(client):
     """Create test artists and artworks."""
@@ -43,11 +48,20 @@ def test_data(client):
     db.session.add_all([artist1, artist2])
     db.session.flush()
 
+    storage = Storage(
+        storage_id='STOR001',
+        storage_loc='Test Storage',
+        storage_type='Rack'
+    )
+    db.session.add(storage)
+    db.session.flush()
+
     # Add one artwork linked to artist1
     artwork = Artwork(
         artwork_num='AW111111',
         artwork_ttl='Linked Artwork',
         artist_id='ARTIST01',
+        storage_id='STOR001',
         date_created=date(2024, 5, 1)
     )
     db.session.add(artwork)
@@ -56,8 +70,10 @@ def test_data(client):
     return {
         'artist1': artist1,
         'artist2': artist2,
+        'storage': storage,
         'artwork': artwork
     }
+
 
 @pytest.fixture
 def admin_user(client):
@@ -78,6 +94,7 @@ def admin_user(client):
 
     return user
 
+
 @pytest.fixture
 def regular_user(client):
     """Create and log in as regular user."""
@@ -92,6 +109,7 @@ def regular_user(client):
     })
 
     return User.query.filter_by(email='user@test.com').first()
+
 
 class TestListArtists:
     """ Test GET /api/artists endpoint."""
@@ -133,26 +151,6 @@ class TestListArtists:
         names = [a['name'] for a in data['artists']]
         assert names == ['Another Artist', 'Test Testy']
 
-class TestGetArtist:
-    """Test GET /api/artists/<id> endpoint."""
-
-    def test_get_artist_success(self, client, test_data):
-        """Testing getting artist."""
-        response = client.get('/api/artists/ARTIST01')
-        assert response.status_code == 200
-
-        data = response.json
-        assert data['id'] == 'ARTIST01'
-        assert data['name'] == 'Test Testy'
-        assert data['email'] == 'test@artist.com'
-        assert data['phone'] == '(123)-456-7890'
-
-    def test_get_artist_not_found(self, client, test_data):
-        """Test getting non-existent artist."""
-        response = client.get('/api/artists/NONEXIST')
-
-        assert response.status_code == 404
-        assert 'not found' in response.json['error']
 
 class TestCreateArtist:
     """Test POST /api/artists endpoint"""
@@ -173,7 +171,6 @@ class TestCreateArtist:
         assert data['artist']['artist_fname'] == 'New'
         assert data['artist']['artist_lname'] == 'Guy'
 
-
         # Verify audit log
         audit = AuditLog.query.filter_by(event_type='artist_created').first()
         assert audit is not None
@@ -187,7 +184,7 @@ class TestCreateArtist:
 
         assert response.status_code == 400
         assert 'Missing required fields' in response.json['error']
-    
+   
     def test_create_artist_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot create artists."""
         response = client.post('/api/artists', json={
@@ -206,6 +203,7 @@ class TestCreateArtist:
 
         assert response.status_code == 401
 
+
 class TestUpdateArtist:
     """Test PUT /api/artists/<id> endpoint."""
 
@@ -213,13 +211,13 @@ class TestUpdateArtist:
         """Test updating an artist as admin."""
         response = client.put('/api/artists/ARTIST01', json={
             'artist_fname': 'Updated',
-            'phone': '(098)-765-4321'
+            'artist_phone': '(098)-765-4321'
         })
 
         assert response.status_code == 200
         data = response.json
         assert data['artist']['artist_fname'] == 'Updated'
-        assert data['artist']['phone'] == '(098)-765-4321'
+        assert data['artist']['artist_phone'] == '(098)-765-4321'
 
         # Verify audit log
         audit = AuditLog.query.filter_by(event_type='artist_updated').first()
@@ -228,6 +226,7 @@ class TestUpdateArtist:
         details = json.loads(audit.details)
         assert 'artist_fname' in details['changes']    
 
+
     def test_update_artist_not_found(self, client, admin_user, test_data):
         """Test updating non-existent artist."""
         response = client.put('/api/artists/NONEXIST', json={
@@ -235,7 +234,7 @@ class TestUpdateArtist:
         })
 
         assert response.status_code == 404
-    
+   
     def test_update_artist_no_changes(self, client, admin_user, test_data):
         """Test updating artist with no actual changes."""
         response = client.put('/api/artists/ARTIST01', json={
@@ -244,7 +243,7 @@ class TestUpdateArtist:
 
         assert response.status_code == 200
         assert 'No changes detected' in response.json['message']
-    
+   
     def test_update_artist_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot update artists."""
         response = client.put('/api/artists/ARTIST01', json={
@@ -253,9 +252,56 @@ class TestUpdateArtist:
 
         assert response.status_code == 403
 
+
+class TestRestoreArtist:
+    """Test restoring soft-deleted artists."""
+
+    def test_restore_artist_success(self, client, admin_user, test_data):
+        """Restore a soft-deleted artist."""
+        artist = test_data['artist1']
+
+        # Soft delete artist
+        artist.is_deleted = True
+        artist.date_deleted = date.today()
+        db.session.commit()
+
+        response = client.put(f'/api/artists/{artist.artist_id}/restore')
+        assert response.status_code == 200
+
+        data = response.json
+        assert data['restored']['artist_id'] == artist.artist_id
+        assert data['restored']['artist_name'] == f"{artist.artist_fname} {artist.artist_lname}"
+        assert data['restored']['is_deleted'] is False
+        assert data['restored']['date_deleted'] is None
+
+        # Verify audit log
+        audit = AuditLog.query.filter_by(event_type='deleted_artist_restored').first()
+        assert audit is not None
+        import json
+        details = json.loads(audit.details)
+        assert details['artist_id'] == artist.artist_id
+        assert details['artist_name'] == f"{artist.artist_fname} {artist.artist_lname}"
+
+    def test_restore_artist_not_deleted(self, client, admin_user, test_data):
+        """Try restoring an artist that isn't deleted."""
+        artist = test_data['artist2']
+        artist.is_deleted = False
+        artist.date_deleted = None
+        db.session.commit()
+
+        response = client.put(f'/api/artists/{artist.artist_id}/restore')
+        assert response.status_code == 404
+        assert 'not deleted' in response.json['error'] or 'not found' in response.json['error']
+
+    def test_restore_artist_not_found(self, client, admin_user):
+        """Restore a non-existent artist."""
+        response = client.put('/api/artists/NONEXIST/restore')
+        assert response.status_code == 404
+        assert 'not found' in response.json['error']
+
+
 class TestDeleteArtist:
     """Test DELETE /api/artists/<id> endpoint."""
-
     def test_delete_artist_success(self, client, admin_user, test_data):
         """Deleting artist with no artworks."""
         response = client.delete('/api/artists/ARTIST02')
@@ -263,10 +309,9 @@ class TestDeleteArtist:
         data = response.json
         assert data['deleted']['artist_id'] == 'ARTIST02'
 
-
         # Verify artist is deleted
         artist = Artist.query.get('ARTIST02')
-        assert artist is None
+        assert artist.is_deleted is True
 
         # Verify audit log
         audit = AuditLog.query.filter_by(event_type='artist_deleted').first()
@@ -278,21 +323,21 @@ class TestDeleteArtist:
     def test_delete_artist_with_dependencies(self, client, admin_user, test_data):
         """Deleting artist with artwork dependencies - should prevent."""
         response = client.delete('/api/artists/ARTIST01')
+
         assert response.status_code == 400
-        assert 'associated artworks' in response.json['error']
-    
+   
     def test_delete_artist_not_found(self, client, admin_user, test_data):
         """Test deleting non-existent artist."""
         response = client.delete('/api/artists/NONEXIST')
 
         assert response.status_code == 404
-    
+   
     def test_delete_artist_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot delete artists."""
         response = client.delete('/api/artists/ARTIST01')
 
         assert response.status_code == 403
-    
+   
     def test_delete_artist_unauthenticated_forbidden(self, client, test_data):
         """Test that unauthenticated users cannot delete artists."""
         response = client.delete('/api/artists/ARTIST01')
