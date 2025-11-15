@@ -19,6 +19,7 @@
     if (data.filters.artistId) params.set('artist_id', data.filters.artistId);
     if (data.filters.medium) params.set('medium', data.filters.medium);
     if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
+    if (data.filters.ordering) params.set('ordering', data.filters.ordering);
     return `/artworks?${params.toString()}`;
   };
 
@@ -46,6 +47,18 @@
         placeholder="Search by title, artist, or medium..."
         autocomplete="off"
       />
+    </div>
+
+    <div class="filter-group">
+      <label for="ordering">Order</label>
+      <select id="ordering" name="ordering" on:change={handleSelectChange}>
+        <option value="title_asc" selected={data.filters.ordering === 'title_asc'}>
+          A-Z
+        </option>
+        <option value="title_desc" selected={data.filters.ordering === 'title_desc'}>
+          Z-A
+        </option>
+      </select>
     </div>
 
     <div class="filter-group">

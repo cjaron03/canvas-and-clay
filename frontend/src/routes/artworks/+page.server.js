@@ -8,6 +8,7 @@ export const load = async ({ url, fetch }) => {
   const artistId = url.searchParams.get('artist_id') ?? '';
   const medium = url.searchParams.get('medium') ?? '';
   const storageId = url.searchParams.get('storage_id') ?? '';
+  const ordering = url.searchParams.get('ordering') ?? 'title_asc';
 
   try {
     // Build query string
@@ -18,6 +19,7 @@ export const load = async ({ url, fetch }) => {
     if (artistId) params.set('artist_id', artistId);
     if (medium) params.set('medium', medium);
     if (storageId) params.set('storage_id', storageId);
+    if (ordering) params.set('ordering', ordering);
 
     const response = await fetch(
       `${API_BASE_URL}/api/artworks?${params.toString()}`,
@@ -34,7 +36,7 @@ export const load = async ({ url, fetch }) => {
         artworks: [],
         pagination: null,
         error: errorMessage,
-        filters: { search, artistId, medium, storageId },
+        filters: { search, artistId, medium, storageId, ordering },
         artists: [],
         artistsError: errorMessage,
         storage: [],
@@ -75,7 +77,7 @@ export const load = async ({ url, fetch }) => {
       artworks: data.artworks ?? [],
       pagination: data.pagination ?? null,
       error: null,
-      filters: { search, artistId, medium, storageId },
+      filters: { search, artistId, medium, storageId, ordering },
       artists,
       artistsError,
       storage,
@@ -91,7 +93,7 @@ export const load = async ({ url, fetch }) => {
       artworks: [],
       pagination: null,
       error: message,
-      filters: { search, artistId, medium, storageId },
+      filters: { search, artistId, medium, storageId, ordering },
       artists: [],
       artistsError: message,
       storage: [],
