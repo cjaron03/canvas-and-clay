@@ -559,7 +559,7 @@ def list_artworks():
         total = query.count()
 
         # Apply pagination
-        query = query.order_by(Artwork.artwork_num.desc())
+        query = query.order_by(Artwork.artwork_ttl.asc())
         query = query.offset((page - 1) * per_page).limit(per_page)
 
         # Execute query
