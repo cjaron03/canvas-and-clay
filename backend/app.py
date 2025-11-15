@@ -513,6 +513,7 @@ def list_artworks():
         search (str): Search term (searches title, medium, artist name)
         artist_id (str): Filter by artist ID
         medium (str): Filter by medium
+        storage_id (str): Filter by storage location ID
 
     Returns:
         200: Paginated list of artworks with full details
@@ -523,6 +524,7 @@ def list_artworks():
     search = request.args.get('search', '').strip()
     artist_id = request.args.get('artist_id', '').strip()
     medium = request.args.get('medium', '').strip()
+    storage_id = request.args.get('storage_id', '').strip()
 
     try:
         # Build base query with LEFT JOIN to handle artworks without artists
@@ -550,6 +552,8 @@ def list_artworks():
 
         if medium:
             query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+        if storage_id:
+            query = query.filter(Artwork.storage_id == storage_id)
 
         # Get total count before pagination
         total = query.count()

@@ -18,10 +18,11 @@
     if (data.filters.search) params.set('search', data.filters.search);
     if (data.filters.artistId) params.set('artist_id', data.filters.artistId);
     if (data.filters.medium) params.set('medium', data.filters.medium);
+    if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
     return `/artworks?${params.toString()}`;
   };
 
-  const handleArtistChange = (event) => {
+  const handleSelectChange = (event) => {
     event.currentTarget.form?.submit();
   };
 </script>
@@ -49,7 +50,8 @@
 
     <div class="filter-group">
       <label for="artist_id">Artist</label>
-      <select id="artist_id" name="artist_id" on:change={handleArtistChange}>
+      <select id="artist_id" name="artist_id" on:change={handleSelectChange}>
+        <!-- creates teh all artists option in the dropdown -->
         <option value="" selected={!data.filters.artistId}>
           All artists
         </option>
@@ -64,6 +66,27 @@
       </select>
       {#if data.artistsError}
         <p class="filter-hint">Unable to load artists: {data.artistsError}</p>
+      {/if}
+    </div>
+
+    <div class="filter-group">
+      <label for="storage_id">Location</label>
+      <select id="storage_id" name="storage_id" on:change={handleSelectChange}>
+        <!-- creates teh all storage option in the dropdown -->
+        <option value="" selected={!data.filters.storageId}>
+          All locations
+        </option>
+        {#each data.storage as location}
+          <option
+            value={location.id}
+            selected={data.filters.storageId === location.id}
+          >
+            {location.location} ({location.id})
+          </option>
+        {/each}
+      </select>
+      {#if data.storageError}
+        <p class="filter-hint">Unable to load locations: {data.storageError}</p>
       {/if}
     </div>
 

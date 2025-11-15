@@ -7,6 +7,7 @@ export const load = async ({ url, fetch }) => {
   const search = url.searchParams.get('search') ?? '';
   const artistId = url.searchParams.get('artist_id') ?? '';
   const medium = url.searchParams.get('medium') ?? '';
+  const storageId = url.searchParams.get('storage_id') ?? '';
 
   try {
     // Build query string
@@ -16,6 +17,7 @@ export const load = async ({ url, fetch }) => {
     if (search) params.set('search', search);
     if (artistId) params.set('artist_id', artistId);
     if (medium) params.set('medium', medium);
+    if (storageId) params.set('storage_id', storageId);
 
     const response = await fetch(
       `${API_BASE_URL}/api/artworks?${params.toString()}`,
@@ -32,9 +34,11 @@ export const load = async ({ url, fetch }) => {
         artworks: [],
         pagination: null,
         error: errorMessage,
-        filters: { search, artistId, medium },
+        filters: { search, artistId, medium, storageId },
         artists: [],
-        artistsError: errorMessage
+        artistsError: errorMessage,
+        storage: [],
+        storageError: errorMessage
       };
     }
 
@@ -44,23 +48,38 @@ export const load = async ({ url, fetch }) => {
         accept: 'application/json'
       }
     });
+    const storageResponse = await fetch(`${API_BASE_URL}/api/storage`, {
+      headers: {
+        accept: 'application/json'
+      }
+    });
 
     let artists = [];
     let artistsError = null;
+    let storage = [];
+    let storageError = null;
     if (artistsResponse.ok) {
       const artistsData = await artistsResponse.json();
       artists = artistsData.artists ?? [];
     } else {
       artistsError = await extractErrorMessage(artistsResponse, 'load artists list');
     }
+    if (storageResponse.ok) {
+      const storageData = await storageResponse.json();
+      storage = storageData.storage ?? [];
+    } else {
+      storageError = await extractErrorMessage(storageResponse, 'load storage locations');
+    }
 
     return {
       artworks: data.artworks ?? [],
       pagination: data.pagination ?? null,
       error: null,
-      filters: { search, artistId, medium },
+      filters: { search, artistId, medium, storageId },
       artists,
-      artistsError
+      artistsError,
+      storage,
+      storageError
     };
 
   } catch (err) {
@@ -72,9 +91,11 @@ export const load = async ({ url, fetch }) => {
       artworks: [],
       pagination: null,
       error: message,
-      filters: { search, artistId, medium },
+      filters: { search, artistId, medium, storageId },
       artists: [],
-      artistsError: message
+      artistsError: message,
+      storage: [],
+      storageError: message
     };
   }
 };
