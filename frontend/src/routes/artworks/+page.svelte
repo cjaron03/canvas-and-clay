@@ -20,6 +20,10 @@
     if (data.filters.medium) params.set('medium', data.filters.medium);
     return `/artworks?${params.toString()}`;
   };
+
+  const handleArtistChange = (event) => {
+    event.currentTarget.form?.submit();
+  };
 </script>
 
 <div class="container">
@@ -44,14 +48,23 @@
     </div>
 
     <div class="filter-group">
-      <label for="artist_id">Artist ID</label>
-      <input
-        id="artist_id"
-        name="artist_id"
-        type="text"
-        value={data.filters.artistId}
-        placeholder="e.g. TSTART01"
-      />
+      <label for="artist_id">Artist</label>
+      <select id="artist_id" name="artist_id" on:change={handleArtistChange}>
+        <option value="" selected={!data.filters.artistId}>
+          All artists
+        </option>
+        {#each data.artists as artist}
+          <option
+            value={artist.id}
+            selected={data.filters.artistId === artist.id}
+          >
+            {artist.name} ({artist.id})
+          </option>
+        {/each}
+      </select>
+      {#if data.artistsError}
+        <p class="filter-hint">Unable to load artists: {data.artistsError}</p>
+      {/if}
     </div>
 
     <div class="filter-group">
@@ -178,7 +191,8 @@
     color: var(--text-secondary);
   }
 
-  .filter-group input {
+  .filter-group input,
+  .filter-group select {
     padding: 0.5rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -186,9 +200,16 @@
     color: var(--text-primary);
   }
 
-  .filter-group input:focus {
+  .filter-group input:focus,
+  .filter-group select:focus {
     outline: none;
     border-color: var(--accent-color);
+  }
+
+  .filter-hint {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--danger-color);
   }
 
   .btn-primary {

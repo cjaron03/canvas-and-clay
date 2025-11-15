@@ -32,17 +32,35 @@ export const load = async ({ url, fetch }) => {
         artworks: [],
         pagination: null,
         error: errorMessage,
-        filters: { search, artistId, medium }
+        filters: { search, artistId, medium },
+        artists: [],
+        artistsError: errorMessage
       };
     }
 
     const data = await response.json();
+    const artistsResponse = await fetch(`${API_BASE_URL}/api/artists`, {
+      headers: {
+        accept: 'application/json'
+      }
+    });
+
+    let artists = [];
+    let artistsError = null;
+    if (artistsResponse.ok) {
+      const artistsData = await artistsResponse.json();
+      artists = artistsData.artists ?? [];
+    } else {
+      artistsError = await extractErrorMessage(artistsResponse, 'load artists list');
+    }
 
     return {
       artworks: data.artworks ?? [],
       pagination: data.pagination ?? null,
       error: null,
-      filters: { search, artistId, medium }
+      filters: { search, artistId, medium },
+      artists,
+      artistsError
     };
 
   } catch (err) {
@@ -54,7 +72,9 @@ export const load = async ({ url, fetch }) => {
       artworks: [],
       pagination: null,
       error: message,
-      filters: { search, artistId, medium }
+      filters: { search, artistId, medium },
+      artists: [],
+      artistsError: message
     };
   }
 };
