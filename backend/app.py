@@ -513,6 +513,9 @@ def list_artworks():
         search (str): Search term (searches title, medium, artist name)
         artist_id (str): Filter by artist ID
         medium (str): Filter by medium
+        storage_id (str): Filter by storage location ID
+
+        ordering (str): Sort order for results (title_asc/title_desc, default: title_asc)
 
     Returns:
         200: Paginated list of artworks with full details
@@ -523,6 +526,8 @@ def list_artworks():
     search = request.args.get('search', '').strip()
     artist_id = request.args.get('artist_id', '').strip()
     medium = request.args.get('medium', '').strip()
+    storage_id = request.args.get('storage_id', '').strip()
+    ordering = request.args.get('ordering', 'title_asc').strip().lower()
 
     try:
         # Build base query with LEFT JOIN to handle artworks without artists
@@ -550,12 +555,21 @@ def list_artworks():
 
         if medium:
             query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+        if storage_id:
+            query = query.filter(Artwork.storage_id == storage_id)
 
         # Get total count before pagination
         total = query.count()
 
+        # Apply alphabetical ordering w/ default ascending if no order given
+        ordering_map = {
+            'title_asc': Artwork.artwork_ttl.asc(),
+            'title_desc': Artwork.artwork_ttl.desc()
+        }
+        order_clause = ordering_map.get(ordering, ordering_map['title_asc'])
+        query = query.order_by(order_clause)
+
         # Apply pagination
-        query = query.order_by(Artwork.artwork_num.desc())
         query = query.offset((page - 1) * per_page).limit(per_page)
 
         # Execute query
