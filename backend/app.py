@@ -2821,5 +2821,55 @@ def _ensure_bootstrap_on_first_request():
         app.logger.warning(f"Bootstrap initialization skipped: {e}")
         # Don't set _bootstrap_complete, will retry on next request
 
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from scheduled_deletes import scheduled_artwork_deletion
+
+scheduler = None
+# scheduler for deletion of soft-deleted items over 30 days
+def start_deletion_scheduler():
+    """ The scheduler for running auto-deletion tasks
+        for items such as artwork that have been soft-deleted
+        for longer than 30 days. Will only start in the case 
+        of there being no existing scheduler to prevent
+        multiple instances of a scheduler.
+    """
+    global scheduler
+    if scheduler is None:
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(
+            func=scheduled_artwork_deletion,
+            trigger='interval',
+            days=1
+        )
+        scheduler.start()
+        app.logger.info("Deletion Scheduler started - using APScheduler.")
+    else:
+        app.logger.info("Deletion Scheduler already running, skipping start.")
+    
+
+# for stopping the deletion scheduler, mostly for testing purposes
+def stop_deletion_scheduler():
+    """ Function to stop the deletion scheduler.
+
+        Mostly for testing purposes, since the
+        scheduler runs in the backgound and calling
+        docker compose down automatically shuts down
+        the scheduler due is specifically being a daemon. 
+        
+        Allows for control during testing, as well as a 
+        fallback in the case of wanting to stop scheduled
+        deletions. 
+    """
+    global scheduler
+    if scheduler:
+        scheduler.shutdown(wait=False)
+        scheduler = None
+        app.logger.info("Deletion Scheduler has stopped - using APScheduler.")
+
+# ensure scheduler not running during testing
+if not app.config.get("TESTING", False):
+    start_deletion_scheduler()
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
