@@ -28,6 +28,7 @@
   let auditLogPagination = null;
   let auditLogPage = 1;
   let auditLogEventType = '';
+  let alertLogs = [];
 
   let failedLogins = [];
   let failedLoginsPagination = null;
@@ -38,12 +39,22 @@
   let userActionLoading = {};
   let userActionError = '';
   let databaseInfo = null;
+  let cleanup = {
+    auditDays: 90,
+    failedDays: 30,
+    auditLoading: false,
+    failedLoading: false,
+    auditMessage: '',
+    failedMessage: ''
+  };
+  let alertActionsMessage = '';
 
   // API health check state
   let apiTestResult = null;
   let apiTestLoading = false;
   let lastApiCheck = null;
   let apiCheckInterval = null;
+  let alertPollInterval = null;
   let currentTime = new Date(); // For reactive time display
   let overallHealthStatus = 'unknown'; // Overall system health status
   let isTabVisible = true; // Track if browser tab is visible
@@ -357,6 +368,34 @@
     }
   };
 
+  const loadAlertLogs = async () => {
+    try {
+      const params = new URLSearchParams();
+      params.set('alerts', 'true');
+      params.set('limit', '10');
+
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/audit-log?${params.toString()}`,
+        {
+          credentials: 'include',
+          headers: { accept: 'application/json' }
+        }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        alertLogs = result.audit_logs || [];
+      }
+    } catch (err) {
+      console.error('Failed to load alert logs:', err);
+    }
+  };
+
+  const clearAlerts = async () => {
+    alertLogs = [];
+    alertActionsMessage = 'Alerts cleared locally. New alerts will appear automatically when triggered.';
+  };
+
   const loadFailedLogins = async (page = 1) => {
     loading.failedLogins = true;
     try {
@@ -612,6 +651,52 @@
       adjustArtistCount(prevRole, newRole);
     });
 
+  const cleanupAuditLogs = async () => {
+    cleanup.auditMessage = '';
+    cleanup.auditLoading = true;
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/audit-log/cleanup`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ days: cleanup.auditDays })
+      });
+      const data = await handleUserActionResponse(response, 'Failed to cleanup audit logs');
+      cleanup.auditMessage = data?.message || 'Cleanup complete';
+      // Refresh audit logs
+      loadAuditLogs(auditLogPage, auditLogEventType);
+    } catch (err) {
+      console.error('Audit log cleanup failed:', err);
+      userActionError = err?.message || 'Failed to cleanup audit logs';
+    } finally {
+      cleanup.auditLoading = false;
+    }
+  };
+
+  const cleanupFailedLogins = async () => {
+    cleanup.failedMessage = '';
+    cleanup.failedLoading = true;
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/failed-logins/cleanup`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ days: cleanup.failedDays })
+      });
+      const data = await handleUserActionResponse(response, 'Failed to cleanup failed logins');
+      cleanup.failedMessage = data?.message || 'Cleanup complete';
+      // Refresh failed login list
+      loadFailedLogins(failedLoginsPage);
+    } catch (err) {
+      console.error('Failed login cleanup failed:', err);
+      userActionError = err?.message || 'Failed to cleanup failed logins';
+    } finally {
+      cleanup.failedLoading = false;
+    }
+  };
+
   const handleTabChange = (tab) => {
     const previousTab = activeTab;
     activeTab = tab;
@@ -638,10 +723,20 @@
       }
     }
     
-    if (tab === 'security' && auditLogs.length === 0) {
-      loadAuditLogs();
-      loadFailedLogins();
-    } else if (tab === 'users' && users.length === 0) {
+    if (tab === 'security') {
+      if (auditLogs.length === 0) {
+        loadAuditLogs();
+      }
+      if (failedLogins.length === 0) {
+        loadFailedLogins();
+      }
+      loadAlertLogs();
+      startAlertPolling();
+    } else {
+      stopAlertPolling();
+    }
+
+    if (tab === 'users' && users.length === 0) {
       loadUsers();
     } else if (tab === 'database' && !databaseInfo) {
       loadDatabaseInfo();
@@ -847,6 +942,20 @@
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
       apiCheckInterval = null;
+    }
+  };
+
+  const startAlertPolling = () => {
+    stopAlertPolling();
+    alertPollInterval = setInterval(() => {
+      loadAlertLogs();
+    }, 10000);
+  };
+
+  const stopAlertPolling = () => {
+    if (alertPollInterval) {
+      clearInterval(alertPollInterval);
+      alertPollInterval = null;
     }
   };
 
@@ -1266,6 +1375,7 @@
   // Cleanup intervals on component destroy
   onDestroy(() => {
     stopPeriodicApiCheck();
+    stopAlertPolling();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
       timeUpdateInterval = null;
@@ -1417,6 +1527,45 @@
     {:else if activeTab === 'security'}
       <div class="security">
         <h2>Audit Logs</h2>
+        {#if alertLogs.length > 0}
+          <div class="inline-info alert-box">
+            <div class="alert-header">
+              <strong>Security alerts</strong>
+              <span class="alert-subtext">Recent spikes and role changes</span>
+            </div>
+            <div class="alert-grid">
+              {#each alertLogs as log}
+                <div class="alert-row">
+                  <div class="alert-row-main">
+                    <span class="pill pill-alert">{log.event_type}</span>
+                    <span class="alert-meta">{formatDate(log.created_at)}</span>
+                  </div>
+                  {#if log.details}
+                    <div class="alert-details">{log.details}</div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <div class="alert-actions">
+              <div class="alert-action-list">
+                <div><strong>Recommended actions:</strong></div>
+                <ul>
+                  <li>Lock or reset accounts involved in unexpected promotions/demotions.</li>
+                  <li>Review recent audit logs for suspicious activity.</li>
+                  <li>Force logout active sessions if abuse is suspected.</li>
+                  <li>Consider temporarily restricting role changes or uploads.</li>
+                </ul>
+              </div>
+              <div class="alert-buttons">
+                <button class="secondary" on:click={() => loadAlertLogs()}>Refresh alerts</button>
+                <button class="secondary" on:click={clearAlerts}>Mark as reviewed</button>
+              </div>
+              {#if alertActionsMessage}
+                <div class="inline-info small">{alertActionsMessage}</div>
+              {/if}
+            </div>
+          </div>
+        {/if}
         <div class="filters">
           <input
             type="text"
@@ -1425,6 +1574,29 @@
             on:keydown={(e) => e.key === 'Enter' && handleAuditLogFilter()}
           />
           <button on:click={handleAuditLogFilter}>Filter</button>
+        </div>
+        <div class="cleanup-card">
+          <div class="cleanup-row">
+            <label for="audit-cleanup-days">Delete audit logs older than</label>
+            <input
+              id="audit-cleanup-days"
+              type="number"
+              min="0"
+              bind:value={cleanup.auditDays}
+              aria-label="Audit log retention days"
+            />
+            <span>days (0 = delete all)</span>
+            <button
+              class="secondary"
+              on:click={cleanupAuditLogs}
+              disabled={cleanup.auditLoading}
+            >
+              {cleanup.auditLoading ? 'Cleaning...' : 'Cleanup'}
+            </button>
+          </div>
+          {#if cleanup.auditMessage}
+            <div class="inline-info small">{cleanup.auditMessage}</div>
+          {/if}
         </div>
         {#if loading.auditLog}
           <div>Loading...</div>
@@ -1471,6 +1643,29 @@
         {/if}
 
         <h2>Failed Login Attempts</h2>
+        <div class="cleanup-card">
+          <div class="cleanup-row">
+            <label for="failed-cleanup-days">Delete failed logins older than</label>
+            <input
+              id="failed-cleanup-days"
+              type="number"
+              min="0"
+              bind:value={cleanup.failedDays}
+              aria-label="Failed login retention days"
+            />
+            <span>days (0 = delete all)</span>
+            <button
+              class="secondary"
+              on:click={cleanupFailedLogins}
+              disabled={cleanup.failedLoading}
+            >
+              {cleanup.failedLoading ? 'Cleaning...' : 'Cleanup'}
+            </button>
+          </div>
+          {#if cleanup.failedMessage}
+            <div class="inline-info small">{cleanup.failedMessage}</div>
+          {/if}
+        </div>
         {#if loading.failedLogins}
           <div>Loading...</div>
         {:else}
@@ -2013,13 +2208,99 @@
   }
 
   .inline-info {
-    background: rgba(59, 130, 246, 0.08);
-    border: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.35);
     color: var(--text-primary);
     padding: 0.75rem 1rem;
     border-radius: 6px;
     margin-bottom: 1rem;
     font-size: 0.95rem;
+  }
+
+  .inline-info.small {
+    margin-top: 0.35rem;
+    margin-bottom: 0;
+    font-size: 0.9rem;
+  }
+
+  .alert-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .alert-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .alert-subtext {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  .alert-grid {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .alert-type {
+    font-weight: 600;
+    margin-right: 0.5rem;
+    color: var(--accent-color);
+  }
+
+  .alert-meta {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-right: 0.5rem;
+  }
+
+  .alert-details {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    word-break: break-word;
+  }
+
+  .alert-row {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .alert-row-main {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .alert-actions {
+    margin-top: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .alert-action-list ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.2rem;
+    color: var(--text-secondary);
+  }
+
+  .alert-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
 
   .user-email {
@@ -2060,6 +2341,30 @@
     background: rgba(245, 158, 11, 0.16);
     color: #b45309;
     border-color: rgba(245, 158, 11, 0.4);
+  }
+
+  .cleanup-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .cleanup-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .cleanup-row input[type='number'] {
+    width: 90px;
+    padding: 0.4rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
   }
 
   .pill-muted {

@@ -1777,11 +1777,21 @@ def admin_console_audit_log():
         per_page = min(request.args.get('per_page', 50, type=int), 200)
         event_type = request.args.get('event_type', None)
         limit = request.args.get('limit', None, type=int)
+
+        only_alerts = request.args.get('alerts', 'false').lower() == 'true'
         
         query = AuditLog.query.order_by(AuditLog.created_at.desc())
         
         if event_type:
             query = query.filter(AuditLog.event_type == event_type)
+
+        if only_alerts:
+            query = query.filter(AuditLog.event_type.in_([
+                'alert_failed_login_spike',
+                'alert_role_change_spike',
+                'user_promoted',
+                'user_demoted'
+            ]))
         
         if limit:
             # Return limited results without pagination
@@ -1830,6 +1840,39 @@ def admin_console_audit_log():
     except Exception as e:
         app.logger.exception("Failed to fetch audit logs")
         return jsonify({'error': 'Failed to fetch audit logs'}), 500
+
+
+@app.route('/api/admin/console/audit-log/cleanup', methods=['POST'])
+@login_required
+@admin_required
+def admin_console_audit_log_cleanup():
+    """Cleanup audit logs older than the specified number of days.
+
+    Request JSON:
+        { "days": <int, optional, default 90> }
+
+    If days <= 0, all audit logs are deleted.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        days = int(data.get('days', 90))
+
+        if days <= 0:
+            deleted = AuditLog.query.delete()
+        else:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            deleted = AuditLog.query.filter(AuditLog.created_at < cutoff).delete()
+
+        db.session.commit()
+
+        return jsonify({
+            'message': f'Deleted {deleted} audit logs',
+            'deleted': deleted
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Failed to cleanup audit logs")
+        return jsonify({'error': 'Failed to cleanup audit logs'}), 500
 
 
 @app.route('/api/admin/console/failed-logins', methods=['GET'])
@@ -1899,6 +1942,39 @@ def admin_console_failed_logins():
     except Exception as e:
         app.logger.exception("Failed to fetch failed login attempts")
         return jsonify({'error': 'Failed to fetch failed login attempts'}), 500
+
+
+@app.route('/api/admin/console/failed-logins/cleanup', methods=['POST'])
+@login_required
+@admin_required
+def admin_console_failed_logins_cleanup():
+    """Cleanup failed login attempts older than the specified number of days.
+
+    Request JSON:
+        { "days": <int, optional, default 30> }
+
+    If days <= 0, all failed login attempts are deleted.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        days = int(data.get('days', 30))
+
+        if days <= 0:
+            deleted = FailedLoginAttempt.query.delete()
+        else:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            deleted = FailedLoginAttempt.query.filter(FailedLoginAttempt.attempted_at < cutoff).delete()
+
+        db.session.commit()
+
+        return jsonify({
+            'message': f'Deleted {deleted} failed login attempts',
+            'deleted': deleted
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Failed to cleanup failed login attempts")
+        return jsonify({'error': 'Failed to cleanup failed login attempts'}), 500
 
 
 @app.route('/api/admin/console/users', methods=['GET'])
@@ -1973,6 +2049,23 @@ def _is_bootstrap_admin(user):
         return False
 
 
+def _maybe_alert_role_change_spike(event_type):
+    """Log warning on spikes of role changes (promote/demote) in last 10 minutes."""
+    try:
+        window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+        count = AuditLog.query.filter(
+            AuditLog.event_type == event_type,
+            AuditLog.created_at >= window_start
+        ).count()
+        if count >= 3:
+            app.logger.warning(
+                "Security alert: spike in role changes",
+                extra={'event_type': event_type, 'count_last_hour': count}
+            )
+    except Exception:
+        pass
+
+
 @app.route('/api/admin/console/users/<int:user_id>/promote', methods=['POST'])
 @login_required
 @admin_required
@@ -2028,6 +2121,8 @@ def promote_user(user_id):
         }
     )
 
+    _maybe_alert_role_change_spike('user_promoted')
+
     return jsonify({
         'message': 'User promoted successfully',
         'user': _serialize_user_with_last_login(target)
@@ -2082,6 +2177,8 @@ def demote_user(user_id):
             'acted_by_email': current_user.email
         }
     )
+
+    _maybe_alert_role_change_spike('user_demoted')
 
     return jsonify({
         'message': 'User demoted successfully',

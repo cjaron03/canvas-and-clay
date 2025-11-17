@@ -380,8 +380,57 @@ def record_failed_login(email):
     try:
         db.session.add(failed_attempt)
         db.session.commit()
+        _maybe_alert_failed_login_spike(email)
     except Exception:
         db.session.rollback()
+
+
+def _maybe_alert_failed_login_spike(email):
+    """Log a warning if failed logins spike for a single email or IP in a short window.
+
+    Threshold: >= 3 failures in the last 10 minutes by email or IP.
+    """
+    from sqlalchemy import func
+
+    if not request:
+        return
+
+    window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+    ip = get_remote_address()
+
+    email_failures = FailedLoginAttempt.query.filter(
+        FailedLoginAttempt.email == email,
+        FailedLoginAttempt.attempted_at >= window_start
+    ).count()
+
+    ip_failures = FailedLoginAttempt.query.filter(
+        FailedLoginAttempt.ip_address == ip,
+        FailedLoginAttempt.attempted_at >= window_start
+    ).count()
+
+    if email_failures >= 3 or ip_failures >= 3:
+        log_audit_event(
+            'alert_failed_login_spike',
+            email=email,
+            details={
+                'email_failures_last_10m': email_failures,
+                'ip_failures_last_10m': ip_failures,
+                'ip_address': ip
+            }
+        )
+        try:
+            from app import app as flask_app
+            flask_app.logger.warning(
+                "Security alert: failed login spike", 
+                extra={
+                    'email': email,
+                    'ip': ip,
+                    'email_failures_last_10m': email_failures,
+                    'ip_failures_last_10m': ip_failures
+                }
+            )
+        except Exception:
+            pass
 
 
 def clear_failed_login_attempts(email):
