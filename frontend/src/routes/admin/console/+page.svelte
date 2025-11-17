@@ -29,6 +29,9 @@
   let auditLogPage = 1;
   let auditLogEventType = '';
   let alertLogs = [];
+  const ALERT_REVIEW_KEY = 'admin_security_alerts_review_state';
+  const LEGACY_ALERT_REVIEW_KEY = 'admin_security_alerts_reviewed_at';
+  let alertReviewState = { reviewedAt: null, reviewedIds: [] };
 
   let failedLogins = [];
   let failedLoginsPagination = null;
@@ -38,6 +41,7 @@
   let userRoleCounts = null;
   let userActionLoading = {};
   let userActionError = '';
+  let userActionNotice = '';
   let databaseInfo = null;
   let cleanup = {
     auditDays: 90,
@@ -47,6 +51,7 @@
     auditMessage: '',
     failedMessage: ''
   };
+  let purgeMessage = '';
   let alertActionsMessage = '';
   let purgeDays = 30;
 
@@ -111,6 +116,9 @@
   onMount(async () => {
     // Initialize auth first (layout also calls this, but we need to ensure it's done)
     await auth.init();
+
+    // Restore persisted alert review state so previously reviewed alerts stay hidden
+    alertReviewState = readStoredAlertReviewState();
     
     // Wait for auth state to be ready and reactive updates to propagate
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -369,6 +377,64 @@
     }
   };
 
+  const readStoredAlertReviewState = () => {
+    try {
+      const raw = localStorage.getItem(ALERT_REVIEW_KEY);
+      if (raw) {
+        // Prefer structured state, but fall back to legacy string if needed
+        try {
+          const parsed = JSON.parse(raw);
+          return {
+            reviewedAt: parsed?.reviewedAt || null,
+            reviewedIds: Array.isArray(parsed?.reviewedIds) ? parsed.reviewedIds : []
+          };
+        } catch {
+          // Legacy: stored as ISO string
+          return { reviewedAt: raw, reviewedIds: [] };
+        }
+      }
+      // Legacy key support
+      const legacy = localStorage.getItem(LEGACY_ALERT_REVIEW_KEY);
+      if (legacy) {
+        return { reviewedAt: legacy, reviewedIds: [] };
+      }
+      return { reviewedAt: null, reviewedIds: [] };
+    } catch (err) {
+      console.warn('Unable to read alert review state from storage:', err);
+      return { reviewedAt: null, reviewedIds: [] };
+    }
+  };
+
+  const persistAlertReviewState = (state) => {
+    try {
+      localStorage.setItem(
+        ALERT_REVIEW_KEY,
+        JSON.stringify({
+          reviewedAt: state?.reviewedAt || null,
+          reviewedIds: Array.isArray(state?.reviewedIds) ? state.reviewedIds : []
+        })
+      );
+    } catch (err) {
+      console.warn('Unable to persist alert review state:', err);
+    }
+  };
+
+  const filterReviewedAlerts = (logs = []) => {
+    const { reviewedAt, reviewedIds } = alertReviewState || {};
+    const reviewedIdSet = new Set(reviewedIds || []);
+    const lastReviewedTs = reviewedAt ? Date.parse(reviewedAt) : null;
+
+    return logs.filter((log) => {
+      if (reviewedIdSet.has(log?.id)) return false;
+      if (!lastReviewedTs || Number.isNaN(lastReviewedTs)) return true;
+
+      const createdTs = log?.created_at ? Date.parse(log.created_at) : null;
+      // Hide if timestamp is missing but we previously marked it by id; otherwise keep
+      if (!createdTs || Number.isNaN(createdTs)) return true;
+      return createdTs > lastReviewedTs;
+    });
+  };
+
   const loadAlertLogs = async () => {
     try {
       const params = new URLSearchParams();
@@ -385,7 +451,7 @@
 
       if (response.ok) {
         const result = await response.json();
-        alertLogs = result.audit_logs || [];
+        alertLogs = filterReviewedAlerts(result.audit_logs || []);
       }
     } catch (err) {
       console.error('Failed to load alert logs:', err);
@@ -393,8 +459,14 @@
   };
 
   const clearAlerts = async () => {
+    const now = new Date().toISOString();
+    // Record both timestamp and the ids we cleared so items without timestamps also stay hidden
+    const reviewedIds = [...new Set(alertLogs.map((log) => log?.id).filter(Boolean))];
+    alertReviewState = { reviewedAt: now, reviewedIds };
+    persistAlertReviewState(alertReviewState);
     alertLogs = [];
-    alertActionsMessage = 'Alerts cleared locally. New alerts will appear automatically when triggered.';
+    alertActionsMessage =
+      'Alerts marked as reviewed. New alerts will appear automatically when triggered.';
   };
 
   const loadFailedLogins = async (page = 1) => {
@@ -597,6 +669,7 @@
   const withUserAction = async (userId, action) => {
     userActionLoading = { ...userActionLoading, [userId]: true };
     userActionError = '';
+    userActionNotice = '';
     try {
       await action();
     } catch (err) {
@@ -685,6 +758,7 @@
     cleanup.auditMessage = '';
     cleanup.failedMessage = '';
     userActionError = '';
+    purgeMessage = '';
     userActionLoading['__purge__'] = true;
     try {
       const headers = await buildAuthedHeaders();
@@ -695,7 +769,8 @@
         body: JSON.stringify({ days: purgeDays })
       });
       const data = await handleUserActionResponse(response, 'Failed to purge deleted users');
-      cleanup.auditMessage = data?.message || 'Purge complete';
+      purgeMessage = data?.message || 'Purge complete';
+      userActionNotice = purgeMessage;
       await loadUsers();
     } catch (err) {
       console.error('User purge failed:', err);
@@ -713,17 +788,20 @@
   const hardDeleteUser = async (user) =>
     withUserAction(user.id, async () => {
       const headers = await buildAuthedHeaders();
-      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/hard-delete`, {
-        method: 'POST',
-        credentials: 'include',
-        headers
-      });
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/hard-delete`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers
+        }
+      );
       const result = await handleUserActionResponse(response, 'Failed to delete user permanently');
       if (!response.ok) return;
       // Remove from local list
       users = users.filter((u) => u.id !== user.id);
       recomputeRoleCounts(users);
-      cleanup.auditMessage = result?.message || 'User deleted permanently';
+      userActionNotice = result?.message || 'User permanently deleted';
     });
 
   const cleanupAuditLogs = async () => {
@@ -1759,6 +1837,9 @@
               {userActionLoading['__purge__'] ? 'Purging...' : 'Purge deleted users'}
             </button>
           </div>
+          {#if purgeMessage}
+            <div class="inline-info small">{purgeMessage}</div>
+          {/if}
         {#if loading.failedLogins}
           <div>Loading...</div>
         {:else}
@@ -1819,6 +1900,9 @@
         {/if}
         {#if userActionError}
           <div class="inline-error">{userActionError}</div>
+        {/if}
+        {#if userActionNotice}
+          <div class="inline-info small">{userActionNotice}</div>
         {/if}
         {#if loading.users}
           <div>Loading...</div>
