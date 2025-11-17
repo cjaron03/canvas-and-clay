@@ -390,7 +390,8 @@ def _maybe_alert_failed_login_spike(email):
 
     Threshold: >= 3 failures in the last 10 minutes by email or IP.
     """
-    from sqlalchemy import func
+    from models import init_models
+    FailedLoginAttempt = init_models(get_dependencies()[0])[1]
 
     if not request:
         return
