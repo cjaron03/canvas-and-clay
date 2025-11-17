@@ -42,6 +42,103 @@ def admin_required(f):
     return decorated_function
 
 
+def get_current_role():
+    """Get the current user's normalized role.
+
+    Returns:
+        str: 'admin', 'guest', or 'anonymous'
+    """
+    try:
+        if current_user.is_authenticated:
+            return current_user.normalized_role
+        else:
+            return 'anonymous'
+    except Exception:
+        return 'anonymous'
+
+
+def is_artwork_owner(artwork):
+    """Check if the current user owns the given artwork via Artist.user_id.
+
+    Args:
+        artwork: Artwork object to check ownership of
+
+    Returns:
+        bool: True if current user owns the artwork, False otherwise
+    """
+    if not current_user.is_authenticated:
+        return False
+
+    try:
+        # Get the artist associated with this artwork
+        from app import Artist
+        artist = Artist.query.get(artwork.artist_id)
+
+        if not artist:
+            return False
+
+        # Check if artist is linked to current user
+        if artist.user_id and artist.user_id == current_user.id:
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+def log_rbac_denial(resource_type, resource_id, reason):
+    """Log RBAC denial for audit trail with differentiated reasons.
+
+    Args:
+        resource_type: Type of resource (e.g., 'artwork', 'photo')
+        resource_id: ID of the resource
+        reason: Reason for denial ('insufficient_role' or 'not_owner')
+    """
+    log_audit_event('rbac_denied',
+                    user_id=current_user.id if current_user.is_authenticated else None,
+                    email=current_user.email if current_user.is_authenticated else None,
+                    details={
+                        'resource_type': resource_type,
+                        'resource_id': str(resource_id),
+                        'reason': reason,
+                        'user_role': get_current_role()
+                    })
+
+
+def is_photo_owner(photo):
+    """Check if current user owns the photo via artwork ownership.
+
+    Ownership is determined by:
+    1. If photo is orphaned (no artwork_num), only admins can modify
+    2. If photo belongs to artwork, check if user owns that artwork
+
+    Args:
+        photo: ArtworkPhoto object to check ownership of
+
+    Returns:
+        bool: True if current user owns the photo's artwork, False otherwise
+    """
+    if not current_user.is_authenticated:
+        return False
+
+    try:
+        # Orphaned photos can only be managed by admins
+        if photo.artwork_num is None:
+            return False
+
+        # Get the artwork this photo belongs to
+        from app import Artwork
+        artwork = Artwork.query.get(photo.artwork_num)
+
+        if not artwork:
+            return False
+
+        # Check if user owns the artwork
+        return is_artwork_owner(artwork)
+    except Exception:
+        return False
+
+
 @auth_bp.route('/csrf-token', methods=['GET'])
 @rate_limit("100 per minute")  # More lenient limit for frequently-called endpoint
 def get_csrf_token():
@@ -124,8 +221,8 @@ def validate_password(password):
 @rate_limit("3 per minute")
 def register():
     """Register a new user account.
-    
-    security: all new user registrations are forced to 'visitor' role.
+
+    security: all new user registrations are forced to 'guest' role.
     admin role must be granted through admin promotion endpoint.
     
     Expected JSON body:
@@ -151,8 +248,8 @@ def register():
     password = data.get('password', '')
     
     # security fix: ignore any client-supplied role parameter
-    # all new users are forced to 'visitor' role to prevent privilege escalation
-    role = 'visitor'
+    # all new users are forced to 'guest' role to prevent privilege escalation
+    role = 'guest'
     
     # Validate email
     if not email:
@@ -303,7 +400,7 @@ def clear_failed_login_attempts(email):
 
 
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit("5 per 15 minutes")
+@rate_limit("20 per 15 minutes")  # Increased for development/testing
 def login():
     """Login with email and password.
     
@@ -407,7 +504,7 @@ def login():
         'user': {
             'id': user.id,
             'email': user.email,
-            'role': user.role
+            'role': user.normalized_role
         }
     }), 200
 
@@ -441,7 +538,7 @@ def logout():
 @login_required
 def get_current_user():
     """Get current authenticated user information.
-    
+
     Returns:
         200: User info
         401: Not authenticated
@@ -450,7 +547,7 @@ def get_current_user():
         'user': {
             'id': current_user.id,
             'email': current_user.email,
-            'role': current_user.role,
+            'role': current_user.normalized_role,
             'created_at': current_user.created_at.isoformat()
         }
     }), 200

@@ -54,7 +54,7 @@ def admin_user(client):
         'password': 'AdminPassword123!'
     })
 
-    # Promote the user to admin since registration always defaults to visitor
+    # Promote the user to admin since registration always defaults to guest
     user = User.query.filter_by(email='admin@test.com').first()
     if user:
         user.role = 'admin'
@@ -70,7 +70,7 @@ def regular_user(client):
     response = client.post('/auth/register', json={
         'email': 'user@test.com',
         'password': 'UserPassword123!',
-        'role': 'visitor'
+        'role': 'guest'
     })
 
     # Login
@@ -185,7 +185,7 @@ class TestArtworkOwnership:
         client.post('/auth/register', json={
             'email': 'owner@test.com',
             'password': 'OwnerPassword123!',
-            'role': 'visitor'
+            'role': 'guest'
         })
         client.post('/auth/login', json={
             'email': 'owner@test.com',
@@ -203,7 +203,7 @@ class TestArtworkOwnership:
         client.post('/auth/register', json={
             'email': 'other@test.com',
             'password': 'OtherPassword123!',
-            'role': 'visitor'
+            'role': 'guest'
         })
         client.post('/auth/login', json={
             'email': 'other@test.com',
@@ -235,7 +235,7 @@ class TestAdminArtistManagement:
         client.post('/auth/register', json={
             'email': 'newartist@test.com',
             'password': 'ArtistPassword123!',
-            'role': 'visitor'
+            'role': 'guest'
         })
         user = User.query.filter_by(email='newartist@test.com').first()
 
@@ -267,7 +267,7 @@ class TestAdminArtistManagement:
         client.post('/auth/register', json={
             'email': 'unlink@test.com',
             'password': 'UnlinkPassword123!',
-            'role': 'visitor'
+            'role': 'guest'
         })
         user = User.query.filter_by(email='unlink@test.com').first()
 

@@ -5,6 +5,7 @@ import secrets
 import string
 from datetime import timedelta, datetime, timezone
 from urllib.parse import quote_plus
+from functools import wraps
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -145,6 +146,43 @@ limiter = Limiter(
     storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
 )
 
+
+def get_rate_limit_by_identity():
+    """Get rate limit based on user identity type.
+
+    Rate limits:
+        - Anonymous (no session): 100 requests/minute
+        - Logged-in guest: 200 requests/minute
+        - Admin: 1000 requests/minute
+
+    Returns:
+        String rate limit for Flask-Limiter
+    """
+    try:
+        if current_user.is_authenticated:
+            if current_user.is_admin:
+                return "1000 per minute"
+            else:
+                # Logged-in guest (includes artist-linked users)
+                return "200 per minute"
+        else:
+            # Anonymous user
+            return "100 per minute"
+    except Exception:
+        # Fallback to anonymous rate limit if anything fails
+        return "100 per minute"
+
+
+def dynamic_rate_limit():
+    """Decorator factory for dynamic rate limiting based on user identity."""
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            return f(*args, **kwargs)
+        # Apply the rate limit dynamically
+        return limiter.limit(get_rate_limit_by_identity)(wrapper)
+    return decorator
+
 # Return 401 instead of redirect for unauthorized API requests
 @login_manager.unauthorized_handler
 def unauthorized():
@@ -167,7 +205,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Register blueprints
-from auth import auth_bp, admin_required
+from auth import auth_bp, admin_required, is_artwork_owner, is_photo_owner, log_rbac_denial
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -214,6 +252,7 @@ def set_security_headers(response):
 # TODO(security): Add input validation middleware for all endpoints
 
 @app.route('/')
+@limiter.limit("60 per minute")  # Allow frequent health checks for admin console
 def home():
     # TEMPORARY: Breaking API for testing health check
     # Uncomment the line below to break the API for testing
@@ -260,7 +299,7 @@ def api_hello():
 
 
 @app.route('/api/search')
-@limiter.limit("100 per minute")  # More lenient limit for search
+@limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def api_search():
     """Search across artworks, artists, and locations."""
     raw_query = request.args.get('q', '', type=str)
@@ -451,7 +490,7 @@ def api_search():
 
 # Artwork CRUD Endpoints
 @app.route('/api/artworks', methods=['GET'])
-@limiter.limit("100 per minute")  # More lenient limit for browsing
+@limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def list_artworks():
     """List all artworks with pagination, search, and filtering.
 
@@ -593,7 +632,7 @@ def list_artworks():
 
 
 @app.route('/api/artworks/<artwork_id>', methods=['GET'])
-@limiter.limit("100 per minute")  # More lenient limit for browsing
+@limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def get_artwork(artwork_id):
     """Get detailed information about a specific artwork.
 
@@ -826,13 +865,12 @@ def create_artwork():
 
 @app.route('/api/artworks/<artwork_id>', methods=['PUT'])
 @login_required
-@admin_required
 def update_artwork(artwork_id):
     """Update an existing artwork.
 
     Security:
         - Requires authentication
-        - Requires admin role
+        - Requires admin role OR artwork ownership
         - Validates artist and storage exist if updated
         - Audit logged
 
@@ -857,6 +895,11 @@ def update_artwork(artwork_id):
     artwork = Artwork.query.get(artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
+
+    # Check permissions: admin or artwork owner
+    if not current_user.is_admin and not is_artwork_owner(artwork):
+        log_rbac_denial('artwork', artwork_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
 
     data = request.get_json()
     if not data:
@@ -957,13 +1000,12 @@ def update_artwork(artwork_id):
 @app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
 @csrf.exempt  # Exempt from CSRF - already protected by auth and admin checks
 @login_required
-@admin_required
 def delete_artwork(artwork_id):
     """Delete an artwork and all associated photos.
 
     Security:
         - Requires authentication
-        - Requires admin role
+        - Requires admin role OR artwork ownership
         - Cascades deletion to photos (DB records and files)
         - Audit logged
 
@@ -979,6 +1021,11 @@ def delete_artwork(artwork_id):
     artwork = Artwork.query.get(artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
+
+    # Check permissions: admin or artwork owner
+    if not current_user.is_admin and not is_artwork_owner(artwork):
+        log_rbac_denial('artwork', artwork_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
 
     # Get all photos for audit log and file deletion
     photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).all()
@@ -1318,7 +1365,7 @@ def associate_photo_with_artwork(photo_id):
 
 
 @app.route('/api/artworks/<artwork_id>/photos', methods=['GET'])
-@limiter.limit("100 per minute")  # More lenient limit for browsing
+@limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def get_artwork_photos(artwork_id):
     """Get all photos for an artwork.
 
@@ -1364,7 +1411,8 @@ def delete_photo(photo_id):
 
     Security:
         - Requires authentication
-        - User must own the photo OR be admin
+        - User must own the artwork (via Artist.user_id) OR be admin
+        - If user owns artwork, they can delete any photo on it
 
     Args:
         photo_id: The photo ID to delete
@@ -1378,8 +1426,9 @@ def delete_photo(photo_id):
     if not photo:
         return jsonify({'error': 'Photo not found'}), 404
 
-    # Check permissions
-    if not current_user.is_admin and photo.uploaded_by != current_user.id:
+    # Check permissions: admin OR artwork owner (can delete any photo on their artwork)
+    if not current_user.is_admin and not is_photo_owner(photo):
+        log_rbac_denial('photo', photo_id, 'not_owner')
         return jsonify({'error': 'Permission denied'}), 403
 
     # Delete files from filesystem
@@ -1563,6 +1612,7 @@ def admin_console_stats():
 
 
 @app.route('/api/admin/console/health', methods=['GET'])
+@limiter.limit("60 per minute")  # Allow frequent health checks for admin console
 @login_required
 @admin_required
 def admin_console_health():

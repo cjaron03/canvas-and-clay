@@ -27,7 +27,7 @@ def init_models(database):
             email: Unique email address for the user
             hashed_password: Bcrypt hashed password (never store plain text!)
             created_at: Timestamp of account creation
-            role: User role for RBAC (e.g., 'admin', 'visitor')
+            role: User role for RBAC (e.g., 'admin', 'guest')
             remember_token: Token for "remember me" functionality
             is_active: Whether the account is active (for soft deletion/suspension)
         """
@@ -37,7 +37,7 @@ def init_models(database):
         email = database.Column(database.String(120), unique=True, nullable=False, index=True)
         hashed_password = database.Column(database.String(128), nullable=False)
         created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-        role = database.Column(database.String(20), nullable=False, default='visitor')
+        role = database.Column(database.String(20), nullable=False, default='guest')
         remember_token = database.Column(database.String(255), unique=True, nullable=True)
         is_active = database.Column(database.Boolean, nullable=False, default=True)
         
@@ -49,9 +49,19 @@ def init_models(database):
             return str(self.id)
         
         @property
+        def normalized_role(self):
+            """Get normalized role (treats 'visitor' as 'guest' for backwards compatibility)."""
+            return 'guest' if self.role == 'visitor' else self.role
+
+        @property
         def is_admin(self):
             """Check if user has admin role."""
-            return self.role == 'admin'
+            return self.normalized_role == 'admin'
+
+        @property
+        def is_guest(self):
+            """Check if user has guest role (includes legacy 'visitor')."""
+            return self.normalized_role == 'guest'
     
     class FailedLoginAttempt(database.Model):
         """Model to track failed login attempts for account lockout.

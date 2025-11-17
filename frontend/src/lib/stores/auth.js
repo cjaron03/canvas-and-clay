@@ -38,6 +38,10 @@ function createAuthStore() {
 					});
 				} else {
 					// Explicitly clear auth state if not authenticated
+					// 401 is expected after logout, so don't log it as an error
+					if (meResponse.status !== 401) {
+						console.warn('Auth check failed:', meResponse.status);
+					}
 					set({
 						user: null,
 						isAuthenticated: false,
@@ -198,7 +202,7 @@ function createAuthStore() {
 				csrfToken: null
 			});
 
-			goto('/login');
+			goto('/login?logout=success');
 		},
 
 		// Clear state (for use after 401 errors)

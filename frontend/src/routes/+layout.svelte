@@ -8,15 +8,14 @@
 	import { goto } from '$app/navigation';
 
 	// Initialize auth and theme on app load
+	// Don't await - let each page handle its own auth.init() to avoid race conditions
 	onMount(() => {
-		auth.init();
+		auth.init().catch(err => console.error('Layout auth init failed:', err));
 		theme.init();
 	});
 
 	const handleLogout = async () => {
 		await auth.logout();
-		// Redirect to login page with success message
-		goto('/login?logout=success');
 	};
 
 	const toggleTheme = () => {

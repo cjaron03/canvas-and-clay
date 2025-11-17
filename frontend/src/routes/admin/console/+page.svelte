@@ -2,6 +2,7 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { onMount, afterUpdate, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth';
 
   export let data;
@@ -12,68 +13,7 @@
   let isLoading = true;
 
   // Load data client-side with credentials
-  onMount(async () => {
-    await auth.init();
-    
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
-      goto('/');
-      return;
-    }
-
-    // Load stats and health data
-    try {
-      const [statsRes, healthRes] = await Promise.all([
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        }),
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        })
-      ]);
-
-      if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        goto('/');
-        return;
-      }
-      if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Authentication required';
-        goto('/login');
-        return;
-      }
-
-      if (statsRes.ok) {
-        stats = await statsRes.json();
-      } else {
-        loadError = `Failed to load stats: HTTP ${statsRes.status}`;
-      }
-
-      if (healthRes.ok) {
-        health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
-      }
-
-      if (!health) {
-        health = { status: 'unknown', service: 'canvas-clay-backend' };
-      }
-    } catch (err) {
-      console.error('Failed to load admin console data:', err);
-      loadError = err instanceof Error ? err.message : 'Failed to load admin console data';
-    } finally {
-      isLoading = false;
-    }
-  });
+  // Note: Consolidated into single onMount below to avoid duplicate health checks
 
   let activeTab = 'overview';
   let loading = {
@@ -122,20 +62,32 @@
     }
   });
 
-  // Load command history from localStorage
+  // Load command history from localStorage and initialize console
   onMount(async () => {
+    // Initialize auth first (layout also calls this, but we need to ensure it's done)
     await auth.init();
     
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for auth state to be ready and reactive updates to propagate
+    await new Promise(resolve => setTimeout(resolve, 200));
     
-    // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
-      goto('/');
+    // Check auth state - redirect if not authenticated or not admin
+    // Use a small delay before redirect to allow page to render
+    if (!$auth.isAuthenticated) {
+      loadError = 'Authentication required. Please log in.';
+      isLoading = false;
+      setTimeout(() => goto('/login'), 100);
+      return;
+    }
+    
+    if ($auth.user?.role !== 'admin') {
+      loadError = 'Access denied: Admin role required';
+      isLoading = false;
+      setTimeout(() => goto('/'), 100);
       return;
     }
 
-    // Load stats and health data
+    // Load stats and health data (only once on mount)
+    // Only proceed if we're authenticated and admin
     try {
       const [statsRes, healthRes] = await Promise.all([
         fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
@@ -152,14 +104,20 @@
         })
       ]);
 
-      if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        goto('/');
+      // Handle 401 - session might have expired
+      if (statsRes.status === 401 || healthRes.status === 401) {
+        loadError = 'Session expired. Please log in again.';
+        isLoading = false;
+        // Clear auth state and redirect to login
+        auth.clear();
+        setTimeout(() => goto('/login'), 100);
         return;
       }
-      if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Authentication required';
-        goto('/login');
+
+      if (statsRes.status === 403 || healthRes.status === 403) {
+        loadError = 'Access denied: Admin role required';
+        isLoading = false;
+        setTimeout(() => goto('/'), 100);
         return;
       }
 
@@ -182,8 +140,20 @@
       // Initialize overall health status from backend health
       overallHealthStatus = health?.status || 'unknown';
 
-      // Start periodic API check on page load to keep overview tab updated
-      startPeriodicApiCheck();
+      // Start periodic API check (but don't call refreshHealthData immediately - we already have health data)
+      // Only start the interval, don't run initial checks
+      if (apiCheckInterval) {
+        clearInterval(apiCheckInterval);
+      }
+      // Set up periodic checks every 60 seconds, but skip the initial call since we already loaded health
+      // Only check health endpoint, not root endpoint (to avoid rate limits)
+      apiCheckInterval = setInterval(() => {
+        if (!isRateLimited) {
+          refreshHealthData();
+          // Only test root endpoint every 5 minutes to avoid rate limits
+          // testApiConnection is called manually via button click
+        }
+      }, 60000);
 
       // Load CLI help
       await loadCLIHelp();
@@ -390,6 +360,11 @@
   };
 
   const testApiConnection = async () => {
+    // Skip if we're rate limited
+    if (isRateLimited) {
+      return;
+    }
+
     apiTestLoading = true;
     // Don't reset apiTestResult to null - keep previous result until new one is ready
     // This prevents the health badge from flickering back to healthy
@@ -402,9 +377,15 @@
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const retryMsg = retryAfter ? ` Please wait ${retryAfter} seconds.` : '';
+        const retrySeconds = retryAfter ? parseInt(retryAfter, 10) : 60;
         const checkTime = new Date();
         lastApiCheck = checkTime;
         currentTime = checkTime;
+        
+        // Set rate limit flag
+        isRateLimited = true;
+        rateLimitRetryAfter = retrySeconds;
+        
         apiTestResult = {
           success: false,
           message: `Rate limit exceeded. Too many requests.${retryMsg}`
@@ -414,6 +395,14 @@
         if (activeTab === 'cli') {
           addCLIOutput(`Rate limit warning: API health check rate limited.${retryMsg}`, 'warning');
         }
+        
+        // Auto-reset after retry period
+        setTimeout(() => {
+          isRateLimited = false;
+          rateLimitRetryAfter = null;
+        }, retrySeconds * 1000);
+        
+        apiTestLoading = false;
         return;
       }
       
@@ -433,6 +422,9 @@
         apiTestResult = { ...apiTestResult };
         // Update overall health status directly
         overallHealthStatus = health?.status || 'unknown';
+        // Reset rate limit flag on success
+        isRateLimited = false;
+        rateLimitRetryAfter = null;
       } else {
         apiTestResult = {
           success: false,
@@ -473,7 +465,25 @@
     }
   };
 
+  let isRateLimited = false;
+  let rateLimitRetryAfter = null;
+
   const refreshHealthData = async () => {
+    // Skip if we're rate limited or not authenticated
+    if (isRateLimited) {
+      return;
+    }
+
+    // Don't make requests if not authenticated
+    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
+      // Stop the interval if we're not authenticated
+      if (apiCheckInterval) {
+        clearInterval(apiCheckInterval);
+        apiCheckInterval = null;
+      }
+      return;
+    }
+
     try {
       const healthRes = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
         credentials: 'include',
@@ -488,6 +498,28 @@
         if (apiTestResult && apiTestResult.success) {
           overallHealthStatus = health?.status || 'unknown';
         }
+        // Reset rate limit flag on success
+        isRateLimited = false;
+        rateLimitRetryAfter = null;
+      } else if (healthRes.status === 401) {
+        // Session expired - stop interval and clear auth
+        if (apiCheckInterval) {
+          clearInterval(apiCheckInterval);
+          apiCheckInterval = null;
+        }
+        auth.clear();
+        goto('/login');
+      } else if (healthRes.status === 429) {
+        // Handle rate limiting
+        isRateLimited = true;
+        const retryAfter = healthRes.headers.get('Retry-After');
+        rateLimitRetryAfter = retryAfter ? parseInt(retryAfter, 10) : 60;
+        console.warn(`Rate limited on health check. Retry after ${rateLimitRetryAfter} seconds`);
+        // Auto-reset after retry period
+        setTimeout(() => {
+          isRateLimited = false;
+          rateLimitRetryAfter = null;
+        }, rateLimitRetryAfter * 1000);
       }
     } catch (err) {
       console.error('Failed to refresh health data:', err);
@@ -500,15 +532,14 @@
       clearInterval(apiCheckInterval);
     }
     
-    // Run initial check
-    testApiConnection();
-    refreshHealthData();
-    
-    // Set up periodic checks every 30 seconds
+    // Set up periodic checks every 60 seconds (reduced frequency to avoid rate limits)
+    // Only check health endpoint, not root endpoint (to avoid rate limits)
+    // testApiConnection is called manually via button click
     apiCheckInterval = setInterval(() => {
-      testApiConnection();
-      refreshHealthData();
-    }, 30000);
+      if (!isRateLimited) {
+        refreshHealthData();
+      }
+    }, 60000);
   };
 
   const stopPeriodicApiCheck = () => {
@@ -992,9 +1023,12 @@
             </div>
           {/if}
           
-          <div class="periodic-check-info">
-            <p>Automatic health checks run every 30 seconds while this tab is open.</p>
-          </div>
+            <div class="periodic-check-info">
+              <p>Automatic health checks run every 60 seconds while this tab is open.</p>
+              {#if isRateLimited && rateLimitRetryAfter}
+                <p class="rate-limit-warning">Rate limited. Health checks paused for {rateLimitRetryAfter} seconds.</p>
+              {/if}
+            </div>
         </div>
 
         <div class="info-section">
@@ -1489,6 +1523,13 @@
     color: var(--text-secondary);
     font-size: 0.8125rem;
     font-style: italic;
+  }
+
+  .rate-limit-warning {
+    color: #f59e0b;
+    font-weight: 500;
+    margin-top: 0.5rem;
+    font-style: normal;
   }
 
   .filters {
