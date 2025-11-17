@@ -40,6 +40,7 @@ def init_models(database):
         role = database.Column(database.String(20), nullable=False, default='guest')
         remember_token = database.Column(database.String(255), unique=True, nullable=True)
         is_active = database.Column(database.Boolean, nullable=False, default=True)
+        deleted_at = database.Column(database.DateTime, nullable=True)
 
         # Canonical role ladder (legacy 'visitor' normalized to 'guest')
         ROLE_LADDER = ('guest', 'artist-guest', 'admin')

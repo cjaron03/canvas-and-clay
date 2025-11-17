@@ -1,4 +1,5 @@
 """Authentication blueprint for user registration, login, and logout."""
+import os
 import re
 import json as json_lib
 from datetime import datetime, timezone, timedelta
@@ -10,6 +11,7 @@ from functools import wraps
 
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
 
 
 def get_dependencies():
@@ -217,6 +219,38 @@ def validate_password(password):
     return True, None
 
 
+def is_common_password(password):
+    """Check against a bundled common password list.
+
+    Returns True if the password is in the blocklist.
+    """
+    try:
+        blocklist_path = os.path.join(os.path.dirname(__file__), 'common_passwords.txt')
+        if not os.path.exists(blocklist_path):
+            return False
+        password_lower = password.strip().lower()
+        with open(blocklist_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if password_lower == line.strip().lower():
+                    return True
+    except Exception:
+        # Fail open if blocklist can't be read
+        return False
+    return False
+
+
+def is_user_deleted(user):
+    """Return True if user has been soft-deleted."""
+    return bool(getattr(user, 'deleted_at', None))
+
+
+def is_bootstrap_email(email: str) -> bool:
+    try:
+        return email and email.lower().strip() == BOOTSTRAP_ADMIN_EMAIL
+    except Exception:
+        return False
+
+
 @auth_bp.route('/register', methods=['POST'])
 @rate_limit("3 per minute")
 def register():
@@ -268,6 +302,11 @@ def register():
     is_valid, error_msg = validate_password(password)
     if not is_valid:
         return jsonify({'error': error_msg}), 400
+
+    # Block common passwords
+    if is_common_password(password):
+        log_audit_event('alert_common_password_blocked', email=email, details={'reason': 'common_password'})
+        return jsonify({'error': 'Password is too common. Please choose a stronger password.'}), 400
     
     # Hash password and create user
     hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
@@ -528,12 +567,12 @@ def login():
         
         return jsonify({'error': 'Invalid email or password'}), 401
     
-    # check if account is active
-    if not user.is_active:
+    # check if account is active or soft-deleted
+    if not user.is_active or is_user_deleted(user):
         log_audit_event('login_failure', user_id=user.id, email=email, details={
-            'reason': 'account_disabled'
+            'reason': 'account_disabled_or_deleted'
         })
-        return jsonify({'error': 'Account is disabled, please contact a Canvas admin to reinstate'}), 403
+        return jsonify({'error': 'Account is disabled or deleted, please contact a Canvas admin to reinstate'}), 403
     
     # successful login - clear failed attempts and log success
     clear_failed_login_attempts(email)
@@ -581,6 +620,35 @@ def logout():
     response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
     
     return response, 200
+
+
+@auth_bp.route('/delete-account', methods=['POST'])
+@login_required
+def delete_account():
+    """Self-service soft delete for the current user."""
+    db, _, User, _, AuditLog, _ = get_dependencies()
+
+    if is_bootstrap_email(current_user.email):
+        return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
+
+    try:
+        current_user.is_active = False
+        current_user.deleted_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        log_audit_event('user_soft_deleted_self', user_id=current_user.id, email=current_user.email)
+
+        logout_user()
+        for key in list(session.keys()):
+            session.pop(key)
+        session.modified = True
+
+        response = jsonify({'message': 'Account scheduled for deletion in 30 days'})
+        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+        return response, 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete account'}), 500
 
 
 @auth_bp.route('/me', methods=['GET'])

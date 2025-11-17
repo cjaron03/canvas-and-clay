@@ -48,6 +48,7 @@
     failedMessage: ''
   };
   let alertActionsMessage = '';
+  let purgeDays = 30;
 
   // API health check state
   let apiTestResult = null;
@@ -649,6 +650,80 @@
       );
       const newRole = result?.user?.role || prevRole;
       adjustArtistCount(prevRole, newRole);
+    });
+
+  const softDeleteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/soft-delete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to delete user');
+      if (result?.user) {
+        // Treat deleted user as inactive and keep role counts as-is
+        recomputeRoleCounts(users);
+      }
+    });
+
+  const restoreUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/restore`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to restore user');
+      if (result?.user) {
+        recomputeRoleCounts(users);
+      }
+    });
+
+  const purgeDeletedUsers = async () => {
+    cleanup.auditMessage = '';
+    cleanup.failedMessage = '';
+    userActionError = '';
+    userActionLoading['__purge__'] = true;
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/purge-deleted`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ days: purgeDays })
+      });
+      const data = await handleUserActionResponse(response, 'Failed to purge deleted users');
+      cleanup.auditMessage = data?.message || 'Purge complete';
+      await loadUsers();
+    } catch (err) {
+      console.error('User purge failed:', err);
+      userActionError = err?.message || 'Failed to purge deleted users';
+    } finally {
+      // Remove placeholder loading flag
+      if (userActionLoading['__purge__']) {
+        const copy = { ...userActionLoading };
+        delete copy['__purge__'];
+        userActionLoading = copy;
+      }
+    }
+  };
+
+  const hardDeleteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/hard-delete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to delete user permanently');
+      if (!response.ok) return;
+      // Remove from local list
+      users = users.filter((u) => u.id !== user.id);
+      recomputeRoleCounts(users);
+      cleanup.auditMessage = result?.message || 'User deleted permanently';
     });
 
   const cleanupAuditLogs = async () => {
@@ -1643,11 +1718,11 @@
         {/if}
 
         <h2>Failed Login Attempts</h2>
-        <div class="cleanup-card">
-          <div class="cleanup-row">
-            <label for="failed-cleanup-days">Delete failed logins older than</label>
-            <input
-              id="failed-cleanup-days"
+          <div class="cleanup-card">
+            <div class="cleanup-row">
+              <label for="failed-cleanup-days">Delete failed logins older than</label>
+              <input
+                id="failed-cleanup-days"
               type="number"
               min="0"
               bind:value={cleanup.failedDays}
@@ -1661,11 +1736,29 @@
             >
               {cleanup.failedLoading ? 'Cleaning...' : 'Cleanup'}
             </button>
+            </div>
+            {#if cleanup.failedMessage}
+              <div class="inline-info small">{cleanup.failedMessage}</div>
+            {/if}
           </div>
-          {#if cleanup.failedMessage}
-            <div class="inline-info small">{cleanup.failedMessage}</div>
-          {/if}
-        </div>
+          <div class="purge-card">
+            <label for="purge-days">Permanently delete users soft-deleted more than</label>
+            <input
+              id="purge-days"
+              type="number"
+              min="0"
+              bind:value={purgeDays}
+              aria-label="Purge deleted users older than days"
+            />
+            <span>days (0 = delete all soft-deleted)</span>
+            <button
+              class="secondary"
+              disabled={userActionLoading['__purge__']}
+              on:click={purgeDeletedUsers}
+            >
+              {userActionLoading['__purge__'] ? 'Purging...' : 'Purge deleted users'}
+            </button>
+          </div>
         {#if loading.failedLogins}
           <div>Loading...</div>
         {:else}
@@ -1754,9 +1847,18 @@
                     {#if user.is_bootstrap_admin}
                       <span class="pill pill-warning">Bootstrap admin</span>
                     {/if}
+                    {#if user.deleted_at}
+                      <span class="pill pill-danger">Pending deletion</span>
+                    {/if}
                   </td>
                   <td><span class={`pill pill-${user.role?.replace(' ', '-')}`}>{user.role}</span></td>
-                  <td>{user.is_active ? 'Active' : 'Inactive'}</td>
+                  <td>
+                    {#if user.deleted_at}
+                      Pending deletion
+                    {:else}
+                      {user.is_active ? 'Active' : 'Inactive'}
+                    {/if}
+                  </td>
                   <td>{formatDate(user.created_at)}</td>
                   <td>{formatDate(user.last_login)}</td>
                   <td>
@@ -1787,7 +1889,8 @@
                         disabled={
                           userActionLoading[user.id] ||
                           $auth.user?.id === user.id ||
-                          user.is_bootstrap_admin
+                          user.is_bootstrap_admin ||
+                          user.deleted_at
                         }
                         on:click={() => toggleUserActive(user)}
                         aria-label={`${user.is_active ? 'Deactivate' : 'Reactivate'} ${user.email}`}
@@ -1798,6 +1901,40 @@
                           {user.is_active ? 'Deactivate' : 'Reactivate'}
                         {/if}
                       </button>
+                      <button
+                        class="secondary"
+                        disabled={
+                          userActionLoading[user.id] ||
+                          user.is_bootstrap_admin ||
+                          user.deleted_at
+                        }
+                        on:click={() => softDeleteUser(user)}
+                        aria-label={`Soft delete ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Delete'}
+                      </button>
+                      {#if user.deleted_at}
+                        <button
+                          class="secondary"
+                          disabled={userActionLoading[user.id]}
+                          on:click={() => restoreUser(user)}
+                          aria-label={`Restore ${user.email}`}
+                        >
+                          {userActionLoading[user.id] ? 'Working...' : 'Restore'}
+                        </button>
+                        <button
+                          class="danger"
+                          disabled={
+                            userActionLoading[user.id] ||
+                            user.is_bootstrap_admin ||
+                            $auth.user?.id === user.id
+                          }
+                          on:click={() => hardDeleteUser(user)}
+                          aria-label={`Permanently delete ${user.email}`}
+                        >
+                          {userActionLoading[user.id] ? 'Working...' : 'Delete permanently'}
+                        </button>
+                      {/if}
                     </div>
                   </td>
                 </tr>
@@ -2301,6 +2438,27 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+
+  .purge-card {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .purge-card input[type='number'] {
+    width: 90px;
+    padding: 0.4rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
   }
 
   .user-email {

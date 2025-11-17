@@ -2027,6 +2027,7 @@ def _serialize_user_with_last_login(user):
         'email': user.email,
         'role': user.normalized_role,
         'is_active': user.is_active,
+        'deleted_at': user.deleted_at.isoformat() if getattr(user, 'deleted_at', None) else None,
         'created_at': user.created_at.isoformat() if user.created_at else None,
         'last_login': last_login.created_at.isoformat() if last_login and last_login.created_at else None,
         'is_bootstrap_admin': _is_bootstrap_admin(user)
@@ -2280,6 +2281,144 @@ def admin_console_database_info():
     except Exception as e:
         app.logger.exception("Failed to fetch database info")
         return jsonify({'error': 'Failed to fetch database information'}), 500
+
+
+@app.route('/api/admin/console/users/<int:user_id>/soft-delete', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("50 per minute")
+def soft_delete_user(user_id):
+    """Soft delete a user (sets is_active=False and deleted_at timestamp)."""
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    if _is_bootstrap_admin(target):
+        return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
+
+    if target.id == current_user.id:
+        return jsonify({'error': 'You cannot delete your own account here. Use self-delete instead.'}), 403
+
+    from datetime import datetime, timezone
+    target.is_active = False
+    target.deleted_at = datetime.now(timezone.utc)
+
+    try:
+        db.session.commit()
+        log_audit_event('user_soft_deleted', user_id=target.id, email=target.email, details={
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        })
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to soft delete user'}), 500
+
+    return jsonify({'message': 'User soft-deleted', 'user': _serialize_user_with_last_login(target)}), 200
+
+
+@app.route('/api/admin/console/users/<int:user_id>/restore', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("50 per minute")
+def restore_user(user_id):
+    """Restore a soft-deleted user (reactivate account and clear deleted_at)."""
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    if target.deleted_at is None:
+        return jsonify({'error': 'User is not deleted'}), 400
+
+    target.is_active = True
+    target.deleted_at = None
+
+    try:
+        db.session.commit()
+        log_audit_event('user_restored', user_id=target.id, email=target.email, details={
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        })
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to restore user'}), 500
+
+    return jsonify({'message': 'User restored', 'user': _serialize_user_with_last_login(target)}), 200
+
+
+@app.route('/api/admin/console/users/purge-deleted', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("20 per minute")
+def purge_deleted_users():
+    """Hard delete users with deleted_at older than a given number of days (default 30)."""
+    data = request.get_json(silent=True) or {}
+    days = int(data.get('days', 30))
+
+    cutoff = None
+    if days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    try:
+        # Fetch users to purge
+        query = User.query.filter(User.deleted_at.isnot(None))
+        if cutoff:
+            query = query.filter(User.deleted_at < cutoff)
+        users_to_delete = query.all()
+
+        deleted_count = 0
+        for user in users_to_delete:
+            if _is_bootstrap_admin(user):
+                continue
+            # Null out artist.user_id links
+            Artist = globals().get('Artist')
+            if Artist:
+                Artist.query.filter(Artist.user_id == user.id).update({'user_id': None})
+            db.session.delete(user)
+            deleted_count += 1
+
+        db.session.commit()
+        return jsonify({'message': f'Purged {deleted_count} users', 'deleted': deleted_count}), 200
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to purge deleted users")
+        return jsonify({'error': 'Failed to purge deleted users'}), 500
+
+
+@app.route('/api/admin/console/users/<int:user_id>/hard-delete', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("20 per minute")
+def hard_delete_user(user_id):
+    """Immediately and permanently delete a user by ID."""
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    if _is_bootstrap_admin(target):
+        return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
+
+    if target.id == current_user.id:
+        return jsonify({'error': 'You cannot delete your own account here. Use self-delete instead.'}), 403
+
+    try:
+        # Null out artist links
+        Artist = globals().get('Artist')
+        if Artist:
+            Artist.query.filter(Artist.user_id == target.id).update({'user_id': None})
+
+        db.session.delete(target)
+        db.session.commit()
+
+        log_audit_event('user_hard_deleted', user_id=target.id, email=target.email, details={
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        })
+
+        return jsonify({'message': 'User permanently deleted', 'deleted_user_id': user_id}), 200
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to hard delete user")
+        return jsonify({'error': 'Failed to permanently delete user'}), 500
 
 
 # CLI confirmation tokens storage (in-memory, expires after 30 seconds)
