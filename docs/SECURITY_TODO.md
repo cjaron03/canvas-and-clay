@@ -344,9 +344,9 @@ see `backend/tests/test_rbac_rate_limits.py` for comprehensive test coverage.
 - [x] Content-Security-Policy - Strict policy for JSON API (default-src 'self', script-src 'self', object-src 'none', frame-ancestors 'none')
 
 ### Penetration Testing
-- [ ] SQL injection testing
-- [ ] XSS vulnerability testing
-- [ ] CSRF testing
+- [x] SQL injection testing
+- [x] XSS vulnerability testing
+- [x] CSRF testing
 - [ ] File upload bypass testing
 - [ ] Authentication bypass testing
 

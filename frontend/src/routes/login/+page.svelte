@@ -34,6 +34,12 @@
 		}, 100);
 	});
 
+	// Reactive statement: redirect to uploads if authenticated and on login page
+	// This only fires when both auth state AND route change, preventing unwanted redirects
+	$: if ($auth.isAuthenticated && $page.url.pathname === '/login') {
+		goto('/uploads');
+	}
+
 	const handleLogin = async () => {
 		error = '';
 		success = '';

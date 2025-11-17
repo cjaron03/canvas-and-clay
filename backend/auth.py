@@ -405,7 +405,7 @@ def login():
     """Login with email and password.
     
     security features:
-    - rate limiting: 5 attempts per 15 minutes per IP address (applied via decorator)
+    - rate limiting: 20 attempts per 15 minutes per IP address (applied via decorator)
     - account lockout: 5 failed attempts per email = 15 minute lockout
     - audit logging: all login attempts (success and failure) are logged
     

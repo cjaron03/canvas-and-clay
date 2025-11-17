@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, session
 import os
 import json
 import secrets
@@ -137,14 +137,57 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
 
-# Initialize rate limiter
-# rate limiting can be disabled via limiter.enabled = False in tests
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
-)
+# Custom key function factory - will be called after User model is defined
+def create_rate_limit_key_func():
+    """Create rate limit key function that exempts admin users from rate limiting.
+    
+    Returns None for admin users (which disables rate limiting),
+    otherwise returns the remote address for IP-based limiting.
+    
+    Note: This runs before route decorators, so we manually check the session
+    to load the user if they're authenticated.
+    """
+    def rate_limit_key_func():
+        try:
+            # First try current_user (might be loaded by Flask-Login already)
+            if current_user.is_authenticated and hasattr(current_user, 'is_admin') and current_user.is_admin:
+                return None  # None disables rate limiting for this request
+        except Exception:
+            pass
+        
+        # If current_user isn't available, manually check session
+        # Flask-Login stores user ID in session['_user_id'] or session['_id']
+        try:
+            from flask import has_request_context
+            if not has_request_context():
+                return get_remote_address()
+            
+            # Check all possible Flask-Login session keys
+            # Flask-Login uses '_user_id' by default, but check other possibilities
+            user_id = session.get('_user_id') or session.get('_id') or session.get('user_id')
+            
+            if user_id:
+                # Access User model (captured in closure after it's defined)
+                # User is available at runtime since this function is created after init_models
+                try:
+                    user = User.query.get(int(user_id)) if user_id else None
+                    if user:
+                        if hasattr(user, 'is_admin') and user.is_admin:
+                            return None  # None disables rate limiting for this request
+                except (NameError, AttributeError, ValueError) as e:
+                    # User model not available or invalid user_id
+                    pass
+        except Exception as e:
+            # If there's any error checking user, fall back to IP-based limiting
+            pass
+        
+        return get_remote_address()
+    
+    return rate_limit_key_func
+
+# Initialize rate limiter with a placeholder - will be updated after User is defined
+# We'll create the actual key function after User model is initialized
+limiter = None  # Will be initialized after User model is available
 
 
 def get_rate_limit_by_identity():
@@ -193,6 +236,15 @@ def unauthorized():
 # Initialize models
 from models import init_models
 User, FailedLoginAttempt, AuditLog = init_models(db)
+
+# Now initialize rate limiter with key function that can access User model
+rate_limit_key_func = create_rate_limit_key_func()
+limiter = Limiter(
+    app=app,
+    key_func=rate_limit_key_func,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
+)
 
 # Initialize db tables
 from create_tbls import init_tables
@@ -500,6 +552,9 @@ def list_artworks():
         search (str): Search term (searches title, medium, artist name)
         artist_id (str): Filter by artist ID
         medium (str): Filter by medium
+        storage_id (str): Filter by storage location ID
+
+        ordering (str): Sort order for results (title_asc/title_desc, default: title_asc)
 
     Returns:
         200: Paginated list of artworks with full details
@@ -510,6 +565,8 @@ def list_artworks():
     search = request.args.get('search', '').strip()
     artist_id = request.args.get('artist_id', '').strip()
     medium = request.args.get('medium', '').strip()
+    storage_id = request.args.get('storage_id', '').strip()
+    ordering = request.args.get('ordering', 'title_asc').strip().lower()
 
     try:
         # Build base query with LEFT JOIN to handle artworks without artists
@@ -537,12 +594,21 @@ def list_artworks():
 
         if medium:
             query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+        if storage_id:
+            query = query.filter(Artwork.storage_id == storage_id)
 
         # Get total count before pagination
         total = query.count()
 
+        # Apply alphabetical ordering w/ default ascending if no order given
+        ordering_map = {
+            'title_asc': Artwork.artwork_ttl.asc(),
+            'title_desc': Artwork.artwork_ttl.desc()
+        }
+        order_clause = ordering_map.get(ordering, ordering_map['title_asc'])
+        query = query.order_by(order_clause)
+
         # Apply pagination
-        query = query.order_by(Artwork.artwork_num.desc())
         query = query.offset((page - 1) * per_page).limit(per_page)
 
         # Execute query
