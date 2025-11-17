@@ -4,8 +4,7 @@
 	import '../app.css';
 	import { auth } from '$lib/stores/auth';
 	import { theme } from '$lib/stores/theme';
-	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
+import { page } from '$app/stores';
 
 	// Initialize auth and theme on app load
 	// Don't await - let each page handle its own auth.init() to avoid race conditions
@@ -206,4 +205,3 @@
 		}
 	}
 </style>
-

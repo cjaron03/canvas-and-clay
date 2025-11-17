@@ -1067,7 +1067,6 @@ def update_artwork(artwork_id):
 
 
 @app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
-@csrf.exempt  # Exempt from CSRF - already protected by auth and admin checks
 @login_required
 def delete_artwork(artwork_id):
     """Delete an artwork and all associated photos.

@@ -1,6 +1,6 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
@@ -12,8 +12,6 @@
   let health = null;
   let loadError = null;
   let isLoading = true;
-  let isInitialized = false;
-  let isInitializing = false;
 
   // Load data client-side with credentials
   // Note: Consolidated into single onMount below to avoid duplicate health checks
@@ -264,14 +262,6 @@
       loadError = err instanceof Error ? err.message : 'Failed to load admin console data';
     } finally {
       isLoading = false;
-      isInitializing = false; // Clear initializing flag when done
-      isInitialized = true; // Mark as initialized only after async work completes
-      console.log('[ADMIN CONSOLE] Initialization complete', {
-        isLoading,
-        hasStats: !!stats,
-        hasHealth: !!health,
-        loadError
-      });
     }
   });
 
@@ -637,7 +627,7 @@
       }
     } else if (previousTab !== 'overview' && tab === 'overview') {
       // Returning to Overview - restart API checks with immediate refresh
-      startPeriodicApiCheck(true);
+      startPeriodicApiCheck();
       // Restart time update interval if we have a lastApiCheck
       if (lastApiCheck && !timeUpdateInterval && isTabVisible) {
         timeUpdateInterval = setInterval(() => {
@@ -836,7 +826,7 @@
     }
   };
 
-  const startPeriodicApiCheck = (runImmediate = true) => {
+  const startPeriodicApiCheck = () => {
     // Clear existing interval if any
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
@@ -873,7 +863,7 @@
     if (!wasVisible && isTabVisible) {
       // Browser tab became visible - restart periodic checks and time updates
       // Run immediate check to get fresh data
-      startPeriodicApiCheck(true);
+      startPeriodicApiCheck();
       // Restart time update interval if we have a lastApiCheck
       if (lastApiCheck && !timeUpdateInterval) {
         timeUpdateInterval = setInterval(() => {
@@ -1275,9 +1265,6 @@
 
   // Cleanup intervals on component destroy
   onDestroy(() => {
-    // Reset initialization flag when component is destroyed
-    // This allows re-initialization when navigating back to the page
-    isInitialized = false;
     stopPeriodicApiCheck();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);

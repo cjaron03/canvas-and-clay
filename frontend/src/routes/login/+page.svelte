@@ -115,7 +115,6 @@
 				throw new Error(errorData.error || 'Registration failed');
 			}
 
-			const data = await response.json();
 			success = 'Account created successfully! You can now log in.';
 			loading = false;
 			
@@ -267,8 +266,8 @@
 					<div class="password-strength">
 						<div class="strength-label">Password strength: <span class={`pill pill-${strengthLabel.toLowerCase()}`}>{strengthLabel}</span></div>
 						<div class="strength-bars">
-							{#each Array(4) as _, index}
-								<div class:active={index < strengthLevel}></div>
+						{#each [0, 1, 2, 3] as index}
+							<div class:active={index < strengthLevel}></div>
 							{/each}
 						</div>
 					</div>
