@@ -27,7 +27,7 @@ def init_models(database):
             email: Unique email address for the user
             hashed_password: Bcrypt hashed password (never store plain text!)
             created_at: Timestamp of account creation
-            role: User role for RBAC (e.g., 'admin', 'visitor')
+            role: User role for RBAC (e.g., 'admin', 'guest')
             remember_token: Token for "remember me" functionality
             is_active: Whether the account is active (for soft deletion/suspension)
         """
@@ -37,9 +37,14 @@ def init_models(database):
         email = database.Column(database.String(120), unique=True, nullable=False, index=True)
         hashed_password = database.Column(database.String(128), nullable=False)
         created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-        role = database.Column(database.String(20), nullable=False, default='visitor')
+        role = database.Column(database.String(20), nullable=False, default='guest')
         remember_token = database.Column(database.String(255), unique=True, nullable=True)
         is_active = database.Column(database.Boolean, nullable=False, default=True)
+        deleted_at = database.Column(database.DateTime, nullable=True)
+
+        # Canonical role ladder (legacy 'visitor' normalized to 'guest')
+        ROLE_LADDER = ('guest', 'artist-guest', 'admin')
+        LEGACY_ROLE = 'visitor'
         
         def __repr__(self):
             return f'<User {self.email}>'
@@ -49,9 +54,59 @@ def init_models(database):
             return str(self.id)
         
         @property
+        def normalized_role(self):
+            """Get normalized role (treats 'visitor' as 'guest' for backwards compatibility)."""
+            return 'guest' if self.role == self.LEGACY_ROLE else self.role
+
+        @property
         def is_admin(self):
             """Check if user has admin role."""
-            return self.role == 'admin'
+            return self.normalized_role == 'admin'
+
+        @property
+        def is_guest(self):
+            """Check if user has guest role (includes legacy 'visitor')."""
+            return self.normalized_role == 'guest'
+
+        def can_promote(self):
+            """Return True if user is not already at the top of the ladder."""
+            try:
+                return self.ROLE_LADDER.index(self.normalized_role) < len(self.ROLE_LADDER) - 1
+            except ValueError:
+                return True  # Unknown roles treated as promotable to normalize them
+
+        def can_demote(self):
+            """Return True if user is not already at the bottom of the ladder."""
+            try:
+                return self.ROLE_LADDER.index(self.normalized_role) > 0
+            except ValueError:
+                return False  # Unknown roles treated as non-demotable until normalized
+
+        def promote(self):
+            """Promote user one step up the ladder; no-op if already at top."""
+            try:
+                idx = self.ROLE_LADDER.index(self.normalized_role)
+            except ValueError:
+                # Unknown roles normalize to guest before promotion
+                self.role = self.ROLE_LADDER[0]
+                idx = 0
+
+            if idx < len(self.ROLE_LADDER) - 1:
+                self.role = self.ROLE_LADDER[idx + 1]
+            return self.normalized_role
+
+        def demote(self):
+            """Demote user one step down the ladder; no-op if already at bottom."""
+            try:
+                idx = self.ROLE_LADDER.index(self.normalized_role)
+            except ValueError:
+                # Unknown roles normalize to guest before demotion
+                self.role = self.ROLE_LADDER[0]
+                return self.normalized_role
+
+            if idx > 0:
+                self.role = self.ROLE_LADDER[idx - 1]
+            return self.normalized_role
     
     class FailedLoginAttempt(database.Model):
         """Model to track failed login attempts for account lockout.

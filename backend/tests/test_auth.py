@@ -82,7 +82,7 @@ class TestUserRegistration:
         data = response.get_json()
         assert data['message'] == 'User registered successfully'
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == 'visitor'
+        assert data['user']['role'] == 'guest'
         assert 'id' in data['user']
         assert 'created_at' in data['user']
         assert 'password' not in data['user']
@@ -176,15 +176,15 @@ class TestUserRegistration:
         assert '128 characters' in data['error']
     
     def test_register_ignores_role_parameter(self, client, sample_user):
-        """test that role parameter is ignored and all users are created as visitor (security fix)."""
+        """test that role parameter is ignored and all users are created as guest (security fix)."""
         # try to register as admin (should be ignored)
         sample_user['role'] = 'admin'
         response = client.post('/auth/register', json=sample_user)
-        
+
         assert response.status_code == 201
         data = response.get_json()
-        # verify user was created as visitor, not admin
-        assert data['user']['role'] == 'visitor'
+        # verify user was created as guest, not admin
+        assert data['user']['role'] == 'guest'
     
     def test_register_no_data(self, client):
         """Test registration with no JSON data."""
@@ -213,8 +213,8 @@ class TestUserLogin:
         data = response.get_json()
         assert data['message'] == 'Login successful'
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == 'visitor'
-        
+        assert data['user']['role'] == 'guest'
+
         # verify session cookie is set
         assert 'Set-Cookie' in response.headers or 'session' in str(response.headers)
     
@@ -322,6 +322,7 @@ class TestUserLogin:
         assert response.status_code == 403
         data = response.get_json()
         assert 'Account is disabled' in data['error']
+        assert 'contact a Canvas admin' in data['error']
 
 
 class TestUserLogout:
@@ -377,7 +378,7 @@ class TestProtectedRoutes:
     
     def test_admin_route_as_admin(self, client, admin_user):
         """Test admin route access with admin role."""
-        # Register user (will be visitor by default)
+        # Register user (will be guest by default)
         client.post('/auth/register', json=admin_user)
         
         # Manually promote to admin (simulating admin promotion endpoint)
@@ -399,9 +400,9 @@ class TestProtectedRoutes:
         data = response.get_json()
         assert 'Admin access granted' in data['message']
     
-    def test_admin_route_as_visitor(self, client, sample_user):
-        """Test admin route access denied for visitor role."""
-        # Register and login as visitor
+    def test_admin_route_as_guest(self, client, sample_user):
+        """Test admin route access denied for guest role."""
+        # Register and login as guest
         client.post('/auth/register', json=sample_user)
         client.post('/auth/login', json={
             'email': sample_user['email'],
@@ -430,7 +431,7 @@ class TestProtectedRoutes:
         assert response.status_code == 200
         data = response.get_json()
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == 'visitor'
+        assert data['user']['role'] == 'guest'
 
 
 class TestSessionSecurity:
