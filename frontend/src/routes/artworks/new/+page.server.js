@@ -50,4 +50,3 @@ export const load = async ({ fetch }) => {
     throw error(500, message);
   }
 };
-

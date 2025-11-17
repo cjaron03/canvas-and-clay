@@ -42,6 +42,10 @@
   let userActionLoading = {};
   let userActionError = '';
   let userActionNotice = '';
+  let artists = [];
+  let loadingArtists = false;
+  let assignUserId = '';
+  let assignArtistId = '';
   let databaseInfo = null;
   let cleanup = {
     auditDays: 90,
@@ -557,6 +561,9 @@
     loading.users = true;
     userActionError = '';
     try {
+      if (!users.length && !loadingArtists) {
+        loadArtists();
+      }
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users`, {
         credentials: 'include',
         headers: { accept: 'application/json' }
@@ -588,6 +595,34 @@
       userActionError = err?.message || 'Failed to load users';
     } finally {
       loading.users = false;
+    }
+  };
+
+  const loadArtists = async () => {
+    loadingArtists = true;
+    try {
+      let response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/artists`, {
+        credentials: 'include',
+        headers: { accept: 'application/json' }
+      });
+
+      // Fallback to public artists list if admin endpoint fails for any reason
+      if (!response.ok) {
+        response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists`, {
+          headers: { accept: 'application/json' }
+        });
+      }
+
+      if (response.ok) {
+        const result = await response.json();
+        artists = result.artists || [];
+      } else {
+        console.warn('Failed to load artists list (HTTP', response.status, ')');
+      }
+    } catch (err) {
+      console.error('Failed to load artists:', err);
+    } finally {
+      loadingArtists = false;
     }
   };
 
@@ -774,6 +809,47 @@
       userActionNotice = `Forced logout for ${user.email}. Active sessions will be revoked.`;
     });
 
+  const assignArtistToUser = async () => {
+    if (!assignUserId || !assignArtistId) {
+      userActionError = 'Select both a user and an artist to assign.';
+      return;
+    }
+    const headers = await buildAuthedHeaders();
+    const response = await fetch(
+      `${PUBLIC_API_BASE_URL}/api/admin/artists/${assignArtistId}/assign-user`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ user_id: assignUserId })
+      }
+    );
+    const result = await handleUserActionResponse(response, 'Failed to assign artist');
+    userActionNotice = result?.message || 'Artist assigned successfully';
+    loadUsers();
+    loadArtists();
+  };
+
+  const unassignArtist = async () => {
+    if (!assignArtistId) {
+      userActionError = 'Select an artist to unassign.';
+      return;
+    }
+    const headers = await buildAuthedHeaders();
+    const response = await fetch(
+      `${PUBLIC_API_BASE_URL}/api/admin/artists/${assignArtistId}/unassign-user`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      }
+    );
+    await handleUserActionResponse(response, 'Failed to unassign artist');
+    userActionNotice = 'Artist unassigned successfully';
+    loadUsers();
+    loadArtists();
+  };
+
   const softDeleteUser = async (user) =>
     withUserAction(user.id, async () => {
       const headers = await buildAuthedHeaders();
@@ -940,6 +1016,7 @@
 
     if (tab === 'users' && users.length === 0) {
       loadUsers();
+      loadArtists();
     } else if (tab === 'database' && !databaseInfo) {
       loadDatabaseInfo();
     } else if (tab === 'cli') {
@@ -2099,6 +2176,51 @@
             </tbody>
           </table>
         {/if}
+
+        <div class="artist-assignments">
+          <div class="artist-assignments-header">
+            <h3>Artist Assignments</h3>
+            <p class="artist-assignments-description">Manage which artist profiles are linked to user accounts.</p>
+          </div>
+          {#if loadingArtists}
+            <div class="loading-state">Loading artists...</div>
+          {:else}
+            <div class="assign-form">
+              <div class="form-field">
+                <label for="assign-user-select">User</label>
+                <div class="select-wrapper">
+                  <select id="assign-user-select" bind:value={assignUserId} class="form-select">
+                    <option value="">Select user</option>
+                    {#each users as u}
+                      <option value={u.id}>{u.email} ({u.role})</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+              <div class="form-field">
+                <label for="assign-artist-select">Artist</label>
+                <div class="select-wrapper">
+                  <select id="assign-artist-select" bind:value={assignArtistId} class="form-select">
+                    <option value="">Select artist</option>
+                    {#each artists as artist}
+                      <option value={artist.id}>
+                        {artist.id} — {artist.name}{artist.user_email ? ` (linked to ${artist.user_email})` : ' (unassigned)'}
+                      </option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+              <div class="assign-actions">
+                <button class="assign-button primary" on:click={assignArtistToUser} disabled={!assignUserId || !assignArtistId}>
+                  Assign
+                </button>
+                <button class="assign-button secondary" on:click={unassignArtist} disabled={!assignArtistId}>
+                  Unassign
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
     {:else if activeTab === 'database'}
       <div class="database">
@@ -3038,5 +3160,191 @@
     font-family: inherit;
     background: transparent;
     color: inherit;
+  }
+
+  /* Artist Assignments Section - Google-like Design */
+  .artist-assignments {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+  }
+
+  .artist-assignments-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .artist-assignments-header h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    letter-spacing: -0.25px;
+  }
+
+  .artist-assignments-description {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .loading-state {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
+
+  .assign-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-field label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+  }
+
+  .select-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .form-select {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    padding-right: 2.5rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 12px;
+  }
+
+  :root[data-theme='light'] .form-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  }
+
+  .form-select:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.1);
+  }
+
+  .form-select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+  }
+
+  .form-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: var(--bg-tertiary);
+  }
+
+  .form-select option {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 0.5rem;
+  }
+
+  .assign-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .assign-button {
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    font-family: inherit;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .assign-button.primary {
+    background: var(--accent-color);
+    color: white;
+  }
+
+  .assign-button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  .assign-button.primary:active:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .assign-button.secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+  }
+
+  .assign-button.secondary:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .assign-button.secondary:active:not(:disabled) {
+    background: var(--bg-tertiary);
+  }
+
+  .assign-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .assign-button.primary:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+  }
+
+  .assign-button.secondary:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    border-color: var(--border-color);
+  }
+
+  @media (max-width: 600px) {
+    .artist-assignments {
+      padding: 1rem;
+    }
+
+    .assign-actions {
+      flex-direction: column;
+    }
+
+    .assign-button {
+      width: 100%;
+    }
   }
 </style>

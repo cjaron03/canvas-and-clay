@@ -595,12 +595,47 @@ def list_artworks():
     medium = request.args.get('medium', '').strip()
     storage_id = request.args.get('storage_id', '').strip()
     ordering = request.args.get('ordering', 'title_asc').strip().lower()
+    owned_only = request.args.get('owned', 'false').lower() == 'true'
 
     try:
-        # Build base query with LEFT JOIN to handle artworks without artists
-        query = db.session.query(Artwork, Artist).outerjoin(
-            Artist, Artwork.artist_id == Artist.artist_id
-        )
+        # Log all query parameters for debugging
+        app.logger.info(f"list_artworks called with: owned_only={owned_only}, page={page}, per_page={per_page}, search={search}, artist_id={artist_id}")
+        app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'N/A'}")
+        
+        # Build base query - use inner join when filtering by ownership to ensure artist exists
+        if owned_only:
+            app.logger.info(f"owned_only is True, checking authentication...")
+            if not current_user.is_authenticated:
+                app.logger.warning(f"owned_only=True but user not authenticated")
+                return jsonify({'error': 'Authentication required'}), 401
+            # For owned_only, use inner join to ensure artist exists and filter by user_id
+            # This applies to both admins and regular users when they request owned artworks
+            # Explicitly check that user_id is not NULL and matches current user
+            # Convert both to int to ensure type matching
+            current_user_id = int(current_user.id)
+            query = db.session.query(Artwork, Artist).join(
+                Artist, Artwork.artist_id == Artist.artist_id
+            ).filter(
+                Artist.user_id.isnot(None),
+                Artist.user_id == current_user_id
+            )
+            # Log for debugging
+            app.logger.info(f"Filtering artworks for user_id={current_user_id}, email={current_user.email}, owned_only={owned_only}")
+            # Also log what artists are assigned to this user
+            assigned_artists = Artist.query.filter_by(user_id=current_user_id).all()
+            app.logger.info(f"Artists assigned to user {current_user_id}: {[a.artist_id for a in assigned_artists]}")
+            # Log the SQL query being generated (for debugging)
+            try:
+                from sqlalchemy.dialects import postgresql
+                sql_str = str(query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+                app.logger.debug(f"Generated SQL query: {sql_str}")
+            except Exception as e:
+                app.logger.debug(f"Could not generate SQL string: {e}")
+        else:
+            # Build base query with LEFT JOIN to handle artworks without artists
+            query = db.session.query(Artwork, Artist).outerjoin(
+                Artist, Artwork.artist_id == Artist.artist_id
+            )
 
         # Apply filters
         if search:
@@ -626,6 +661,9 @@ def list_artworks():
             query = query.filter(Artwork.storage_id == storage_id)
 
         # Get total count before pagination
+        # For owned_only, log the count before pagination for debugging
+        if owned_only and current_user.is_authenticated:
+            app.logger.info(f"Total artworks matching ownership filter (before pagination): {query.count()}")
         total = query.count()
 
         # Apply alphabetical ordering w/ default ascending if no order given
@@ -641,10 +679,31 @@ def list_artworks():
 
         # Execute query
         results = query.all()
+        
+        # Log query results for debugging when owned_only is true
+        if owned_only and current_user.is_authenticated:
+            app.logger.info(f"Query returned {len(results)} artworks for user_id={current_user.id}")
+            for artwork, artist in results:
+                app.logger.info(f"  - Artwork {artwork.artwork_num} (artist_id={artwork.artist_id}) -> Artist {artist.artist_id if artist else 'None'} (user_id={artist.user_id if artist else 'None'})")
 
         # Build response
         artworks = []
         for artwork, artist in results:
+            # Double-check ownership when owned_only is true (defensive programming)
+            if owned_only and current_user.is_authenticated:
+                current_user_id = int(current_user.id)
+                if not artist:
+                    app.logger.warning(f"Skipping artwork {artwork.artwork_num}: no artist found")
+                    continue
+                if not artist.user_id:
+                    app.logger.warning(f"Skipping artwork {artwork.artwork_num}: artist {artist.artist_id} has no user_id")
+                    continue
+                if int(artist.user_id) != current_user_id:
+                    app.logger.warning(f"Skipping artwork {artwork.artwork_num}: artist {artist.artist_id} user_id {artist.user_id} != current_user.id {current_user_id}")
+                    continue
+                # Log successful match for debugging
+                app.logger.info(f"Including artwork {artwork.artwork_num} from artist {artist.artist_id} (user_id={artist.user_id})")
+
             # Get primary photo or first photo
             primary_photo = ArtworkPhoto.query.filter_by(
                 artwork_num=artwork.artwork_num,
@@ -678,16 +737,18 @@ def list_artworks():
                 artist_info = {
                     'id': artist.artist_id,
                     'name': artist_name,
-                    'email': artist.artist_email
+                    'email': artist.artist_email,
+                    'user_id': artist.user_id
                 }
             else:
                 artist_info = {
                     'id': None,
                     'name': 'Unknown Artist',
-                    'email': None
+                    'email': None,
+                    'user_id': None
                 }
 
-            artworks.append({
+            artwork_data = {
                 'id': artwork.artwork_num,
                 'title': artwork.artwork_ttl,
                 'medium': artwork.artwork_medium,
@@ -704,12 +765,18 @@ def list_artworks():
                     'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
                 } if primary_photo else None,
                 'photo_count': photo_count
-            })
+            }
+            
+            # Log each artwork being added for debugging when owned_only is true
+            if owned_only and current_user.is_authenticated:
+                app.logger.info(f"Adding artwork {artwork.artwork_num} (artist_id={artwork.artist_id}, artist.user_id={artist.user_id if artist else 'None'})")
+            
+            artworks.append(artwork_data)
 
         # Calculate pagination metadata
         total_pages = (total + per_page - 1) // per_page
 
-        return jsonify({
+        response_data = {
             'artworks': artworks,
             'pagination': {
                 'page': page,
@@ -719,7 +786,20 @@ def list_artworks():
                 'has_next': page < total_pages,
                 'has_prev': page > 1
             }
-        }), 200
+        }
+        
+        # Add debug info when owned_only is true
+        if owned_only and current_user.is_authenticated:
+            response_data['_debug'] = {
+                'owned_only': True,
+                'user_id': int(current_user.id),
+                'user_email': current_user.email,
+                'artworks_count': len(artworks),
+                'assigned_artists': [a.artist_id for a in Artist.query.filter_by(user_id=int(current_user.id)).all()]
+            }
+            app.logger.info(f"Returning {len(artworks)} artworks for user {current_user.email} (user_id={current_user.id})")
+        
+        return jsonify(response_data), 200
     except Exception as e:
         app.logger.exception("Failed to list artworks")
         return jsonify({'error': 'Failed to load artworks. Please try again.'}), 500
@@ -766,7 +846,8 @@ def get_artwork(artwork_id):
             'email': artist.artist_email,
             'phone': artist.artist_phone,
             'website': artist.artist_site,
-            'bio': artist.artist_bio
+            'bio': artist.artist_bio,
+            'user_id': artist.user_id
         } if artist else None,
         'storage': {
             'id': storage.storage_id,
@@ -800,7 +881,8 @@ def list_artists():
             'artists': [
                 {
                     'id': artist.artist_id,
-                    'name': f"{artist.artist_fname} {artist.artist_lname}".strip()
+                    'name': f"{artist.artist_fname} {artist.artist_lname}".strip(),
+                    'user_id': artist.user_id
                 }
                 for artist in artists
             ]
@@ -1585,9 +1667,29 @@ def assign_artist_to_user(artist_id):
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
+    if _is_bootstrap_admin(user):
+        return jsonify({'error': 'Cannot assign an artist to the bootstrap admin account'}), 403
+
+    # Unassign any other artists that were previously assigned to this user
+    # This ensures only one artist is linked to a user at a time
+    previously_assigned = Artist.query.filter_by(user_id=user_id).all()
+    unassigned_count = 0
+    for prev_artist in previously_assigned:
+        if prev_artist.artist_id != artist_id:
+            app.logger.info(f"Unassigning artist {prev_artist.artist_id} from user {user_id} (reassigning to {artist_id})")
+            prev_artist.user_id = None
+            unassigned_count += 1
+    
+    # Log if we're reassigning (artist already has this user_id)
+    if artist.user_id == user_id:
+        app.logger.info(f"Artist {artist_id} is already assigned to user {user_id}, but cleaning up other assignments")
+
     # Link artist to user
     artist.user_id = user_id
+    
+    # Commit all changes (unassignments + new assignment)
     db.session.commit()
+    app.logger.info(f"Successfully assigned artist {artist_id} to user {user_id}, unassigned {unassigned_count} other artist(s)")
 
     return jsonify({
         'message': f'Artist {artist_id} successfully linked to user {user.email}',
@@ -1601,6 +1703,38 @@ def assign_artist_to_user(artist_id):
             'email': user.email
         }
     })
+
+
+@app.route('/api/artists/<artist_id>/self-assign', methods=['POST'])
+@login_required
+def self_assign_artist(artist_id):
+    """Allow an artist (or admin) to assign an artist record to their own account."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    # Admins can always self-assign; artists can only claim unassigned or already owned records
+    if not current_user.is_admin:
+        if current_user.normalized_role != 'artist':
+            return jsonify({'error': 'Permission denied'}), 403
+        if artist.user_id and str(artist.user_id) != str(current_user.id):
+            return jsonify({'error': 'Artist is already assigned to another user'}), 403
+
+    artist.user_id = current_user.id
+    db.session.commit()
+
+    log_audit_event(
+        'artist_user_self_assigned',
+        user_id=current_user.id,
+        email=current_user.email,
+        details={
+            'artist_id': artist_id,
+            'assigned_user_id': current_user.id,
+            'assigned_user_email': current_user.email
+        }
+    )
+
+    return jsonify({'message': 'Artist assigned to your account', 'artist_id': artist_id}), 200
 
 
 @app.route('/api/admin/artists/<artist_id>/unassign-user', methods=['POST'])
@@ -1716,6 +1850,29 @@ def admin_console_stats():
     except Exception as e:
         app.logger.exception("Failed to fetch admin console stats")
         return jsonify({'error': 'Failed to fetch statistics'}), 500
+
+
+@app.route('/api/admin/console/artists', methods=['GET'])
+@login_required
+@admin_required
+def admin_console_artists():
+    """Admin console endpoint to list artists with assignment info."""
+    try:
+        artists = Artist.query.order_by(Artist.artist_fname, Artist.artist_lname).all()
+        artist_data = []
+        for artist in artists:
+            user = db.session.get(User, artist.user_id) if artist.user_id else None
+            artist_data.append({
+                'id': artist.artist_id,
+                'name': f"{artist.artist_fname} {artist.artist_lname}".strip(),
+                'email': artist.artist_email,
+                'user_id': artist.user_id,
+                'user_email': user.email if user else None
+            })
+        return jsonify({'artists': artist_data}), 200
+    except Exception:
+        app.logger.exception("Failed to fetch artists")
+        return jsonify({'error': 'Failed to fetch artists'}), 500
 
 
 @app.route('/api/stats/overview', methods=['GET'])
