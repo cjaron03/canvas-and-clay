@@ -419,24 +419,41 @@
     }
   };
 
+  const parseTimestamp = (value) => {
+    if (!value) return null;
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value);
+    const normalized = value.replace(/\.(\d{3})\d+/, '.$1'); // trim microseconds to ms
+    const candidate = hasTz ? normalized : `${normalized}Z`; // treat tz-less as UTC
+    const parsed = Date.parse(candidate);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
   const filterReviewedAlerts = (logs = []) => {
     const { reviewedAt, reviewedIds } = alertReviewState || {};
     const reviewedIdSet = new Set(reviewedIds || []);
-    const lastReviewedTs = reviewedAt ? Date.parse(reviewedAt) : null;
+    const lastReviewedTs = parseTimestamp(reviewedAt);
+    const hasReviewedMarker = Boolean(reviewedAt);
 
     return logs.filter((log) => {
       if (reviewedIdSet.has(log?.id)) return false;
-      if (!lastReviewedTs || Number.isNaN(lastReviewedTs)) return true;
+      if (!lastReviewedTs) {
+        // If we have a review marker string but can't parse it, hide by default
+        if (hasReviewedMarker) return false;
+        return true;
+      }
 
-      const createdTs = log?.created_at ? Date.parse(log.created_at) : null;
-      // Hide if timestamp is missing but we previously marked it by id; otherwise keep
-      if (!createdTs || Number.isNaN(createdTs)) return true;
+      const createdTs = parseTimestamp(log?.created_at);
+      // Hide if timestamp is missing/unparseable and we have a review marker (conservative)
+      if (!createdTs) return !hasReviewedMarker;
       return createdTs > lastReviewedTs;
     });
   };
 
   const loadAlertLogs = async () => {
     try {
+      // Re-read persisted state in case another tab/window updated it
+      alertReviewState = readStoredAlertReviewState();
+
       const params = new URLSearchParams();
       params.set('alerts', 'true');
       params.set('limit', '10');
@@ -452,6 +469,12 @@
       if (response.ok) {
         const result = await response.json();
         alertLogs = filterReviewedAlerts(result.audit_logs || []);
+
+        // If everything was already reviewed, keep the reviewed banner visible
+        if (alertLogs.length === 0 && alertReviewState?.reviewedAt) {
+          alertActionsMessage =
+            'Alerts marked as reviewed. New alerts will appear automatically when triggered.';
+        }
       }
     } catch (err) {
       console.error('Failed to load alert logs:', err);
@@ -1716,6 +1739,17 @@
               {#if alertActionsMessage}
                 <div class="inline-info small">{alertActionsMessage}</div>
               {/if}
+            </div>
+          </div>
+        {:else if alertReviewState?.reviewedAt}
+          <div class="inline-info alert-box">
+            <div class="alert-header">
+              <strong>Alerts marked as reviewed.</strong>
+              <span class="alert-subtext">New alerts will appear automatically when triggered.</span>
+            </div>
+            <div class="inline-info small">
+              {alertActionsMessage ||
+                'Alerts marked as reviewed. New alerts will appear automatically when triggered.'}
             </div>
           </div>
         {/if}

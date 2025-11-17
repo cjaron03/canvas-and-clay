@@ -539,7 +539,11 @@ def login():
     # check account lockout (check before user lookup to prevent user enumeration)
     is_locked, lockout_expires_at = check_account_locked(email)
     if is_locked:
-        remaining_time = (lockout_expires_at - datetime.now(timezone.utc)).total_seconds()
+        # Normalize lockout timestamp to UTC to avoid naive/aware subtraction issues
+        now_utc = datetime.now(timezone.utc)
+        if lockout_expires_at.tzinfo is None:
+            lockout_expires_at = lockout_expires_at.replace(tzinfo=timezone.utc)
+        remaining_time = (lockout_expires_at - now_utc).total_seconds()
         log_audit_event('account_locked', email=email, details={
             'lockout_expires_at': lockout_expires_at.isoformat(),
             'remaining_seconds': int(remaining_time)
