@@ -288,7 +288,7 @@ def register():
             'user': {
                 'id': new_user.id,
                 'email': new_user.email,
-                'role': new_user.role,
+                'role': new_user.normalized_role,
                 'created_at': new_user.created_at.isoformat()
             }
         }), 201
@@ -581,5 +581,5 @@ def admin_only_route():
     return jsonify({
         'message': 'Admin access granted',
         'user': current_user.email,
-        'role': current_user.role
+        'role': current_user.normalized_role
     }), 200

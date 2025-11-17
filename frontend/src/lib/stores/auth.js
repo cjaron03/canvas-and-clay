@@ -29,12 +29,37 @@ function createAuthStore() {
 					const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
 						credentials: 'include'
 					});
-				} else {
-					// Explicitly clear auth state if not authenticated
-					// 401 is expected after logout, so don't log it as an error
-					if (meResponse.status !== 401) {
-						console.warn('Auth check failed:', meResponse.status);
+					if (csrfResponse.ok) {
+						const data = await csrfResponse.json();
+						update((state) => ({ ...state, csrfToken: data.csrf_token }));
 					}
+
+					// Check if already logged in
+					const meResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/me`, {
+						credentials: 'include'
+					});
+					if (meResponse.ok) {
+						const data = await meResponse.json();
+						set({
+							user: data.user,
+							isAuthenticated: true,
+							csrfToken: data.csrf_token || null
+						});
+					} else {
+						// Explicitly clear auth state if not authenticated
+						// 401 is expected after logout, so don't log it as an error
+						if (meResponse.status !== 401) {
+							console.warn('Auth check failed:', meResponse.status);
+						}
+						set({
+							user: null,
+							isAuthenticated: false,
+							csrfToken: null
+						});
+					}
+				} catch (error) {
+					console.error('Auth init failed:', error);
+					// Clear auth state on error
 					set({
 						user: null,
 						isAuthenticated: false,

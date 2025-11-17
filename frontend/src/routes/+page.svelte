@@ -60,22 +60,20 @@
     </div>
   </section>
 
-  {#if data.stats.totalArtworks > 0}
-    <section class="stats">
-      <div class="stat-card">
-        <div class="stat-value">{data.stats.totalArtworks}</div>
-        <div class="stat-label">Artworks</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{data.stats.totalArtists}</div>
-        <div class="stat-label">Artists</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{data.stats.totalPhotos}</div>
-        <div class="stat-label">Photos</div>
-      </div>
-    </section>
-  {/if}
+  <section class="stats">
+    <div class="stat-card">
+      <div class="stat-value">{data.stats.totalArtworks}</div>
+      <div class="stat-label">Artworks</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{data.stats.artistUsers ?? data.stats.totalArtists ?? 0}</div>
+      <div class="stat-label">Artists</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{data.stats.totalPhotos}</div>
+      <div class="stat-label">Photos</div>
+    </div>
+  </section>
 
   {#if data.recentArtworks && data.recentArtworks.length > 0}
     <section class="recent-artworks">

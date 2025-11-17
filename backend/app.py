@@ -237,6 +237,9 @@ def unauthorized():
 from models import init_models
 User, FailedLoginAttempt, AuditLog = init_models(db)
 
+# Canonical bootstrap admin email used for safeguard checks
+BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
+
 # Now initialize rate limiter with key function that can access User model
 rate_limit_key_func = create_rate_limit_key_func()
 limiter = Limiter(
@@ -257,7 +260,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Register blueprints
-from auth import auth_bp, admin_required, is_artwork_owner, is_photo_owner, log_rbac_denial
+from auth import auth_bp, admin_required, is_artwork_owner, is_photo_owner, log_rbac_denial, log_audit_event
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -1634,6 +1637,9 @@ def admin_console_stats():
         total_artists = Artist.query.count()
         total_photos = ArtworkPhoto.query.count()
         total_users = User.query.count()
+
+        # Derived role count for artist-guest users
+        artist_role_count = User.query.filter(User.role == 'artist-guest').count()
         total_storage = Storage.query.count()
         total_audit_logs = AuditLog.query.count()
         
@@ -1659,7 +1665,10 @@ def admin_console_stats():
         return jsonify({
             'counts': {
                 'artworks': total_artworks,
-                'artists': total_artists,
+                # Align admin console with role-based artist count
+                'artists': artist_role_count,
+                'artist_users': artist_role_count,
+                'artists_db': total_artists,
                 'photos': total_photos,
                 'users': total_users,
                 'storage_locations': total_storage,
@@ -1674,6 +1683,33 @@ def admin_console_stats():
         }), 200
     except Exception as e:
         app.logger.exception("Failed to fetch admin console stats")
+        return jsonify({'error': 'Failed to fetch statistics'}), 500
+
+
+@app.route('/api/stats/overview', methods=['GET'])
+def public_overview_stats():
+    """Public overview stats for homepage (no auth required).
+
+    Returns total counts for artworks, artists, photos, and artist-role users.
+    """
+    try:
+        total_artworks = Artwork.query.count()
+        total_artists = Artist.query.count()
+        total_photos = ArtworkPhoto.query.count()
+        artist_role_count = User.query.filter(User.role == 'artist-guest').count()
+
+        return jsonify({
+            'counts': {
+                'artworks': total_artworks,
+                # Homepage shows role-based artists (artist-guest users)
+                'artists': artist_role_count,
+                'artist_users': artist_role_count,
+                'artists_db': total_artists,
+                'photos': total_photos
+            }
+        }), 200
+    except Exception:
+        app.logger.exception("Failed to fetch public overview stats")
         return jsonify({'error': 'Failed to fetch statistics'}), 500
 
 
@@ -1884,33 +1920,226 @@ def admin_console_users():
     """
     try:
         users = User.query.order_by(User.created_at.desc()).all()
-        
-        # Get last login times from audit logs
-        user_logins = {}
-        for user in users:
-            last_login = AuditLog.query.filter_by(
-                user_id=user.id,
-                event_type='login_success'
-            ).order_by(AuditLog.created_at.desc()).first()
-            user_logins[user.id] = last_login.created_at.isoformat() if last_login and last_login.created_at else None
-        
+
+        serialized_users = [_serialize_user_with_last_login(user) for user in users]
+
+        role_counts = {
+            'admin': sum(1 for u in serialized_users if u['role'] == 'admin'),
+            'artist-guest': sum(1 for u in serialized_users if u['role'] == 'artist-guest'),
+            'guest': sum(1 for u in serialized_users if u['role'] == 'guest'),
+            'inactive': sum(1 for u in serialized_users if not u['is_active'])
+        }
+
         return jsonify({
-            'users': [
-                {
-                    'id': user.id,
-                    'email': user.email,
-                    'role': user.role,
-                    'is_active': user.is_active,
-                    'created_at': user.created_at.isoformat() if user.created_at else None,
-                    'last_login': user_logins.get(user.id)
-                }
-                for user in users
-            ],
-            'total': len(users)
+            'users': serialized_users,
+            'total': len(users),
+            'role_counts': role_counts
         }), 200
     except Exception as e:
         app.logger.exception("Failed to fetch users")
         return jsonify({'error': 'Failed to fetch users'}), 500
+
+
+def _serialize_user_with_last_login(user):
+    """Serialize a user with normalized role and last login timestamp."""
+    last_login = AuditLog.query.filter_by(
+        user_id=user.id,
+        event_type='login_success'
+    ).order_by(AuditLog.created_at.desc()).first()
+
+    return {
+        'id': user.id,
+        'email': user.email,
+        'role': user.normalized_role,
+        'is_active': user.is_active,
+        'created_at': user.created_at.isoformat() if user.created_at else None,
+        'last_login': last_login.created_at.isoformat() if last_login and last_login.created_at else None,
+        'is_bootstrap_admin': _is_bootstrap_admin(user)
+    }
+
+
+def _active_admin_count(exclude_user_id=None):
+    """Return count of active admins, optionally excluding a specific user."""
+    query = User.query.filter(User.role == 'admin', User.is_active == True)
+    if exclude_user_id:
+        query = query.filter(User.id != exclude_user_id)
+    return query.count()
+
+
+def _is_bootstrap_admin(user):
+    """Check if the user matches the bootstrap admin email."""
+    try:
+        return user.email and user.email.lower() == BOOTSTRAP_ADMIN_EMAIL
+    except Exception:
+        return False
+
+
+@app.route('/api/admin/console/users/<int:user_id>/promote', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("100 per minute")
+def promote_user(user_id):
+    """Promote a user one step up the role ladder."""
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    previous_role = target.normalized_role or 'guest'
+    previous_active = target.is_active
+
+    # Debug payload for troubleshooting role issues (safe to keep minimal)
+    debug_payload = {
+        'target_id': target.id,
+        'target_role': target.role,
+        'target_normalized_role': previous_role,
+        'target_active': target.is_active,
+        'requestor_id': current_user.id,
+        'requestor_role': current_user.role
+    }
+
+    if _is_bootstrap_admin(target):
+        return jsonify({'error': 'Cannot modify the bootstrap admin account', 'debug': debug_payload}), 403
+
+    if previous_role == 'admin':
+        app.logger.warning("[promote] blocking upgrade for admin target=%s", debug_payload)
+        return jsonify({'error': 'User is already at the highest role', 'debug': debug_payload}), 400
+
+    app.logger.warning("[promote] proceed payload=%s", debug_payload)
+
+    target.promote()
+    new_role = target.normalized_role
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to promote user'}), 500
+
+    log_audit_event(
+        'user_promoted',
+        user_id=target.id,
+        email=target.email,
+        details={
+            'previous_role': previous_role,
+            'new_role': new_role,
+            'previous_active': previous_active,
+            'new_active': target.is_active,
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        }
+    )
+
+    return jsonify({
+        'message': 'User promoted successfully',
+        'user': _serialize_user_with_last_login(target)
+    }), 200
+
+
+@app.route('/api/admin/console/users/<int:user_id>/demote', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("100 per minute")
+def demote_user(user_id):
+    """Demote a user one step down the role ladder."""
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    # Prevent self-demotion to avoid lockouts
+    if str(target.id) == str(current_user.id):
+        return jsonify({'error': 'You cannot demote your own account'}), 403
+
+    if _is_bootstrap_admin(target):
+        return jsonify({'error': 'Cannot modify the bootstrap admin account'}), 403
+
+    previous_role = target.normalized_role or 'guest'
+    previous_active = target.is_active
+
+    if previous_role == 'guest':
+        return jsonify({'error': 'User is already at the lowest role'}), 400
+
+    if previous_role == 'admin' and target.is_active and _active_admin_count(exclude_user_id=target.id) == 0:
+        return jsonify({'error': 'Cannot demote the last active admin'}), 400
+
+    target.demote()
+    new_role = target.normalized_role
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to demote user'}), 500
+
+    log_audit_event(
+        'user_demoted',
+        user_id=target.id,
+        email=target.email,
+        details={
+            'previous_role': previous_role,
+            'new_role': new_role,
+            'previous_active': previous_active,
+            'new_active': target.is_active,
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        }
+    )
+
+    return jsonify({
+        'message': 'User demoted successfully',
+        'user': _serialize_user_with_last_login(target)
+    }), 200
+
+
+@app.route('/api/admin/console/users/<int:user_id>/toggle-active', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("100 per minute")
+def toggle_user_active(user_id):
+    """Toggle a user's active status (soft delete/restore)."""
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    if _is_bootstrap_admin(target):
+        return jsonify({'error': 'Cannot deactivate the bootstrap admin account'}), 403
+
+    previous_role = target.normalized_role or 'guest'
+    previous_active = target.is_active
+    new_active = not previous_active
+
+    if not new_active and str(target.id) == str(current_user.id):
+        return jsonify({'error': 'You cannot deactivate your own account'}), 403
+
+    if not new_active and previous_role == 'admin' and _active_admin_count(exclude_user_id=target.id) == 0:
+        return jsonify({'error': 'Cannot deactivate the last active admin'}), 400
+
+    target.is_active = new_active
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update user status'}), 500
+
+    event_type = 'user_reactivated' if new_active else 'user_deactivated'
+    log_audit_event(
+        event_type,
+        user_id=target.id,
+        email=target.email,
+        details={
+            'previous_role': previous_role,
+            'new_role': target.normalized_role,
+            'previous_active': previous_active,
+            'new_active': new_active,
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        }
+    )
+
+    return jsonify({
+        'message': 'User reactivated' if new_active else 'User deactivated',
+        'user': _serialize_user_with_last_login(target)
+    }), 200
 
 
 @app.route('/api/admin/console/database-info', methods=['GET'])
@@ -2209,7 +2438,7 @@ def ensure_bootstrap_admin():
     this function should be called on application startup to guarantee
     at least one admin user exists in the system.
     """
-    bootstrap_email = os.getenv('BOOTSTRAP_ADMIN_EMAIL', 'admin@canvas-clay.local').strip().lower()
+    bootstrap_email = BOOTSTRAP_ADMIN_EMAIL
     
     if not bootstrap_email:
         return

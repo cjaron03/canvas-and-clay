@@ -14,6 +14,11 @@
 	let loading = false;
 	let isRegisterMode = false;
 
+	// Password strength + requirements (register form)
+	let passwordRequirements = [];
+	let strengthLabel = 'Weak';
+	let strengthLevel = 0;
+
 	// Initialize auth store on mount
 	onMount(async () => {
 		await auth.init();
@@ -135,6 +140,54 @@
 		password = '';
 		confirmPassword = '';
 	};
+
+	$: passwordRequirements = [
+		{
+			key: 'length',
+			label: 'At least 8 characters',
+			met: password.length >= 8,
+			required: true
+		},
+		{
+			key: 'upper',
+			label: 'One uppercase letter',
+			met: /[A-Z]/.test(password),
+			required: true
+		},
+		{
+			key: 'lower',
+			label: 'One lowercase letter',
+			met: /[a-z]/.test(password),
+			required: true
+		},
+		{
+			key: 'digit',
+			label: 'One number',
+			met: /\d/.test(password),
+			required: true
+		},
+		{
+			key: 'symbol',
+			label: 'Add a symbol (recommended)',
+			met: /[^A-Za-z0-9]/.test(password),
+			required: false
+		}
+	];
+
+	$: {
+		const requiredMet = passwordRequirements.filter((r) => r.required && r.met).length;
+		const optionalMet = passwordRequirements.filter((r) => !r.required && r.met).length;
+		const lengthBonus = password.length >= 12 ? 1 : 0;
+
+		// Simple strength score: requireds + optional + bonus
+		const score = requiredMet + optionalMet + lengthBonus;
+		strengthLevel = Math.max(0, Math.min(4, score));
+
+		if (score <= 1) strengthLabel = 'Weak';
+		else if (score === 2) strengthLabel = 'Okay';
+		else if (score === 3) strengthLabel = 'Good';
+		else strengthLabel = 'Strong';
+	}
 </script>
 
 <div class="login-page">
@@ -178,15 +231,31 @@
 
 				<div class="form-group">
 					<input
-						id="register-password"
-						type="password"
-						bind:value={password}
-						placeholder="Password"
-						required
-						disabled={loading}
-						autocomplete="new-password"
-					/>
+					id="register-password"
+					type="password"
+					bind:value={password}
+					placeholder="Password"
+					required
+					disabled={loading}
+					autocomplete="new-password"
+				/>
 					<div class="password-hint">Use 8 or more characters with a mix of letters, numbers & symbols</div>
+					<div class="password-strength">
+						<div class="strength-label">Password strength: <span class={`pill pill-${strengthLabel.toLowerCase()}`}>{strengthLabel}</span></div>
+						<div class="strength-bars">
+							{#each Array(4) as _, index}
+								<div class:active={index < strengthLevel}></div>
+							{/each}
+						</div>
+					</div>
+					<div class="password-requirements">
+						{#each passwordRequirements as req}
+							<div class={`requirement ${req.met ? 'met' : 'missing'} ${req.required ? '' : 'optional'}`}>
+								<span class="icon">{req.met ? '✓' : '✕'}</span>
+								<span>{req.label}{!req.required ? ' (optional)' : ''}</span>
+							</div>
+						{/each}
+					</div>
 				</div>
 
 				<div class="form-group">
@@ -429,6 +498,115 @@
 		background: rgba(234, 67, 53, 0.1);
 		color: #c5221f;
 		border: 1px solid rgba(234, 67, 53, 0.3);
+	}
+
+	.password-strength {
+		margin-top: 0.75rem;
+	}
+
+	.strength-label {
+		color: var(--text-secondary);
+		font-size: 0.95rem;
+		margin-bottom: 0.35rem;
+	}
+
+	.strength-label .pill {
+		margin-left: 0.35rem;
+		text-transform: capitalize;
+	}
+
+	.strength-bars {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 6px;
+	}
+
+	.strength-bars div {
+		height: 6px;
+		background: var(--bg-tertiary);
+		border-radius: 4px;
+		transition: background 0.2s ease, box-shadow 0.2s ease;
+	}
+
+	.strength-bars div.active {
+		background: linear-gradient(90deg, #4285f4, #34a853);
+		box-shadow: 0 0 0 1px rgba(52, 168, 83, 0.15);
+	}
+
+	.password-requirements {
+		margin-top: 0.65rem;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+		gap: 0.4rem 0.75rem;
+	}
+
+	.requirement {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.95rem;
+		color: var(--text-secondary);
+	}
+
+	.requirement .icon {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		border: 1px solid var(--border-color);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.8rem;
+	}
+
+	.requirement.met .icon {
+		background: rgba(52, 168, 83, 0.12);
+		border-color: rgba(52, 168, 83, 0.4);
+		color: #2c8c46;
+	}
+
+	.requirement.missing .icon {
+		background: rgba(211, 47, 47, 0.08);
+		border-color: rgba(211, 47, 47, 0.4);
+		color: #c53030;
+	}
+
+	.requirement.optional {
+		font-style: italic;
+	}
+
+	.pill {
+		display: inline-block;
+		padding: 0.15rem 0.65rem;
+		border-radius: 999px;
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-color);
+		font-size: 0.9rem;
+		color: var(--text-primary);
+	}
+
+	.pill-weak {
+		background: rgba(211, 47, 47, 0.12);
+		border-color: rgba(211, 47, 47, 0.35);
+		color: #c53030;
+	}
+
+	.pill-okay {
+		background: rgba(251, 191, 36, 0.16);
+		border-color: rgba(251, 191, 36, 0.4);
+		color: #b45309;
+	}
+
+	.pill-good {
+		background: rgba(66, 133, 244, 0.12);
+		border-color: rgba(66, 133, 244, 0.35);
+		color: #1a73e8;
+	}
+
+	.pill-strong {
+		background: rgba(52, 168, 83, 0.14);
+		border-color: rgba(52, 168, 83, 0.4);
+		color: #2c8c46;
 	}
 
 	.form-actions {

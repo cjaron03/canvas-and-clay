@@ -1,8 +1,8 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth';
 
   export let data;
@@ -33,6 +33,9 @@
   let failedLoginsPage = 1;
 
   let users = [];
+  let userRoleCounts = null;
+  let userActionLoading = {};
+  let userActionError = '';
   let databaseInfo = null;
 
   // API health check state
@@ -228,6 +231,13 @@
       // Load CLI help
       await loadCLIHelp();
 
+      // Preload users to align role-based artist count in overview
+      await loadUsers();
+      syncArtistCountFromRoles();
+
+      // Preload users to sync role-based artist count in overview
+      await loadUsers();
+
       // Load command history
       const storedHistory = localStorage.getItem('admin_cli_history');
       if (storedHistory) {
@@ -379,8 +389,38 @@
     }
   };
 
+  const recomputeRoleCounts = (list = users) => {
+    const summary = {
+      admin: 0,
+      'artist-guest': 0,
+      guest: 0,
+      inactive: 0
+    };
+
+    (list || []).forEach((user) => {
+      summary[user.role] = (summary[user.role] || 0) + 1;
+      if (!user.is_active) {
+        summary.inactive += 1;
+      }
+    });
+
+    userRoleCounts = summary;
+    syncArtistCountFromRoles();
+  };
+
+  const syncArtistCountFromRoles = () => {
+    if (!stats || !stats.counts) return;
+    const roleCount = userRoleCounts?.['artist-guest'] || stats.counts.artist_users || 0;
+    const maxArtists = Math.max(roleCount, stats.counts.artists || 0);
+    stats = {
+      ...stats,
+      counts: { ...stats.counts, artists: maxArtists }
+    };
+  };
+
   const loadUsers = async () => {
     loading.users = true;
+    userActionError = '';
     try {
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users`, {
         credentials: 'include',
@@ -390,9 +430,17 @@
       if (response.ok) {
         const result = await response.json();
         users = result.users || [];
+        userRoleCounts = result.role_counts || null;
+        if (!userRoleCounts) {
+          recomputeRoleCounts(users);
+        }
+        syncArtistCountFromRoles();
+      } else {
+        userActionError = `Failed to load users (HTTP ${response.status})`;
       }
     } catch (err) {
       console.error('Failed to load users:', err);
+      userActionError = err?.message || 'Failed to load users';
     } finally {
       loading.users = false;
     }
@@ -415,6 +463,158 @@
       loading.database = false;
     }
   };
+
+  const ensureCsrfToken = async () => {
+    let csrf = get(auth)?.csrfToken;
+    if (csrf) return csrf;
+
+    try {
+      const resp = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+        credentials: 'include',
+        headers: { accept: 'application/json' }
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        csrf = data.csrf_token;
+        // Update store token without touching user state
+        auth.init(); // keep auth refreshed; token will be preserved now
+      }
+    } catch (err) {
+      console.error('Failed to fetch CSRF token', err);
+    }
+
+    return csrf;
+  };
+
+  const buildAuthedHeaders = async () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      accept: 'application/json'
+    };
+
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
+
+    return headers;
+  };
+
+  const updateUserInState = (updatedUser) => {
+    if (!updatedUser) return;
+    const idx = users.findIndex((u) => u.id === updatedUser.id);
+    if (idx !== -1) {
+      users = [...users.slice(0, idx), updatedUser, ...users.slice(idx + 1)];
+    } else {
+      users = [updatedUser, ...users];
+    }
+    recomputeRoleCounts(users);
+  };
+
+  const adjustArtistCount = (previousRole, newRole) => {
+    if (!stats || !stats.counts) return;
+
+    const wasArtist = previousRole === 'artist-guest';
+    const isArtist = newRole === 'artist-guest';
+
+    if (isArtist && !wasArtist) {
+      stats = {
+        ...stats,
+        counts: { ...stats.counts, artists: (stats.counts.artists || 0) + 1 }
+      };
+    } else if (!isArtist && wasArtist) {
+      stats = {
+        ...stats,
+        counts: { ...stats.counts, artists: Math.max(0, (stats.counts.artists || 0) - 1) }
+      };
+    }
+    // Keep role-count-derived value in sync
+    syncArtistCountFromRoles();
+  };
+
+  const handleUserActionResponse = async (response, defaultError) => {
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : null;
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const retryMsg = retryAfter ? ` Please retry after ${retryAfter} seconds.` : '';
+      throw new Error(data?.error || `Rate limit exceeded.${retryMsg}`);
+    }
+
+    if (!response.ok) {
+      const debugSuffix = data?.debug
+        ? ` [debug target_role=${data.debug.target_role}, normalized=${data.debug.target_normalized_role}, active=${data.debug.target_active}]`
+        : '';
+      throw new Error(
+        (data?.error || defaultError || `Request failed (HTTP ${response.status})`) + debugSuffix
+      );
+    }
+
+    if (data?.user) {
+      updateUserInState(data.user);
+    }
+
+    return data;
+  };
+
+  const withUserAction = async (userId, action) => {
+    userActionLoading = { ...userActionLoading, [userId]: true };
+    userActionError = '';
+    try {
+      await action();
+    } catch (err) {
+      console.error('User action failed:', err);
+      userActionError = err?.message || 'Action failed. Please try again.';
+    } finally {
+      userActionLoading = { ...userActionLoading, [userId]: false };
+    }
+  };
+
+  const promoteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const prevRole = user.role;
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/promote`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to promote user');
+      const newRole = result?.user?.role || prevRole;
+      adjustArtistCount(prevRole, newRole);
+    });
+
+  const demoteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const prevRole = user.role;
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/demote`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to demote user');
+      const newRole = result?.user?.role || prevRole;
+      adjustArtistCount(prevRole, newRole);
+    });
+
+  const toggleUserActive = async (user) =>
+    withUserAction(user.id, async () => {
+      const prevRole = user.role;
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/toggle-active`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(
+        response,
+        user.is_active ? 'Failed to deactivate user' : 'Failed to reactivate user'
+      );
+      const newRole = result?.user?.role || prevRole;
+      adjustArtistCount(prevRole, newRole);
+    });
 
   const handleTabChange = (tab) => {
     const previousTab = activeTab;
@@ -1321,6 +1521,22 @@
     {:else if activeTab === 'users'}
       <div class="users">
         <h2>Users</h2>
+        {#if userRoleCounts}
+          <div class="user-summary">
+            <span><strong>Admins:</strong> {userRoleCounts.admin || 0}</span>
+            <span><strong>Artist-guests:</strong> {userRoleCounts['artist-guest'] || 0}</span>
+            <span><strong>Guests:</strong> {userRoleCounts.guest || 0}</span>
+            <span><strong>Inactive:</strong> {userRoleCounts.inactive || 0}</span>
+          </div>
+        {/if}
+        {#if users.find((u) => u.is_bootstrap_admin)}
+          <div class="inline-info">
+            The bootstrap admin account cannot be promoted, demoted, or deactivated. Keep it as a recovery account.
+          </div>
+        {/if}
+        {#if userActionError}
+          <div class="inline-error">{userActionError}</div>
+        {/if}
         {#if loading.users}
           <div>Loading...</div>
         {:else}
@@ -1330,20 +1546,70 @@
                 <th>ID</th>
                 <th>Email</th>
                 <th>Role</th>
-                <th>Active</th>
+                <th>Status</th>
                 <th>Created At</th>
                 <th>Last Login</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {#each users as user}
                 <tr>
                   <td>{user.id}</td>
-                  <td>{user.email}</td>
-                  <td>{user.role}</td>
-                  <td>{user.is_active ? 'Yes' : 'No'}</td>
+                  <td>
+                    <div class="user-email">{user.email}</div>
+                    {#if !user.is_active}
+                      <span class="pill pill-muted">Inactive</span>
+                    {/if}
+                    {#if user.is_bootstrap_admin}
+                      <span class="pill pill-warning">Bootstrap admin</span>
+                    {/if}
+                  </td>
+                  <td><span class={`pill pill-${user.role?.replace(' ', '-')}`}>{user.role}</span></td>
+                  <td>{user.is_active ? 'Active' : 'Inactive'}</td>
                   <td>{formatDate(user.created_at)}</td>
                   <td>{formatDate(user.last_login)}</td>
+                  <td>
+                    <div class="user-actions">
+                      <button
+                        class="secondary"
+                        disabled={
+                          user.role === 'guest' ||
+                          userActionLoading[user.id] ||
+                          $auth.user?.id === user.id ||
+                          user.is_bootstrap_admin
+                        }
+                        on:click={() => demoteUser(user)}
+                        aria-label={`Demote ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Demote'}
+                      </button>
+                      <button
+                        class="secondary"
+                        disabled={user.role === 'admin' || userActionLoading[user.id]}
+                        on:click={() => promoteUser(user)}
+                        aria-label={`Promote ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Promote'}
+                      </button>
+                      <button
+                        class={user.is_active ? 'danger' : 'secondary'}
+                        disabled={
+                          userActionLoading[user.id] ||
+                          $auth.user?.id === user.id ||
+                          user.is_bootstrap_admin
+                        }
+                        on:click={() => toggleUserActive(user)}
+                        aria-label={`${user.is_active ? 'Deactivate' : 'Reactivate'} ${user.email}`}
+                      >
+                        {#if userActionLoading[user.id]}
+                          Working...
+                        {:else}
+                          {user.is_active ? 'Deactivate' : 'Reactivate'}
+                        {/if}
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -1733,6 +1999,110 @@
     background: var(--bg-secondary);
   }
 
+  .user-summary {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0.5rem 0 1rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+  }
+
+  .inline-error {
+    background: rgba(211, 47, 47, 0.1);
+    border: 1px solid var(--error-color);
+    color: var(--error-color);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+  }
+
+  .inline-info {
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: var(--text-primary);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+
+  .user-email {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    text-transform: capitalize;
+  }
+
+  .pill-admin {
+    background: rgba(16, 185, 129, 0.15);
+    color: #0f9d58;
+    border-color: rgba(16, 185, 129, 0.4);
+  }
+
+  .pill-artist-guest {
+    background: rgba(59, 130, 246, 0.12);
+    color: #2563eb;
+    border-color: rgba(59, 130, 246, 0.35);
+  }
+
+  .pill-guest,
+  .pill-visitor {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+  }
+
+  .pill-warning {
+    background: rgba(245, 158, 11, 0.16);
+    color: #b45309;
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+
+  .pill-muted {
+    background: rgba(107, 114, 128, 0.15);
+    color: var(--text-secondary);
+    border-color: rgba(107, 114, 128, 0.4);
+  }
+
+  .user-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .user-actions button {
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .user-actions button.secondary {
+    background: var(--bg-tertiary);
+  }
+
+  .user-actions button.danger {
+    background: #b91c1c;
+    color: white;
+    border-color: #991b1b;
+  }
+
+  .user-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
   .pagination {
     display: flex;
     gap: 1rem;
@@ -2054,4 +2424,3 @@
     color: inherit;
   }
 </style>
-
