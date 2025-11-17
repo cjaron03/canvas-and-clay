@@ -483,7 +483,7 @@ def login():
         log_audit_event('login_failure', user_id=user.id, email=email, details={
             'reason': 'account_disabled'
         })
-        return jsonify({'error': 'Account is disabled'}), 403
+        return jsonify({'error': 'Account is disabled, please contact a Canvas admin to reinstate'}), 403
     
     # successful login - clear failed attempts and log success
     clear_failed_login_attempts(email)

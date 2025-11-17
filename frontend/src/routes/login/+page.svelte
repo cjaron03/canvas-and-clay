@@ -13,6 +13,8 @@
 	let success = '';
 	let loading = false;
 	let isRegisterMode = false;
+	let showLoginPassword = false;
+	let showRegisterPasswords = false;
 
 	// Password strength + requirements (register form)
 	let passwordRequirements = [];
@@ -229,17 +231,39 @@
 					/>
 				</div>
 
-				<div class="form-group">
+		<div class="form-group">
+			<div class="password-input-group">
+				{#if showRegisterPasswords}
 					<input
-					id="register-password"
-					type="password"
-					bind:value={password}
-					placeholder="Password"
-					required
-					disabled={loading}
-					autocomplete="new-password"
-				/>
-					<div class="password-hint">Use 8 or more characters with a mix of letters, numbers & symbols</div>
+						id="register-password"
+						type="text"
+						bind:value={password}
+						placeholder="Password"
+						required
+						disabled={loading}
+						autocomplete="new-password"
+					/>
+				{:else}
+					<input
+						id="register-password"
+						type="password"
+						bind:value={password}
+						placeholder="Password"
+						required
+						disabled={loading}
+						autocomplete="new-password"
+					/>
+				{/if}
+				<button
+					type="button"
+					class="password-toggle"
+					on:click={() => (showRegisterPasswords = !showRegisterPasswords)}
+					aria-label={showRegisterPasswords ? 'Hide password' : 'Show password'}
+				>
+					<span class="toggle-icon">{showRegisterPasswords ? 'Hide' : 'Show'}</span>
+				</button>
+			</div>
+				<div class="password-hint">Use 8 or more characters with a mix of letters, numbers & symbols</div>
 					<div class="password-strength">
 						<div class="strength-label">Password strength: <span class={`pill pill-${strengthLabel.toLowerCase()}`}>{strengthLabel}</span></div>
 						<div class="strength-bars">
@@ -259,15 +283,37 @@
 				</div>
 
 				<div class="form-group">
-					<input
-						id="confirm-password"
-						type="password"
-						bind:value={confirmPassword}
-						placeholder="Confirm password"
-						required
-						disabled={loading}
-						autocomplete="new-password"
-					/>
+					<div class="password-input-group">
+						{#if showRegisterPasswords}
+							<input
+								id="confirm-password"
+								type="text"
+								bind:value={confirmPassword}
+								placeholder="Confirm password"
+								required
+								disabled={loading}
+								autocomplete="new-password"
+							/>
+						{:else}
+							<input
+								id="confirm-password"
+								type="password"
+								bind:value={confirmPassword}
+								placeholder="Confirm password"
+								required
+								disabled={loading}
+								autocomplete="new-password"
+							/>
+						{/if}
+						<button
+							type="button"
+							class="password-toggle"
+							on:click={() => (showRegisterPasswords = !showRegisterPasswords)}
+							aria-label={showRegisterPasswords ? 'Hide password' : 'Show password'}
+						>
+							<span class="toggle-icon">{showRegisterPasswords ? 'Hide' : 'Show'}</span>
+						</button>
+					</div>
 				</div>
 
 				{#if success}
@@ -289,20 +335,32 @@
 				</div>
 			</form>
 		{:else}
-			<form on:submit|preventDefault={handleLogin} class="auth-form">
-				<div class="form-group">
-					<input
-						id="login-email"
-						type="email"
+	<form on:submit|preventDefault={handleLogin} class="auth-form">
+		<div class="form-group">
+			<input
+				id="login-email"
+				type="email"
 						bind:value={email}
 						placeholder="Email"
 						required
 						disabled={loading}
 						autocomplete="email"
 					/>
-				</div>
+		</div>
 
-				<div class="form-group">
+		<div class="form-group">
+			<div class="password-input-group">
+				{#if showLoginPassword}
+					<input
+						id="login-password"
+						type="text"
+						bind:value={password}
+						placeholder="Password"
+						required
+						disabled={loading}
+						autocomplete="current-password"
+					/>
+				{:else}
 					<input
 						id="login-password"
 						type="password"
@@ -312,7 +370,17 @@
 						disabled={loading}
 						autocomplete="current-password"
 					/>
-				</div>
+				{/if}
+				<button
+					type="button"
+					class="password-toggle"
+					on:click={() => (showLoginPassword = !showLoginPassword)}
+					aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+				>
+					<span class="toggle-icon">{showLoginPassword ? 'Hide' : 'Show'}</span>
+				</button>
+			</div>
+		</div>
 
 				<div class="form-options">
 					<label class="checkbox-label">
@@ -430,7 +498,8 @@
 	}
 
 	input[type='email'],
-	input[type='password'] {
+	input[type='password'],
+	input[type='text'] {
 		width: 100%;
 		padding: 0.875rem 1rem;
 		background: var(--bg-primary);
@@ -443,7 +512,8 @@
 	}
 
 	input[type='email']:focus,
-	input[type='password']:focus {
+	input[type='password']:focus,
+	input[type='text']:focus {
 		outline: none;
 		border-color: var(--accent-color);
 		box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
@@ -502,6 +572,62 @@
 
 	.password-strength {
 		margin-top: 0.75rem;
+	}
+
+	.password-input-group {
+		position: relative;
+		display: flex;
+		align-items: stretch;
+		gap: 0;
+	}
+
+	.password-input-group input {
+		flex: 1 1 auto;
+		padding-right: 3.5rem;
+	}
+
+	.password-toggle {
+		position: absolute;
+		right: 0;
+		top: 0;
+		bottom: 0;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		padding: 0 1rem;
+		min-width: 60px;
+		border-radius: 0 4px 4px 0;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.password-toggle:hover:not(:disabled) {
+		background: rgba(0, 0, 0, 0.02);
+		color: var(--text-primary);
+	}
+
+	.password-toggle:active:not(:disabled) {
+		background: rgba(0, 0, 0, 0.04);
+	}
+
+	.toggle-icon {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: inherit;
+		user-select: none;
+	}
+
+	.password-toggle:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.password-input-group:focus-within .password-toggle {
+		color: var(--text-primary);
 	}
 
 	.strength-label {

@@ -3,6 +3,7 @@
   import { onMount, afterUpdate, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth';
 
   export let data;
@@ -11,6 +12,8 @@
   let health = null;
   let loadError = null;
   let isLoading = true;
+  let isInitialized = false;
+  let isInitializing = false;
 
   // Load data client-side with credentials
   // Note: Consolidated into single onMount below to avoid duplicate health checks
@@ -103,28 +106,26 @@
     await new Promise(resolve => setTimeout(resolve, 200));
     
     // Check auth state - redirect if not authenticated or not admin
-    // Use a small delay before redirect to allow page to render
+    // Only redirect if we're still on the console page
     if (!$auth.isAuthenticated) {
-      loadError = 'Authentication required. Please log in.';
-      isLoading = false;
-      setTimeout(() => goto('/login'), 100);
+      if ($page.url.pathname.startsWith('/admin/console')) {
+        loadError = 'Authentication required. Please log in.';
+        isLoading = false;
+        goto('/login');
+      }
       return;
     }
     
     if ($auth.user?.role !== 'admin') {
-      loadError = 'Access denied: Admin role required';
-      isLoading = false;
-      setTimeout(() => goto('/'), 100);
+      if ($page.url.pathname.startsWith('/admin/console')) {
+        loadError = 'Access denied: Admin role required';
+        isLoading = false;
+        goto('/');
+      }
       return;
     }
     
     console.log('[ADMIN CONSOLE] Auth checks passed, loading data...');
-    
-    // Double-check we're still on the console route before loading data
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin/console')) {
-      console.log('[ADMIN CONSOLE] Aborting data load - navigated away from console:', window.location.pathname);
-      return;
-    }
 
     // Load stats and health data (only once on mount)
     // Only proceed if we're authenticated and admin
@@ -133,8 +134,8 @@
       const headers = {
         accept: 'application/json'
       };
-      if (authState.csrfToken) {
-        headers['X-CSRFToken'] = authState.csrfToken;
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
       }
       
       const [statsRes, healthRes] = await Promise.all([
@@ -149,19 +150,24 @@
       ]);
 
       // Handle 401 - session might have expired
+      // Only redirect if we're still on the console page
       if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Session expired. Please log in again.';
-        isLoading = false;
-        // Clear auth state and redirect to login
-        auth.clear();
-        setTimeout(() => goto('/login'), 100);
+        if ($page.url.pathname.startsWith('/admin/console')) {
+          loadError = 'Session expired. Please log in again.';
+          isLoading = false;
+          // Clear auth state and redirect to login
+          auth.clear();
+          goto('/login');
+        }
         return;
       }
 
       if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        isLoading = false;
-        setTimeout(() => goto('/'), 100);
+        if ($page.url.pathname.startsWith('/admin/console')) {
+          loadError = 'Access denied: Admin role required';
+          isLoading = false;
+          goto('/');
+        }
         return;
       }
 
@@ -267,7 +273,7 @@
         loadError
       });
     }
-  };
+  });
 
   const loadCLIHelp = async () => {
     try {
@@ -1272,12 +1278,14 @@
     // Reset initialization flag when component is destroyed
     // This allows re-initialization when navigating back to the page
     isInitialized = false;
-    previousAuthState = null; // Reset auth state tracking
-    isNavigatingAway = false; // Reset navigation flag
     stopPeriodicApiCheck();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
       timeUpdateInterval = null;
+    }
+    if (apiCheckInterval) {
+      clearInterval(apiCheckInterval);
+      apiCheckInterval = null;
     }
     // Remove visibility change listener
     if (typeof document !== 'undefined') {

@@ -322,6 +322,7 @@ class TestUserLogin:
         assert response.status_code == 403
         data = response.get_json()
         assert 'Account is disabled' in data['error']
+        assert 'contact a Canvas admin' in data['error']
 
 
 class TestUserLogout:
