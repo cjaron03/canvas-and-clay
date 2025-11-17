@@ -9,7 +9,7 @@ from functools import wraps
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from flask_login import LoginManager, login_required, current_user
+from flask_login import LoginManager, login_required, current_user, logout_user
 from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
@@ -32,6 +32,14 @@ def get_env_int(name, default):
 
 def build_database_uri():
     """Construct database URI from environment variables."""
+    # Prefer explicit test database when running under pytest/CI
+    test_db_uri = os.getenv('TEST_DATABASE_URL') or os.getenv('PYTEST_DATABASE_URL')
+    if os.getenv('PYTEST_CURRENT_TEST') and test_db_uri:
+        return test_db_uri
+    if os.getenv('PYTEST_CURRENT_TEST') and not os.getenv('DATABASE_URL') and not test_db_uri:
+        # Safe default for tests when no DB is configured
+        return 'sqlite:///app_test.db'
+
     existing_uri = os.getenv('DATABASE_URL')
     if existing_uri:
         return existing_uri
@@ -170,7 +178,7 @@ def create_rate_limit_key_func():
                 # Access User model (captured in closure after it's defined)
                 # User is available at runtime since this function is created after init_models
                 try:
-                    user = User.query.get(int(user_id)) if user_id else None
+                    user = db.session.get(User, int(user_id)) if user_id else None
                     if user:
                         if hasattr(user, 'is_admin') and user.is_admin:
                             return None  # None disables rate limiting for this request
@@ -257,7 +265,24 @@ Artist, Artwork, Storage, FlatFile, WallSpace, Rack, ArtworkPhoto = init_tables(
 @login_manager.user_loader
 def load_user(user_id):
     """Load user by ID for Flask-Login."""
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
+
+# Enforce per-session token to allow forced logouts
+@app.before_request
+def enforce_session_token():
+    try:
+        if not current_user.is_authenticated:
+            return
+        token = session.get('session_token')
+        if not token or token != current_user.remember_token:
+            logout_user()
+            session.clear()
+            return jsonify({'error': 'Session expired. Please log in again.'}), 401
+    except Exception:
+        # On any unexpected error, fail closed by clearing session
+        logout_user()
+        session.clear()
+        return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
 from auth import auth_bp, admin_required, is_artwork_owner, is_photo_owner, log_rbac_denial, log_audit_event
@@ -516,7 +541,7 @@ def api_search():
 
             # If photo is associated with an artwork, include artwork info
             if photo.artwork_num:
-                artwork = Artwork.query.get(photo.artwork_num)
+                artwork = db.session.get(Artwork, photo.artwork_num)
                 if artwork:
                     photo_item['artwork'] = {
                         'id': artwork.artwork_num,
@@ -637,7 +662,7 @@ def list_artworks():
             ).count()
 
             # Get storage info
-            storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+            storage = db.session.get(Storage, artwork.storage_id) if artwork.storage_id else None
 
             # Build artist info safely
             artist_info = None
@@ -713,15 +738,15 @@ def get_artwork(artwork_id):
         404: Artwork not found
     """
     # Get artwork
-    artwork = Artwork.query.get(artwork_id)
+    artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
 
     # Get artist
-    artist = Artist.query.get(artwork.artist_id)
+    artist = db.session.get(Artist, artwork.artist_id)
 
     # Get storage
-    storage = Storage.query.get(artwork.storage_id) if artwork.storage_id else None
+    storage = db.session.get(Storage, artwork.storage_id) if artwork.storage_id else None
 
     # Get all photos
     photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).order_by(
@@ -811,13 +836,12 @@ def list_storage():
 
 @app.route('/api/artworks', methods=['POST'])
 @login_required
-@admin_required
 def create_artwork():
     """Create a new artwork with auto-generated ID.
 
     Security:
         - Requires authentication
-        - Requires admin role
+        - Requires admin role OR artist role with ownership of the linked artist
         - Validates artist and storage exist
         - Auto-generates artwork ID
         - Audit logged
@@ -847,12 +871,21 @@ def create_artwork():
         return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
 
     # Verify artist exists
-    artist = Artist.query.get(data['artist_id'])
+    artist = db.session.get(Artist, data['artist_id'])
     if not artist:
         return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
 
+    # Authorization: admins can create any; artists can create only for their linked artist record
+    if not current_user.is_admin:
+        if current_user.normalized_role != 'artist':
+            log_rbac_denial('artwork', 'create', 'insufficient_role')
+            return jsonify({'error': 'Permission denied'}), 403
+        if not artist.user_id or str(artist.user_id) != str(current_user.id):
+            log_rbac_denial('artwork', 'create', 'not_owner')
+            return jsonify({'error': 'You can only create artworks for your own artist profile'}), 403
+
     # Verify storage exists
-    storage = Storage.query.get(data['storage_id'])
+    storage = db.session.get(Storage, data['storage_id'])
     if not storage:
         return jsonify({'error': f'Storage location not found: {data["storage_id"]}'}), 404
 
@@ -863,7 +896,7 @@ def create_artwork():
         for _ in range(max_attempts):
             random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
             artwork_id = f"AW{random_part}"
-            if not Artwork.query.get(artwork_id):
+            if not db.session.get(Artwork, artwork_id):
                 return artwork_id
         raise ValueError("Failed to generate unique artwork ID after max attempts")
     
@@ -911,7 +944,7 @@ def create_artwork():
         db.session.add(audit_log)
         db.session.commit()
 
-        app.logger.info(f"Admin {current_user.email} created artwork {new_artwork_id}: {data['title']}")
+        app.logger.info(f"User {current_user.email} created artwork {new_artwork_id}: {data['title']}")
 
         return jsonify({
             'message': 'Artwork created successfully',
@@ -961,7 +994,7 @@ def update_artwork(artwork_id):
         404: Artwork, artist, or storage not found
     """
     # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
+    artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
 
@@ -984,7 +1017,7 @@ def update_artwork(artwork_id):
 
     # Update artist
     if 'artist_id' in data and data['artist_id'] != artwork.artist_id:
-        artist = Artist.query.get(data['artist_id'])
+        artist = db.session.get(Artist, data['artist_id'])
         if not artist:
             return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
         changes['artist_id'] = {'old': artwork.artist_id, 'new': data['artist_id']}
@@ -992,7 +1025,7 @@ def update_artwork(artwork_id):
 
     # Update storage
     if 'storage_id' in data and data['storage_id'] != artwork.storage_id:
-        storage = Storage.query.get(data['storage_id'])
+        storage = db.session.get(Storage, data['storage_id'])
         if not storage:
             return jsonify({'error': f'Storage location not found: {data["storage_id"]}'}), 404
         changes['storage_id'] = {'old': artwork.storage_id, 'new': data['storage_id']}
@@ -1086,7 +1119,7 @@ def delete_artwork(artwork_id):
         404: Artwork not found
     """
     # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
+    artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
 
@@ -1184,14 +1217,14 @@ def upload_artwork_photo(artwork_id):
         404: Artwork not found
     """
     # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
+    artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
 
     # Check permissions (admin or artwork owner)
     if not current_user.is_admin:
         # Get the artist associated with this artwork
-        artist = Artist.query.get(artwork.artist_id)
+        artist = db.session.get(Artist, artwork.artist_id)
         if not artist:
             return jsonify({'error': 'Artist not found for this artwork'}), 404
 
@@ -1394,7 +1427,7 @@ def associate_photo_with_artwork(photo_id):
         }), 400
 
     # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
+    artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
 
@@ -1445,7 +1478,7 @@ def get_artwork_photos(artwork_id):
         404: Artwork not found
     """
     # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
+    artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
 
@@ -1490,7 +1523,7 @@ def delete_photo(photo_id):
         403: Permission denied
         404: Photo not found
     """
-    photo = ArtworkPhoto.query.get(photo_id)
+    photo = db.session.get(ArtworkPhoto, photo_id)
     if not photo:
         return jsonify({'error': 'Photo not found'}), 404
 
@@ -1543,12 +1576,12 @@ def assign_artist_to_user(artist_id):
     user_id = data.get('user_id')
 
     # Verify artist exists
-    artist = Artist.query.get(artist_id)
+    artist = db.session.get(Artist, artist_id)
     if not artist:
         return jsonify({'error': 'Artist not found'}), 404
 
     # Verify user exists
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
@@ -1592,7 +1625,7 @@ def unassign_artist_from_user(artist_id):
         404: Artist not found
     """
     # Verify artist exists
-    artist = Artist.query.get(artist_id)
+    artist = db.session.get(Artist, artist_id)
     if not artist:
         return jsonify({'error': 'Artist not found'}), 404
 
@@ -1638,7 +1671,7 @@ def admin_console_stats():
         total_users = User.query.count()
 
         # Derived role count for artist-guest users
-        artist_role_count = User.query.filter(User.role == 'artist-guest').count()
+        artist_role_count = User.query.filter(User.role.in_(['artist', 'artist-guest'])).count()
         total_storage = Storage.query.count()
         total_audit_logs = AuditLog.query.count()
         
@@ -1695,7 +1728,7 @@ def public_overview_stats():
         total_artworks = Artwork.query.count()
         total_artists = Artist.query.count()
         total_photos = ArtworkPhoto.query.count()
-        artist_role_count = User.query.filter(User.role == 'artist-guest').count()
+        artist_role_count = User.query.filter(User.role.in_(['artist', 'artist-guest'])).count()
 
         return jsonify({
             'counts': {
@@ -2073,7 +2106,7 @@ def _maybe_alert_role_change_spike(event_type):
 @limiter.limit("100 per minute")
 def promote_user(user_id):
     """Promote a user one step up the role ladder."""
-    target = User.query.get(user_id)
+    target = db.session.get(User, user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
 
@@ -2136,7 +2169,7 @@ def promote_user(user_id):
 @limiter.limit("100 per minute")
 def demote_user(user_id):
     """Demote a user one step down the role ladder."""
-    target = User.query.get(user_id)
+    target = db.session.get(User, user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
 
@@ -2193,7 +2226,7 @@ def demote_user(user_id):
 @limiter.limit("100 per minute")
 def toggle_user_active(user_id):
     """Toggle a user's active status (soft delete/restore)."""
-    target = User.query.get(user_id)
+    target = db.session.get(User, user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
 
@@ -2235,6 +2268,47 @@ def toggle_user_active(user_id):
 
     return jsonify({
         'message': 'User reactivated' if new_active else 'User deactivated',
+        'user': _serialize_user_with_last_login(target)
+    }), 200
+
+
+@app.route('/api/admin/console/users/<int:user_id>/force-logout', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("50 per minute")
+def force_logout_user(user_id):
+    """Force logout a user by rotating their session token."""
+    target = db.session.get(User, user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    # Avoid locking out your own active session
+    if str(target.id) == str(current_user.id):
+        return jsonify({'error': 'You cannot force logout your own active session'}), 403
+
+    if _is_bootstrap_admin(target):
+        return jsonify({'error': 'Cannot force logout the bootstrap admin account'}), 403
+
+    target.remember_token = secrets.token_urlsafe(32)
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to force logout user'}), 500
+
+    log_audit_event(
+        'user_forced_logout',
+        user_id=target.id,
+        email=target.email,
+        details={
+            'acted_by_id': current_user.id,
+            'acted_by_email': current_user.email
+        }
+    )
+
+    return jsonify({
+        'message': 'User session revoked',
         'user': _serialize_user_with_last_login(target)
     }), 200
 
@@ -2289,7 +2363,7 @@ def admin_console_database_info():
 @limiter.limit("50 per minute")
 def soft_delete_user(user_id):
     """Soft delete a user (sets is_active=False and deleted_at timestamp)."""
-    target = User.query.get(user_id)
+    target = db.session.get(User, user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
 
@@ -2322,7 +2396,7 @@ def soft_delete_user(user_id):
 @limiter.limit("50 per minute")
 def restore_user(user_id):
     """Restore a soft-deleted user (reactivate account and clear deleted_at)."""
-    target = User.query.get(user_id)
+    target = db.session.get(User, user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
 
@@ -2390,7 +2464,7 @@ def purge_deleted_users():
 @limiter.limit("20 per minute")
 def hard_delete_user(user_id):
     """Immediately and permanently delete a user by ID."""
-    target = User.query.get(user_id)
+    target = db.session.get(User, user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
 

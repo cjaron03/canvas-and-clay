@@ -523,13 +523,14 @@
   const recomputeRoleCounts = (list = users) => {
     const summary = {
       admin: 0,
-      'artist-guest': 0,
+      artist: 0,
       guest: 0,
       inactive: 0
     };
 
     (list || []).forEach((user) => {
-      summary[user.role] = (summary[user.role] || 0) + 1;
+      const roleKey = user.role === 'artist-guest' ? 'artist' : user.role;
+      summary[roleKey] = (summary[roleKey] || 0) + 1;
       if (!user.is_active) {
         summary.inactive += 1;
       }
@@ -541,7 +542,10 @@
 
   const syncArtistCountFromRoles = () => {
     if (!stats || !stats.counts) return;
-    const roleCount = userRoleCounts?.['artist-guest'] || stats.counts.artist_users || 0;
+    const roleCount =
+      (userRoleCounts?.artist || 0) + (userRoleCounts?.['artist-guest'] || 0) ||
+      stats.counts.artist_users ||
+      0;
     const maxArtists = Math.max(roleCount, stats.counts.artists || 0);
     stats = {
       ...stats,
@@ -561,7 +565,17 @@
       if (response.ok) {
         const result = await response.json();
         users = result.users || [];
-        userRoleCounts = result.role_counts || null;
+        const counts = result.role_counts || null;
+        if (counts) {
+          userRoleCounts = {
+            admin: counts.admin || 0,
+            artist: (counts.artist || 0) + (counts['artist-guest'] || 0),
+            guest: counts.guest || 0,
+            inactive: counts.inactive || 0
+          };
+        } else {
+          userRoleCounts = null;
+        }
         if (!userRoleCounts) {
           recomputeRoleCounts(users);
         }
@@ -645,8 +659,8 @@
   const adjustArtistCount = (previousRole, newRole) => {
     if (!stats || !stats.counts) return;
 
-    const wasArtist = previousRole === 'artist-guest';
-    const isArtist = newRole === 'artist-guest';
+    const wasArtist = previousRole === 'artist' || previousRole === 'artist-guest';
+    const isArtist = newRole === 'artist' || newRole === 'artist-guest';
 
     if (isArtist && !wasArtist) {
       stats = {
@@ -746,6 +760,18 @@
       );
       const newRole = result?.user?.role || prevRole;
       adjustArtistCount(prevRole, newRole);
+    });
+
+  const forceLogoutUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/force-logout`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      await handleUserActionResponse(response, 'Failed to force logout user');
+      userActionNotice = `Forced logout for ${user.email}. Active sessions will be revoked.`;
     });
 
   const softDeleteUser = async (user) =>
@@ -1922,7 +1948,7 @@
         {#if userRoleCounts}
           <div class="user-summary">
             <span><strong>Admins:</strong> {userRoleCounts.admin || 0}</span>
-            <span><strong>Artist-guests:</strong> {userRoleCounts['artist-guest'] || 0}</span>
+            <span><strong>Artists:</strong> {userRoleCounts.artist || 0}</span>
             <span><strong>Guests:</strong> {userRoleCounts.guest || 0}</span>
             <span><strong>Inactive:</strong> {userRoleCounts.inactive || 0}</span>
           </div>
@@ -2018,6 +2044,19 @@
                         {:else}
                           {user.is_active ? 'Deactivate' : 'Reactivate'}
                         {/if}
+                      </button>
+                      <button
+                        class="secondary"
+                        disabled={
+                          userActionLoading[user.id] ||
+                          $auth.user?.id === user.id ||
+                          user.is_bootstrap_admin ||
+                          user.deleted_at
+                        }
+                        on:click={() => forceLogoutUser(user)}
+                        aria-label={`Force logout ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Force logout'}
                       </button>
                       <button
                         class="secondary"
@@ -2601,6 +2640,7 @@
     border-color: rgba(16, 185, 129, 0.4);
   }
 
+  .pill-artist,
   .pill-artist-guest {
     background: rgba(59, 130, 246, 0.12);
     color: #2563eb;

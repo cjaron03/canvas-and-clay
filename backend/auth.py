@@ -2,6 +2,7 @@
 import os
 import re
 import json as json_lib
+import secrets
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
@@ -73,8 +74,8 @@ def is_artwork_owner(artwork):
 
     try:
         # Get the artist associated with this artwork
-        from app import Artist
-        artist = Artist.query.get(artwork.artist_id)
+        from app import db, Artist
+        artist = db.session.get(Artist, artwork.artist_id)
 
         if not artist:
             return False
@@ -129,8 +130,8 @@ def is_photo_owner(photo):
             return False
 
         # Get the artwork this photo belongs to
-        from app import Artwork
-        artwork = Artwork.query.get(photo.artwork_num)
+        from app import db, Artwork
+        artwork = db.session.get(Artwork, photo.artwork_num)
 
         if not artwork:
             return False
@@ -577,6 +578,11 @@ def login():
             'reason': 'account_disabled_or_deleted'
         })
         return jsonify({'error': 'Account is disabled or deleted, please contact a Canvas admin to reinstate'}), 403
+
+    # Normalize legacy role values (e.g., 'artist-guest' -> 'artist', 'visitor' -> 'guest')
+    canonical_role = user.normalized_role
+    if canonical_role != user.role:
+        user.role = canonical_role
     
     # successful login - clear failed attempts and log success
     clear_failed_login_attempts(email)
@@ -585,8 +591,20 @@ def login():
         'remember_me': remember
     })
     
+    # Issue a fresh session token so admins can forcibly revoke active sessions
+    session_token = secrets.token_urlsafe(32)
+
     # Login user with remember me option (must be called before session modification)
     login_user(user, remember=remember)
+
+    # Persist token on user and in session to detect forced logout
+    user.remember_token = session_token
+    session['session_token'] = session_token
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Login failed, please try again'}), 500
     
     # Regenerate session to prevent session fixation attacks
     session.permanent = True

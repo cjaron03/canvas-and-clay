@@ -28,8 +28,10 @@ import { page } from '$app/stores';
 			<a href="/" class:active={$page.url.pathname === '/'}>Home</a>
 			<a href="/search" class:active={$page.url.pathname === '/search'}>Search</a>
 			<a href="/artworks" class:active={$page.url.pathname.startsWith('/artworks')}>Artworks</a>
-			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
+			{#if $auth.isAuthenticated && ($auth.user?.role === 'admin' || $auth.user?.role === 'artist')}
 				<a href="/uploads" class:active={$page.url.pathname === '/uploads'}>Uploads</a>
+			{/if}
+			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
 				<a href="/admin/console" class:active={$page.url.pathname.startsWith('/admin/console')}>Console</a>
 			{/if}
 		</div>

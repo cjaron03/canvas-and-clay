@@ -43,8 +43,9 @@ def init_models(database):
         deleted_at = database.Column(database.DateTime, nullable=True)
 
         # Canonical role ladder (legacy 'visitor' normalized to 'guest')
-        ROLE_LADDER = ('guest', 'artist-guest', 'admin')
+        ROLE_LADDER = ('guest', 'artist', 'admin')
         LEGACY_ROLE = 'visitor'
+        LEGACY_ARTIST_ROLE = 'artist-guest'
         
         def __repr__(self):
             return f'<User {self.email}>'
@@ -55,8 +56,12 @@ def init_models(database):
         
         @property
         def normalized_role(self):
-            """Get normalized role (treats 'visitor' as 'guest' for backwards compatibility)."""
-            return 'guest' if self.role == self.LEGACY_ROLE else self.role
+            """Get normalized role (with backwards compatibility for legacy values)."""
+            if self.role == self.LEGACY_ROLE:
+                return 'guest'
+            if self.role == self.LEGACY_ARTIST_ROLE:
+                return 'artist'
+            return self.role
 
         @property
         def is_admin(self):
