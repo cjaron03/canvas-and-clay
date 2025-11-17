@@ -30,6 +30,7 @@
 			<a href="/" class:active={$page.url.pathname === '/'}>Home</a>
 			<a href="/search" class:active={$page.url.pathname === '/search'}>Search</a>
 			<a href="/artworks" class:active={$page.url.pathname.startsWith('/artworks')}>Artworks</a>
+			<a href="/gallery" class:active={$page.url.pathname === '/gallery'}>Gallery</a>
 			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
 				<a href="/uploads" class:active={$page.url.pathname === '/uploads'}>Uploads</a>
 				<a href="/admin/console" class:active={$page.url.pathname.startsWith('/admin/console')}>Console</a>
