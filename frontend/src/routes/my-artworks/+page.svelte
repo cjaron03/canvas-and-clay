@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { goto } from '$app/navigation';
 
   let artworks = [];
   let loading = true;
