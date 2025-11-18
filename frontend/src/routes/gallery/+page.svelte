@@ -3,6 +3,7 @@
     
     let artworkList = [];
     let viewableList = [];
+    let currArtIndex = 0;
 
     const getThumbnailUrl = (thumbnail) => {
         if (!thumbnail) return null;
@@ -10,27 +11,28 @@
         return `${PUBLIC_API_BASE_URL}${thumbnail}`;
     };
 
+    function nextArtwork(){
+        currArtIndex = (currArtIndex - 1 + viewableList.length) % viewableList.length;
+    }
+    function prevArtwork(){
+        currArtIndex = (currArtIndex + 1) % viewableList.length;
+    }
+
     artworkList = data.artworks;
     artworkList.array.forEach(artwork => {
-        if(artwork.is_viewable == 'TRUE'){
+        if(artwork.is_viewable === 'TRUE'){
             viewableList.push(artwork);
         }
     });
-    let currArtIndex = $state(0);
-    let currArtwork = $derived(viewableList[currArtIndex]);
     
 </script>
 
 <div class="gallery_cont">
-    {#if currArtIndex > 0}
-        <button on:click={() => (currArtIndex--)}>Previous</button>
-    {/if}
+    <button on:click={prevArtwork}>Previous</button>
     <img 
-        src={getThumbnailUrl(currArtwork.primary_photo.thumbnail_url)}
-        alt={currArtwork.title}
+        src={getThumbnailUrl(viewableList[currArtIndex].primary_photo.thumbnail_url)}
+        alt={viewableList[currArtIndex].title}
     />
-    <p>{currArtwork.artist_info.name}</p>
-    {#if currArtIndex < (viewableList.length - 1)}
-        <button on:click={() => (currArtIndex++)}>Next</button>
-    {/if}
+    <p>{viewableList[currArtIndex].artist_info.name}</p>
+    <button on:click={nextArtwork}>Next</button>
 </div>
