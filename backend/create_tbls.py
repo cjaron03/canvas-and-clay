@@ -23,6 +23,8 @@ def init_tables(db):
             artist_site  - artist website or social media
             artist_bio - artist biography/description
             artist_phone - artist phone number
+            is_deleted - boolean for soft delete (set to false by default, required)
+            date_deleted - date of deletion (only set when is_deleted is set to true)
             user_id - foreign key to users table for ownership (nullable)
         """
         __tablename__ = 'artist'
@@ -33,6 +35,8 @@ def init_tables(db):
         artist_site = db.Column(db.String(100), nullable=True)
         artist_bio = db.Column(db.String(800), nullable=True)
         artist_phone = db.Column(db.CHAR(14), nullable=True)
+        is_deleted = db.Column(db.Boolean, default=False, server_default='FALSE', nullable=False)
+        date_deleted = db.Column(db.Date, nullable=True)
         user_id = db.Column(db.Integer, db.ForeignKey('users.id',
                                                       onupdate='CASCADE',
                                                       ondelete='SET NULL'),
@@ -48,6 +52,9 @@ def init_tables(db):
             artwork_medium - type of media (watercolor, oil, etc)
             date_created - date made
             artwork size - dimensions of artwork (24x36in, 3x3x3ft)
+            is_viewable - boolean for showing artwork in gallery(set to true by default, required)
+            is_deleted - boolean for soft delete (set to false by default, required)
+            date_deleted - date of deletion (only set when is_deleted is set to true)
             artist_id - id of the creator
             storage_id - id of storage location
         """
@@ -57,6 +64,9 @@ def init_tables(db):
         artwork_medium = db.Column(db.String(50), nullable=True)
         date_created = db.Column(db.Date, nullable=True)
         artwork_size = db.Column(db.String(50), nullable=True)
+        is_viewable = db.Column(db.Boolean, default=True, server_default='TRUE', nullable=False)
+        is_deleted = db.Column(db.Boolean, default=False, server_default='FALSE', nullable=False)
+        date_deleted = db.Column(db.Date, nullable=True)
         artist_id = db.Column(db.CHAR(8), db.ForeignKey('artist.artist_id', 
                                                         onupdate='NO ACTION',
                                                         ondelete='NO ACTION'),

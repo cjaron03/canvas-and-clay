@@ -1,6 +1,9 @@
 """Tests for artwork CRUD endpoints."""
 import pytest
 from datetime import date
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db, User, Artist, Artwork, Storage, ArtworkPhoto, AuditLog
 
 
@@ -316,6 +319,59 @@ class TestUpdateArtwork:
         assert response.status_code == 403
 
 
+class TestRestoreArtwork:
+    """Test POST /api/artworks/<id>/restore endpoint."""
+
+    def test_restore_artwork_success(self, client, admin_user, test_data):
+        """Admin can restore a deleted artwork."""
+        # First, delete the artwork
+        client.delete('/api/artworks/CRUDAW01')
+
+        # Restore it
+        response = client.put('/api/artworks/CRUDAW01/restore')
+
+        assert response.status_code == 200
+        data = response.json
+        assert 'restored' in data
+        assert data['restored']['artwork_id'] == 'CRUDAW01'
+
+        # Verify artwork is active again
+        artwork = Artwork.query.get('CRUDAW01')
+        assert artwork is not None
+        assert not getattr(artwork, 'deleted', False)  # Assuming soft delete flag
+
+        # Verify audit log
+        audit = AuditLog.query.filter_by(event_type='deleted_artwork_restored').first()
+        assert audit is not None
+        import json
+        details = json.loads(audit.details)
+        assert details['artwork_id'] == 'CRUDAW01'
+
+    def test_restore_artwork_not_found(self, client, admin_user):
+        """Restoring a non-existent artwork should fail."""
+        response = client.put('/api/artworks/NONEXIST/restore')
+        assert response.status_code == 404
+        assert 'not found' in response.json['error']
+
+    def test_restore_artwork_already_active(self, client, admin_user, test_data):
+        """Trying to restore an artwork that isn't deleted."""
+        response = client.put('/api/artworks/CRUDAW01/restore')
+        assert response.status_code == 404
+        assert 'Artwork is not deleted' in response.json['error']
+
+    def test_restore_artwork_regular_user_forbidden(self, client, regular_user, test_data):
+        """Regular users cannot restore artworks."""
+        client.delete('/api/artworks/CRUDAW01')
+        response = client.put('/api/artworks/CRUDAW01/restore')
+        assert response.status_code == 403
+
+    def test_restore_artwork_unauthenticated_forbidden(self, client, test_data):
+        """Unauthenticated users cannot restore artworks."""
+        client.delete('/api/artworks/CRUDAW01')
+        response = client.put('/api/artworks/CRUDAW01/restore')
+        assert response.status_code == 401
+
+
 class TestDeleteArtwork:
     """Test DELETE /api/artworks/<id> endpoint."""
 
@@ -328,9 +384,9 @@ class TestDeleteArtwork:
         assert 'deleted' in data
         assert data['deleted']['artwork_id'] == 'CRUDAW01'
 
-        # Verify artwork is deleted
+        # Verify artwork is soft deleted
         artwork = Artwork.query.get('CRUDAW01')
-        assert artwork is None
+        assert artwork.is_deleted is True
 
         # Verify audit log
         audit = AuditLog.query.filter_by(event_type='artwork_deleted').first()
