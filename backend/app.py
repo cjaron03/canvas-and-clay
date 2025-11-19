@@ -161,7 +161,7 @@ app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']
 
 # Fail fast when running with secure cookies but SECRET_KEY is not set
-if not allow_insecure_cookies and app.config['SECRET_KEY'] == 'dev-secret-key-change-in-production' and not app.config.get('TESTING', False):
+if not allow_insecure_cookies and app.config['SECRET_KEY'] == 'dev-secret-key-change-in-production' and not is_test_environment():
     raise RuntimeError("SECRET_KEY must be set in the environment for non-development environments")
 
 # Initialize extensions
