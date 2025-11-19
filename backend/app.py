@@ -3,6 +3,7 @@ import os
 import json
 import secrets
 import string
+import sys
 from datetime import timedelta, datetime, timezone
 from urllib.parse import quote_plus
 from functools import wraps
@@ -17,6 +18,23 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 load_dotenv()
+
+# Check if we're running in a test environment
+def is_test_environment():
+    """Check if we're running in a test environment (pytest, CI, etc.)"""
+    # Check for pytest environment variable (set by pytest)
+    if os.getenv('PYTEST_CURRENT_TEST') is not None:
+        return True
+    # Check for CI environment (GitHub Actions, etc.)
+    if os.getenv('CI') is not None:
+        return True
+    # Check if pytest is in sys.modules (pytest has been imported)
+    if 'pytest' in sys.modules:
+        return True
+    # Check if pytest is in the command line
+    if len(sys.argv) > 0 and 'pytest' in sys.argv[0]:
+        return True
+    return False
 
 
 def get_env_int(name, default):
@@ -100,7 +118,7 @@ app = Flask(__name__)
 cors_origins_env = os.getenv('CORS_ORIGINS')
 # Only allow the localhost default when explicitly using insecure cookies (local dev) or in tests
 if not cors_origins_env:
-    if not allow_insecure_cookies and not os.getenv('PYTEST_CURRENT_TEST'):
+    if not allow_insecure_cookies and not is_test_environment():
         raise RuntimeError("CORS_ORIGINS must be set when running with secure cookies")
     cors_origins_env = 'http://localhost:5173'
 cors_origins = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
