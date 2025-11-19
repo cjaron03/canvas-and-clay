@@ -91,11 +91,18 @@ def build_engine_options(database_uri):
 
     return engine_options
 
+allow_insecure_cookies = os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true'
+
 app = Flask(__name__)
 
 # CORS configuration - move to environment variable for production
 # supports multiple origins separated by commas (e.g., "http://localhost:5173,https://example.com")
-cors_origins_env = os.getenv('CORS_ORIGINS', 'http://localhost:5173')
+cors_origins_env = os.getenv('CORS_ORIGINS')
+# Only allow the localhost default when explicitly using insecure cookies (local dev) or in tests
+if not cors_origins_env:
+    if not allow_insecure_cookies and not os.getenv('PYTEST_CURRENT_TEST'):
+        raise RuntimeError("CORS_ORIGINS must be set when running with secure cookies")
+    cors_origins_env = 'http://localhost:5173'
 cors_origins = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
 
 CORS(app, 
@@ -117,7 +124,6 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Session security configuration
 # security: default to secure=true (HTTPS only), require explicit opt-out for local dev
 # set ALLOW_INSECURE_COOKIES=true in local dev environment only
-allow_insecure_cookies = os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = not allow_insecure_cookies
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -135,6 +141,10 @@ app.config['WTF_CSRF_SSL_STRICT'] = not allow_insecure_cookies
 app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 # accept csrf token from header (for API requests) and form field (traditional forms)
 app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']
+
+# Fail fast when running with secure cookies but SECRET_KEY is not set
+if not allow_insecure_cookies and app.config['SECRET_KEY'] == 'dev-secret-key-change-in-production' and not app.config.get('TESTING', False):
+    raise RuntimeError("SECRET_KEY must be set in the environment for non-development environments")
 
 # Initialize extensions
 db = SQLAlchemy(app)
@@ -358,7 +368,8 @@ def health():
         status = 'healthy'
         http_status = 200
     except Exception as e:
-        db_status = f'error: {str(e)}'
+        app.logger.exception("Health check database probe failed")
+        db_status = 'error'
         status = 'degraded'
         http_status = 503
     
@@ -2682,7 +2693,6 @@ def admin_console_cli_help():
 
 
 @app.route('/api/admin/console/cli', methods=['POST'])
-@csrf.exempt  # Exempt from CSRF - already protected by auth and admin checks
 @login_required
 @admin_required
 def admin_console_cli():
@@ -2773,6 +2783,13 @@ def admin_console_cli():
                         'error': 'Invalid or expired confirmation token',
                         'output': 'Confirmation token is invalid or has expired. Please start over.'
                     }), 400
+                
+                if token_data.get('user_id') != current_user.id:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Confirmation token does not belong to this user',
+                        'output': 'Confirmation token was issued to a different user. Please start over.'
+                    }), 403
                 
                 # Verify token matches this delete operation
                 if token_data['entity'] != entity or token_data['entity_id'] != entity_id:
@@ -2920,10 +2937,17 @@ def ensure_bootstrap_admin():
                     db.session.commit()
                     print(f"promoted {bootstrap_email} to admin role")
             else:
-                # bootstrap admin doesn't exist - create with default password
-                # admin should change this on first login
-                default_password = os.getenv('BOOTSTRAP_ADMIN_PASSWORD', 'ChangeMe123')
-                hashed_password = bcrypt.generate_password_hash(default_password).decode('utf-8')
+                # bootstrap admin doesn't exist - require explicit password in secure environments
+                password_env = os.getenv('BOOTSTRAP_ADMIN_PASSWORD')
+                if not password_env:
+                    if not allow_insecure_cookies and not app.config.get('TESTING', False):
+                        raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD must be set to create the bootstrap admin")
+                    # For local dev, auto-generate a strong password and emit once to stdout
+                    password_env = secrets.token_urlsafe(24)
+                    print("generated development bootstrap admin password (store securely):")
+                    print(password_env)
+
+                hashed_password = bcrypt.generate_password_hash(password_env).decode('utf-8')
                 
                 admin_user = User(
                     email=bootstrap_email,
@@ -2935,7 +2959,6 @@ def ensure_bootstrap_admin():
                 db.session.add(admin_user)
                 db.session.commit()
                 print(f"created bootstrap admin: {bootstrap_email}")
-                print("warning: default password in use - change immediately!")
     except Exception as e:
         # silently fail if database isn't ready yet (e.g., during migrations)
         # this is expected during initial setup
@@ -2989,4 +3012,5 @@ def _ensure_bootstrap_on_first_request():
         # Don't set _bootstrap_complete, will retry on next request
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
