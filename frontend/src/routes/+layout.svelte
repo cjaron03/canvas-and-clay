@@ -4,19 +4,17 @@
 	import '../app.css';
 	import { auth } from '$lib/stores/auth';
 	import { theme } from '$lib/stores/theme';
-	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
+import { page } from '$app/stores';
 
 	// Initialize auth and theme on app load
+	// Don't await - let each page handle its own auth.init() to avoid race conditions
 	onMount(() => {
-		auth.init();
+		auth.init().catch(err => console.error('Layout auth init failed:', err));
 		theme.init();
 	});
 
 	const handleLogout = async () => {
 		await auth.logout();
-		// Redirect to login page with success message
-		goto('/login?logout=success');
 	};
 
 	const toggleTheme = () => {
@@ -30,8 +28,13 @@
 			<a href="/" class:active={$page.url.pathname === '/'}>Home</a>
 			<a href="/search" class:active={$page.url.pathname === '/search'}>Search</a>
 			<a href="/artworks" class:active={$page.url.pathname.startsWith('/artworks')}>Artworks</a>
-			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
+			{#if $auth.isAuthenticated && $auth.user?.role === 'artist'}
+				<a href="/my-artworks" class:active={$page.url.pathname.startsWith('/my-artworks')}>My Artworks</a>
+			{/if}
+			{#if $auth.isAuthenticated && ($auth.user?.role === 'admin' || $auth.user?.role === 'artist')}
 				<a href="/uploads" class:active={$page.url.pathname === '/uploads'}>Uploads</a>
+			{/if}
+			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
 				<a href="/admin/console" class:active={$page.url.pathname.startsWith('/admin/console')}>Console</a>
 			{/if}
 		</div>
@@ -207,4 +210,3 @@
 		}
 	}
 </style>
-

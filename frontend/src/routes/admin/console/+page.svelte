@@ -1,7 +1,9 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth';
 
   export let data;
@@ -12,68 +14,7 @@
   let isLoading = true;
 
   // Load data client-side with credentials
-  onMount(async () => {
-    await auth.init();
-    
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
-      goto('/');
-      return;
-    }
-
-    // Load stats and health data
-    try {
-      const [statsRes, healthRes] = await Promise.all([
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        }),
-        fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
-          credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
-        })
-      ]);
-
-      if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        goto('/');
-        return;
-      }
-      if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Authentication required';
-        goto('/login');
-        return;
-      }
-
-      if (statsRes.ok) {
-        stats = await statsRes.json();
-      } else {
-        loadError = `Failed to load stats: HTTP ${statsRes.status}`;
-      }
-
-      if (healthRes.ok) {
-        health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
-      }
-
-      if (!health) {
-        health = { status: 'unknown', service: 'canvas-clay-backend' };
-      }
-    } catch (err) {
-      console.error('Failed to load admin console data:', err);
-      loadError = err instanceof Error ? err.message : 'Failed to load admin console data';
-    } finally {
-      isLoading = false;
-    }
-  });
+  // Note: Consolidated into single onMount below to avoid duplicate health checks
 
   let activeTab = 'overview';
   let loading = {
@@ -87,21 +28,46 @@
   let auditLogPagination = null;
   let auditLogPage = 1;
   let auditLogEventType = '';
+  let alertLogs = [];
+  const ALERT_REVIEW_KEY = 'admin_security_alerts_review_state';
+  const LEGACY_ALERT_REVIEW_KEY = 'admin_security_alerts_reviewed_at';
+  let alertReviewState = { reviewedAt: null, reviewedIds: [] };
 
   let failedLogins = [];
   let failedLoginsPagination = null;
   let failedLoginsPage = 1;
 
   let users = [];
+  let userRoleCounts = null;
+  let userActionLoading = {};
+  let userActionError = '';
+  let userActionNotice = '';
+  let artists = [];
+  let loadingArtists = false;
+  let assignUserId = '';
+  let assignArtistId = '';
   let databaseInfo = null;
+  let cleanup = {
+    auditDays: 90,
+    failedDays: 30,
+    auditLoading: false,
+    failedLoading: false,
+    auditMessage: '',
+    failedMessage: ''
+  };
+  let purgeMessage = '';
+  let alertActionsMessage = '';
+  let purgeDays = 30;
 
   // API health check state
   let apiTestResult = null;
   let apiTestLoading = false;
   let lastApiCheck = null;
   let apiCheckInterval = null;
+  let alertPollInterval = null;
   let currentTime = new Date(); // For reactive time display
   let overallHealthStatus = 'unknown'; // Overall system health status
+  let isTabVisible = true; // Track if browser tab is visible
 
   // CLI state
   let writeMode = false;
@@ -114,79 +80,191 @@
   let confirmationStep = 0; // 0 = none, 1 = first, 2 = second
   let cliOutputElement;
   let commandInputElement;
+  let shouldAutoScroll = true; // track if we should auto-scroll (user at bottom)
 
-  // Auto-scroll output to bottom whenever cliOutput changes
-  afterUpdate(() => {
-    if (cliOutputElement && cliOutput.length > 0) {
-      cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
+  // check if user is at bottom of scroll (within 50px threshold)
+  const isAtBottom = () => {
+    if (!cliOutputElement) return false;
+    const threshold = 50;
+    const scrollTop = cliOutputElement.scrollTop;
+    const scrollHeight = cliOutputElement.scrollHeight;
+    const clientHeight = cliOutputElement.clientHeight;
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  };
+
+  // handle scroll events to track if user manually scrolled up
+  const handleCLIScroll = () => {
+    shouldAutoScroll = isAtBottom();
+  };
+
+  // Save CLI output to localStorage for persistence
+  const saveCLIOutput = () => {
+    // Keep last 1000 lines (same limit as in-memory)
+    const toSave = cliOutput.slice(-1000);
+    try {
+      localStorage.setItem('admin_cli_output', JSON.stringify(toSave));
+    } catch (err) {
+      // If localStorage is full, try saving less
+      console.warn('Failed to save CLI output, localStorage may be full:', err);
+      try {
+        localStorage.setItem('admin_cli_output', JSON.stringify(toSave.slice(-500)));
+      } catch {
+        // If still fails, clear old output and try again
+        console.warn('Clearing old CLI output due to storage limit');
+        localStorage.removeItem('admin_cli_output');
+      }
     }
-  });
+  };
 
-  // Load command history from localStorage
+  // Load command history from localStorage and initialize console
   onMount(async () => {
+    // Initialize auth first (layout also calls this, but we need to ensure it's done)
     await auth.init();
+
+    // Restore persisted alert review state so previously reviewed alerts stay hidden
+    alertReviewState = readStoredAlertReviewState();
     
-    // Wait a tick for auth state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for auth state to be ready and reactive updates to propagate
+    await new Promise(resolve => setTimeout(resolve, 200));
     
-    // Check if user is admin
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
-      goto('/');
+    // Check auth state - redirect if not authenticated or not admin
+    // Only redirect if we're still on the console page
+    if (!$auth.isAuthenticated) {
+      if ($page.url.pathname.startsWith('/admin/console')) {
+        loadError = 'Authentication required. Please log in.';
+        isLoading = false;
+        goto('/login');
+      }
       return;
     }
+    
+    if ($auth.user?.role !== 'admin') {
+      if ($page.url.pathname.startsWith('/admin/console')) {
+        loadError = 'Access denied: Admin role required';
+        isLoading = false;
+        goto('/');
+      }
+      return;
+    }
+    
+    console.log('[ADMIN CONSOLE] Auth checks passed, loading data...');
 
-    // Load stats and health data
+    // Load stats and health data (only once on mount)
+    // Only proceed if we're authenticated and admin
     try {
+      // Build headers with CSRF token
+      const headers = {
+        accept: 'application/json'
+      };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+      
       const [statsRes, healthRes] = await Promise.all([
         fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/stats`, {
           credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
+          headers: headers
         }),
         fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
           credentials: 'include',
-          headers: {
-            accept: 'application/json'
-          }
+          headers: headers
         })
       ]);
 
-      if (statsRes.status === 403 || healthRes.status === 403) {
-        loadError = 'Access denied: Admin role required';
-        goto('/');
+      // Handle 401 - session might have expired
+      // Only redirect if we're still on the console page
+      if (statsRes.status === 401 || healthRes.status === 401) {
+        if ($page.url.pathname.startsWith('/admin/console')) {
+          loadError = 'Session expired. Please log in again.';
+          isLoading = false;
+          // Clear auth state and redirect to login
+          auth.clear();
+          goto('/login');
+        }
         return;
       }
-      if (statsRes.status === 401 || healthRes.status === 401) {
-        loadError = 'Authentication required';
-        goto('/login');
+
+      if (statsRes.status === 403 || healthRes.status === 403) {
+        if ($page.url.pathname.startsWith('/admin/console')) {
+          loadError = 'Access denied: Admin role required';
+          isLoading = false;
+          goto('/');
+        }
         return;
       }
 
       if (statsRes.ok) {
         stats = await statsRes.json();
-      } else {
+        console.log('[ADMIN CONSOLE] Stats loaded:', stats);
+      } else if (statsRes.status !== 429) {
+        // Don't show error for rate limit (429) - it's expected
         loadError = `Failed to load stats: HTTP ${statsRes.status}`;
       }
 
+      // Track if we successfully loaded health data
+      let healthLoadedSuccessfully = false;
+      
       if (healthRes.ok) {
         health = await healthRes.json();
-      } else if (!loadError) {
-        loadError = `Failed to load health: HTTP ${healthRes.status}`;
+        healthLoadedSuccessfully = true;
+        console.log('[ADMIN CONSOLE] Health loaded:', health);
+      } else if (healthRes.status === 429) {
+        // Rate limited - preserve existing health status, don't overwrite with unknown
+        // Only set to unknown if we have no health data at all
+        if (!health) {
+          health = { status: 'unknown', service: 'canvas-clay-backend' };
+        }
+        // Don't update overallHealthStatus if rate limited - keep existing value
+      } else {
+        // Actual error (not rate limit)
+        if (!loadError) {
+          loadError = `Failed to load health: HTTP ${healthRes.status}`;
+        }
+        // Only set to unknown on actual errors (not rate limits) if we have no data
+        if (!health) {
+          health = { status: 'unknown', service: 'canvas-clay-backend' };
+        }
       }
 
+      // Only set default if we truly have no health data
       if (!health) {
         health = { status: 'unknown', service: 'canvas-clay-backend' };
       }
 
       // Initialize overall health status from backend health
-      overallHealthStatus = health?.status || 'unknown';
+      // Only update if we successfully loaded health (not rate limited or error)
+      if (healthLoadedSuccessfully) {
+        overallHealthStatus = health?.status || 'unknown';
+      } else if (!overallHealthStatus || overallHealthStatus === 'unknown') {
+        // Only set to unknown if we don't have a previous status and couldn't load
+        overallHealthStatus = health?.status || 'unknown';
+      }
+      // If rate limited/error and we have a previous status, preserve it
 
-      // Start periodic API check on page load to keep overview tab updated
-      startPeriodicApiCheck();
+      // Start periodic API check (but don't call refreshHealthData immediately - we already have health data)
+      // Only start the interval, don't run initial checks
+      if (apiCheckInterval) {
+        clearInterval(apiCheckInterval);
+      }
+      // Set up periodic checks every 60 seconds, but skip the initial call since we already loaded health
+      // Only check health endpoint, not root endpoint (to avoid rate limits)
+      apiCheckInterval = setInterval(() => {
+        if (!isRateLimited) {
+          refreshHealthData();
+          // Only test root endpoint every 5 minutes to avoid rate limits
+          // testApiConnection is called manually via button click
+        }
+      }, 60000);
 
       // Load CLI help
       await loadCLIHelp();
+
+      // Preload users to align role-based artist count in overview
+      await loadUsers();
+      syncArtistCountFromRoles();
+
+      // Preload users to sync role-based artist count in overview
+      await loadUsers();
 
       // Load command history
       const storedHistory = localStorage.getItem('admin_cli_history');
@@ -196,6 +274,12 @@
         } catch {
           commandHistory = [];
         }
+      }
+
+      // Set up page visibility listener to pause/resume API checks
+      if (typeof document !== 'undefined') {
+        isTabVisible = document.visibilityState === 'visible';
+        document.addEventListener('visibilitychange', handleVisibilityChange);
       }
     } catch (err) {
       console.error('Failed to load admin console data:', err);
@@ -297,6 +381,121 @@
     }
   };
 
+  const readStoredAlertReviewState = () => {
+    try {
+      const raw = localStorage.getItem(ALERT_REVIEW_KEY);
+      if (raw) {
+        // Prefer structured state, but fall back to legacy string if needed
+        try {
+          const parsed = JSON.parse(raw);
+          return {
+            reviewedAt: parsed?.reviewedAt || null,
+            reviewedIds: Array.isArray(parsed?.reviewedIds) ? parsed.reviewedIds : []
+          };
+        } catch {
+          // Legacy: stored as ISO string
+          return { reviewedAt: raw, reviewedIds: [] };
+        }
+      }
+      // Legacy key support
+      const legacy = localStorage.getItem(LEGACY_ALERT_REVIEW_KEY);
+      if (legacy) {
+        return { reviewedAt: legacy, reviewedIds: [] };
+      }
+      return { reviewedAt: null, reviewedIds: [] };
+    } catch (err) {
+      console.warn('Unable to read alert review state from storage:', err);
+      return { reviewedAt: null, reviewedIds: [] };
+    }
+  };
+
+  const persistAlertReviewState = (state) => {
+    try {
+      localStorage.setItem(
+        ALERT_REVIEW_KEY,
+        JSON.stringify({
+          reviewedAt: state?.reviewedAt || null,
+          reviewedIds: Array.isArray(state?.reviewedIds) ? state.reviewedIds : []
+        })
+      );
+    } catch (err) {
+      console.warn('Unable to persist alert review state:', err);
+    }
+  };
+
+  const parseTimestamp = (value) => {
+    if (!value) return null;
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value);
+    const normalized = value.replace(/\.(\d{3})\d+/, '.$1'); // trim microseconds to ms
+    const candidate = hasTz ? normalized : `${normalized}Z`; // treat tz-less as UTC
+    const parsed = Date.parse(candidate);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const filterReviewedAlerts = (logs = []) => {
+    const { reviewedAt, reviewedIds } = alertReviewState || {};
+    const reviewedIdSet = new Set(reviewedIds || []);
+    const lastReviewedTs = parseTimestamp(reviewedAt);
+    const hasReviewedMarker = Boolean(reviewedAt);
+
+    return logs.filter((log) => {
+      if (reviewedIdSet.has(log?.id)) return false;
+      if (!lastReviewedTs) {
+        // If we have a review marker string but can't parse it, hide by default
+        if (hasReviewedMarker) return false;
+        return true;
+      }
+
+      const createdTs = parseTimestamp(log?.created_at);
+      // Hide if timestamp is missing/unparseable and we have a review marker (conservative)
+      if (!createdTs) return !hasReviewedMarker;
+      return createdTs > lastReviewedTs;
+    });
+  };
+
+  const loadAlertLogs = async () => {
+    try {
+      // Re-read persisted state in case another tab/window updated it
+      alertReviewState = readStoredAlertReviewState();
+
+      const params = new URLSearchParams();
+      params.set('alerts', 'true');
+      params.set('limit', '10');
+
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/audit-log?${params.toString()}`,
+        {
+          credentials: 'include',
+          headers: { accept: 'application/json' }
+        }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        alertLogs = filterReviewedAlerts(result.audit_logs || []);
+
+        // If everything was already reviewed, keep the reviewed banner visible
+        if (alertLogs.length === 0 && alertReviewState?.reviewedAt) {
+          alertActionsMessage =
+            'Alerts marked as reviewed. New alerts will appear automatically when triggered.';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load alert logs:', err);
+    }
+  };
+
+  const clearAlerts = async () => {
+    const now = new Date().toISOString();
+    // Record both timestamp and the ids we cleared so items without timestamps also stay hidden
+    const reviewedIds = [...new Set(alertLogs.map((log) => log?.id).filter(Boolean))];
+    alertReviewState = { reviewedAt: now, reviewedIds };
+    persistAlertReviewState(alertReviewState);
+    alertLogs = [];
+    alertActionsMessage =
+      'Alerts marked as reviewed. New alerts will appear automatically when triggered.';
+  };
+
   const loadFailedLogins = async (page = 1) => {
     loading.failedLogins = true;
     try {
@@ -325,9 +524,46 @@
     }
   };
 
+  const recomputeRoleCounts = (list = users) => {
+    const summary = {
+      admin: 0,
+      artist: 0,
+      guest: 0,
+      inactive: 0
+    };
+
+    (list || []).forEach((user) => {
+      const roleKey = user.role === 'artist-guest' ? 'artist' : user.role;
+      summary[roleKey] = (summary[roleKey] || 0) + 1;
+      if (!user.is_active) {
+        summary.inactive += 1;
+      }
+    });
+
+    userRoleCounts = summary;
+    syncArtistCountFromRoles();
+  };
+
+  const syncArtistCountFromRoles = () => {
+    if (!stats || !stats.counts) return;
+    const roleCount =
+      (userRoleCounts?.artist || 0) + (userRoleCounts?.['artist-guest'] || 0) ||
+      stats.counts.artist_users ||
+      0;
+    const maxArtists = Math.max(roleCount, stats.counts.artists || 0);
+    stats = {
+      ...stats,
+      counts: { ...stats.counts, artists: maxArtists }
+    };
+  };
+
   const loadUsers = async () => {
     loading.users = true;
+    userActionError = '';
     try {
+      if (!users.length && !loadingArtists) {
+        loadArtists();
+      }
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users`, {
         credentials: 'include',
         headers: { accept: 'application/json' }
@@ -336,11 +572,57 @@
       if (response.ok) {
         const result = await response.json();
         users = result.users || [];
+        const counts = result.role_counts || null;
+        if (counts) {
+          userRoleCounts = {
+            admin: counts.admin || 0,
+            artist: (counts.artist || 0) + (counts['artist-guest'] || 0),
+            guest: counts.guest || 0,
+            inactive: counts.inactive || 0
+          };
+        } else {
+          userRoleCounts = null;
+        }
+        if (!userRoleCounts) {
+          recomputeRoleCounts(users);
+        }
+        syncArtistCountFromRoles();
+      } else {
+        userActionError = `Failed to load users (HTTP ${response.status})`;
       }
     } catch (err) {
       console.error('Failed to load users:', err);
+      userActionError = err?.message || 'Failed to load users';
     } finally {
       loading.users = false;
+    }
+  };
+
+  const loadArtists = async () => {
+    loadingArtists = true;
+    try {
+      let response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/artists`, {
+        credentials: 'include',
+        headers: { accept: 'application/json' }
+      });
+
+      // Fallback to public artists list if admin endpoint fails for any reason
+      if (!response.ok) {
+        response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists`, {
+          headers: { accept: 'application/json' }
+        });
+      }
+
+      if (response.ok) {
+        const result = await response.json();
+        artists = result.artists || [];
+      } else {
+        console.warn('Failed to load artists list (HTTP', response.status, ')');
+      }
+    } catch (err) {
+      console.error('Failed to load artists:', err);
+    } finally {
+      loadingArtists = false;
     }
   };
 
@@ -362,17 +644,379 @@
     }
   };
 
+  const ensureCsrfToken = async () => {
+    let csrf = get(auth)?.csrfToken;
+    if (csrf) return csrf;
+
+    try {
+      const resp = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+        credentials: 'include',
+        headers: { accept: 'application/json' }
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        csrf = data.csrf_token;
+        // Update store token without touching user state
+        auth.init(); // keep auth refreshed; token will be preserved now
+      }
+    } catch (err) {
+      console.error('Failed to fetch CSRF token', err);
+    }
+
+    return csrf;
+  };
+
+  const buildAuthedHeaders = async () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      accept: 'application/json'
+    };
+
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
+
+    return headers;
+  };
+
+  const updateUserInState = (updatedUser) => {
+    if (!updatedUser) return;
+    const idx = users.findIndex((u) => u.id === updatedUser.id);
+    if (idx !== -1) {
+      users = [...users.slice(0, idx), updatedUser, ...users.slice(idx + 1)];
+    } else {
+      users = [updatedUser, ...users];
+    }
+    recomputeRoleCounts(users);
+  };
+
+  const adjustArtistCount = (previousRole, newRole) => {
+    if (!stats || !stats.counts) return;
+
+    const wasArtist = previousRole === 'artist' || previousRole === 'artist-guest';
+    const isArtist = newRole === 'artist' || newRole === 'artist-guest';
+
+    if (isArtist && !wasArtist) {
+      stats = {
+        ...stats,
+        counts: { ...stats.counts, artists: (stats.counts.artists || 0) + 1 }
+      };
+    } else if (!isArtist && wasArtist) {
+      stats = {
+        ...stats,
+        counts: { ...stats.counts, artists: Math.max(0, (stats.counts.artists || 0) - 1) }
+      };
+    }
+    // Keep role-count-derived value in sync
+    syncArtistCountFromRoles();
+  };
+
+  const handleUserActionResponse = async (response, defaultError) => {
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : null;
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const retryMsg = retryAfter ? ` Please retry after ${retryAfter} seconds.` : '';
+      throw new Error(data?.error || `Rate limit exceeded.${retryMsg}`);
+    }
+
+    if (!response.ok) {
+      const debugSuffix = data?.debug
+        ? ` [debug target_role=${data.debug.target_role}, normalized=${data.debug.target_normalized_role}, active=${data.debug.target_active}]`
+        : '';
+      throw new Error(
+        (data?.error || defaultError || `Request failed (HTTP ${response.status})`) + debugSuffix
+      );
+    }
+
+    if (data?.user) {
+      updateUserInState(data.user);
+    }
+
+    return data;
+  };
+
+  const withUserAction = async (userId, action) => {
+    userActionLoading = { ...userActionLoading, [userId]: true };
+    userActionError = '';
+    userActionNotice = '';
+    try {
+      await action();
+    } catch (err) {
+      console.error('User action failed:', err);
+      userActionError = err?.message || 'Action failed. Please try again.';
+    } finally {
+      userActionLoading = { ...userActionLoading, [userId]: false };
+    }
+  };
+
+  const promoteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const prevRole = user.role;
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/promote`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to promote user');
+      const newRole = result?.user?.role || prevRole;
+      adjustArtistCount(prevRole, newRole);
+    });
+
+  const demoteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const prevRole = user.role;
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/demote`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to demote user');
+      const newRole = result?.user?.role || prevRole;
+      adjustArtistCount(prevRole, newRole);
+    });
+
+  const toggleUserActive = async (user) =>
+    withUserAction(user.id, async () => {
+      const prevRole = user.role;
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/toggle-active`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(
+        response,
+        user.is_active ? 'Failed to deactivate user' : 'Failed to reactivate user'
+      );
+      const newRole = result?.user?.role || prevRole;
+      adjustArtistCount(prevRole, newRole);
+    });
+
+  const forceLogoutUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/force-logout`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      await handleUserActionResponse(response, 'Failed to force logout user');
+      userActionNotice = `Forced logout for ${user.email}. Active sessions will be revoked.`;
+    });
+
+  const assignArtistToUser = async () => {
+    if (!assignUserId || !assignArtistId) {
+      userActionError = 'Select both a user and an artist to assign.';
+      return;
+    }
+    const headers = await buildAuthedHeaders();
+    const response = await fetch(
+      `${PUBLIC_API_BASE_URL}/api/admin/artists/${assignArtistId}/assign-user`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ user_id: assignUserId })
+      }
+    );
+    const result = await handleUserActionResponse(response, 'Failed to assign artist');
+    userActionNotice = result?.message || 'Artist assigned successfully';
+    loadUsers();
+    loadArtists();
+  };
+
+  const unassignArtist = async () => {
+    if (!assignArtistId) {
+      userActionError = 'Select an artist to unassign.';
+      return;
+    }
+    const headers = await buildAuthedHeaders();
+    const response = await fetch(
+      `${PUBLIC_API_BASE_URL}/api/admin/artists/${assignArtistId}/unassign-user`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      }
+    );
+    await handleUserActionResponse(response, 'Failed to unassign artist');
+    userActionNotice = 'Artist unassigned successfully';
+    loadUsers();
+    loadArtists();
+  };
+
+  const softDeleteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/soft-delete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to delete user');
+      if (result?.user) {
+        // Treat deleted user as inactive and keep role counts as-is
+        recomputeRoleCounts(users);
+      }
+    });
+
+  const restoreUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/restore`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      });
+      const result = await handleUserActionResponse(response, 'Failed to restore user');
+      if (result?.user) {
+        recomputeRoleCounts(users);
+      }
+    });
+
+  const purgeDeletedUsers = async () => {
+    cleanup.auditMessage = '';
+    cleanup.failedMessage = '';
+    userActionError = '';
+    purgeMessage = '';
+    userActionLoading['__purge__'] = true;
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/users/purge-deleted`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ days: purgeDays })
+      });
+      const data = await handleUserActionResponse(response, 'Failed to purge deleted users');
+      purgeMessage = data?.message || 'Purge complete';
+      userActionNotice = purgeMessage;
+      await loadUsers();
+    } catch (err) {
+      console.error('User purge failed:', err);
+      userActionError = err?.message || 'Failed to purge deleted users';
+    } finally {
+      // Remove placeholder loading flag
+      if (userActionLoading['__purge__']) {
+        const copy = { ...userActionLoading };
+        delete copy['__purge__'];
+        userActionLoading = copy;
+      }
+    }
+  };
+
+  const hardDeleteUser = async (user) =>
+    withUserAction(user.id, async () => {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/users/${user.id}/hard-delete`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers
+        }
+      );
+      const result = await handleUserActionResponse(response, 'Failed to delete user permanently');
+      if (!response.ok) return;
+      // Remove from local list
+      users = users.filter((u) => u.id !== user.id);
+      recomputeRoleCounts(users);
+      userActionNotice = result?.message || 'User permanently deleted';
+    });
+
+  const cleanupAuditLogs = async () => {
+    cleanup.auditMessage = '';
+    cleanup.auditLoading = true;
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/audit-log/cleanup`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ days: cleanup.auditDays })
+      });
+      const data = await handleUserActionResponse(response, 'Failed to cleanup audit logs');
+      cleanup.auditMessage = data?.message || 'Cleanup complete';
+      // Refresh audit logs
+      loadAuditLogs(auditLogPage, auditLogEventType);
+    } catch (err) {
+      console.error('Audit log cleanup failed:', err);
+      userActionError = err?.message || 'Failed to cleanup audit logs';
+    } finally {
+      cleanup.auditLoading = false;
+    }
+  };
+
+  const cleanupFailedLogins = async () => {
+    cleanup.failedMessage = '';
+    cleanup.failedLoading = true;
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/failed-logins/cleanup`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ days: cleanup.failedDays })
+      });
+      const data = await handleUserActionResponse(response, 'Failed to cleanup failed logins');
+      cleanup.failedMessage = data?.message || 'Cleanup complete';
+      // Refresh failed login list
+      loadFailedLogins(failedLoginsPage);
+    } catch (err) {
+      console.error('Failed login cleanup failed:', err);
+      userActionError = err?.message || 'Failed to cleanup failed logins';
+    } finally {
+      cleanup.failedLoading = false;
+    }
+  };
+
   const handleTabChange = (tab) => {
+    const previousTab = activeTab;
     activeTab = tab;
     
-    // Keep API checks running regardless of tab (for overview health badge)
-    // Don't stop/start based on tab anymore
+    // Stop API checks when leaving Overview tab, restart when returning
+    if (previousTab === 'overview' && tab !== 'overview') {
+      // Leaving Overview - stop API checks to free resources
+      stopPeriodicApiCheck();
+      // Stop time update interval
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
+    } else if (previousTab !== 'overview' && tab === 'overview') {
+      // Returning to Overview - restart API checks with immediate refresh
+      startPeriodicApiCheck();
+      // Restart time update interval if we have a lastApiCheck
+      if (lastApiCheck && !timeUpdateInterval && isTabVisible) {
+        timeUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible' && activeTab === 'overview') {
+            currentTime = new Date();
+          }
+        }, 1000);
+      }
+    }
     
-    if (tab === 'security' && auditLogs.length === 0) {
-      loadAuditLogs();
-      loadFailedLogins();
-    } else if (tab === 'users' && users.length === 0) {
+    if (tab === 'security') {
+      if (auditLogs.length === 0) {
+        loadAuditLogs();
+      }
+      if (failedLogins.length === 0) {
+        loadFailedLogins();
+      }
+      loadAlertLogs();
+      startAlertPolling();
+    } else {
+      stopAlertPolling();
+    }
+
+    if (tab === 'users' && users.length === 0) {
       loadUsers();
+      loadArtists();
     } else if (tab === 'database' && !databaseInfo) {
       loadDatabaseInfo();
     } else if (tab === 'cli') {
@@ -386,10 +1030,14 @@
         }
       }, 100);
     }
-    // API checks run continuously, no need to start/stop per tab
   };
 
   const testApiConnection = async () => {
+    // Skip if we're rate limited
+    if (isRateLimited) {
+      return;
+    }
+
     apiTestLoading = true;
     // Don't reset apiTestResult to null - keep previous result until new one is ready
     // This prevents the health badge from flickering back to healthy
@@ -402,9 +1050,15 @@
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const retryMsg = retryAfter ? ` Please wait ${retryAfter} seconds.` : '';
+        const retrySeconds = retryAfter ? parseInt(retryAfter, 10) : 60;
         const checkTime = new Date();
         lastApiCheck = checkTime;
         currentTime = checkTime;
+        
+        // Set rate limit flag
+        isRateLimited = true;
+        rateLimitRetryAfter = retrySeconds;
+        
         apiTestResult = {
           success: false,
           message: `Rate limit exceeded. Too many requests.${retryMsg}`
@@ -414,6 +1068,14 @@
         if (activeTab === 'cli') {
           addCLIOutput(`Rate limit warning: API health check rate limited.${retryMsg}`, 'warning');
         }
+        
+        // Auto-reset after retry period
+        setTimeout(() => {
+          isRateLimited = false;
+          rateLimitRetryAfter = null;
+        }, retrySeconds * 1000);
+        
+        apiTestLoading = false;
         return;
       }
       
@@ -433,6 +1095,9 @@
         apiTestResult = { ...apiTestResult };
         // Update overall health status directly
         overallHealthStatus = health?.status || 'unknown';
+        // Reset rate limit flag on success
+        isRateLimited = false;
+        rateLimitRetryAfter = null;
       } else {
         apiTestResult = {
           success: false,
@@ -473,7 +1138,25 @@
     }
   };
 
+  let isRateLimited = false;
+  let rateLimitRetryAfter = null;
+
   const refreshHealthData = async () => {
+    // Skip if we're rate limited or not authenticated
+    if (isRateLimited) {
+      return;
+    }
+
+    // Don't make requests if not authenticated
+    if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
+      // Stop the interval if we're not authenticated
+      if (apiCheckInterval) {
+        clearInterval(apiCheckInterval);
+        apiCheckInterval = null;
+      }
+      return;
+    }
+
     try {
       const healthRes = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/health`, {
         credentials: 'include',
@@ -488,9 +1171,32 @@
         if (apiTestResult && apiTestResult.success) {
           overallHealthStatus = health?.status || 'unknown';
         }
+        // Reset rate limit flag on success
+        isRateLimited = false;
+        rateLimitRetryAfter = null;
+      } else if (healthRes.status === 401) {
+        // Session expired - stop interval and clear auth
+        if (apiCheckInterval) {
+          clearInterval(apiCheckInterval);
+          apiCheckInterval = null;
+        }
+        auth.clear();
+        goto('/login');
+      } else if (healthRes.status === 429) {
+        // Handle rate limiting
+        isRateLimited = true;
+        const retryAfter = healthRes.headers.get('Retry-After');
+        rateLimitRetryAfter = retryAfter ? parseInt(retryAfter, 10) : 60;
+        console.warn(`Rate limited on health check. Retry after ${rateLimitRetryAfter} seconds`);
+        // Auto-reset after retry period
+        setTimeout(() => {
+          isRateLimited = false;
+          rateLimitRetryAfter = null;
+        }, rateLimitRetryAfter * 1000);
       }
     } catch (err) {
       console.error('Failed to refresh health data:', err);
+      // Don't redirect on errors - just log
     }
   };
 
@@ -498,23 +1204,69 @@
     // Clear existing interval if any
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
+      apiCheckInterval = null;
     }
     
-    // Run initial check
-    testApiConnection();
-    refreshHealthData();
-    
-    // Set up periodic checks every 30 seconds
+    // Set up periodic checks every 60 seconds (reduced frequency to avoid rate limits)
+    // Only check health endpoint, not root endpoint (to avoid rate limits)
+    // testApiConnection is called manually via button click
     apiCheckInterval = setInterval(() => {
-      testApiConnection();
-      refreshHealthData();
-    }, 30000);
+      if (!isRateLimited) {
+        refreshHealthData();
+      }
+    }, 60000);
   };
 
   const stopPeriodicApiCheck = () => {
     if (apiCheckInterval) {
       clearInterval(apiCheckInterval);
       apiCheckInterval = null;
+    }
+  };
+
+  const startAlertPolling = () => {
+    stopAlertPolling();
+    alertPollInterval = setInterval(() => {
+      loadAlertLogs();
+    }, 10000);
+  };
+
+  const stopAlertPolling = () => {
+    if (alertPollInterval) {
+      clearInterval(alertPollInterval);
+      alertPollInterval = null;
+    }
+  };
+
+  // Handle page visibility changes (pause/resume when browser tab is hidden/shown)
+  const handleVisibilityChange = () => {
+    const wasVisible = isTabVisible;
+    isTabVisible = document.visibilityState === 'visible';
+    
+    // Only manage API checks if Overview tab is active
+    if (activeTab !== 'overview') {
+      return;
+    }
+    
+    if (!wasVisible && isTabVisible) {
+      // Browser tab became visible - restart periodic checks and time updates
+      // Run immediate check to get fresh data
+      startPeriodicApiCheck();
+      // Restart time update interval if we have a lastApiCheck
+      if (lastApiCheck && !timeUpdateInterval) {
+        timeUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible' && activeTab === 'overview') {
+            currentTime = new Date();
+          }
+        }, 1000);
+      }
+    } else if (wasVisible && !isTabVisible) {
+      // Browser tab became hidden - stop periodic checks and time updates to free resources
+      stopPeriodicApiCheck();
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
     }
   };
 
@@ -573,8 +1325,11 @@
     commandInput = '';
     historyIndex = commandHistory.length;
 
+    // when user executes a command, force scroll to show it
+    shouldAutoScroll = true;
+
     // Add command to output
-    addCLIOutput(`> ${command}`, 'command');
+    addCLIOutput(`> ${command}`, 'command', true);
 
     // Auto-focus input after clearing (like a real CLI)
     setTimeout(() => {
@@ -742,9 +1497,9 @@
         }
       }
       
-      // Force scroll to bottom after all output is added
+      // Auto-scroll to bottom after command execution only if user is at bottom
       setTimeout(() => {
-        if (cliOutputElement) {
+        if (cliOutputElement && shouldAutoScroll) {
           cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
         }
         // Auto-focus input after command execution (like a real CLI)
@@ -766,7 +1521,7 @@
     }
   };
 
-  const addCLIOutput = (text, type = 'info') => {
+  const addCLIOutput = (text, type = 'info', forceScroll = false) => {
     cliOutput = [...cliOutput, {
       text,
       type,
@@ -776,22 +1531,18 @@
     if (cliOutput.length > 1000) {
       cliOutput = cliOutput.slice(-1000);
     }
-    // Auto-scroll to bottom after output is added (multiple attempts to ensure it works)
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 0);
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 10);
-    setTimeout(() => {
-      if (cliOutputElement) {
-        cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
-      }
-    }, 50);
+    // Save to localStorage for persistence
+    saveCLIOutput();
+    // Auto-scroll to bottom only if user is at bottom (or forced)
+    if (forceScroll || shouldAutoScroll) {
+      setTimeout(() => {
+        if (cliOutputElement) {
+          cliOutputElement.scrollTop = cliOutputElement.scrollHeight;
+          // update shouldAutoScroll after scrolling
+          shouldAutoScroll = isAtBottom();
+        }
+      }, 0);
+    }
   };
 
   const formatCLIData = (data) => {
@@ -831,6 +1582,9 @@
 
   const clearCLIOutput = () => {
     cliOutput = [];
+    shouldAutoScroll = true; // reset to auto-scroll after clear
+    // Clear from localStorage as well
+    localStorage.removeItem('admin_cli_output');
   };
 
   const toggleWriteMode = (e) => {
@@ -876,18 +1630,21 @@
   // Explicitly reference currentTime to ensure reactivity
   $: timeAgoDisplay = lastApiCheck && currentTime ? formatTimeAgo(lastApiCheck) : 'Never';
   
-  // Update time display continuously when we have a lastApiCheck
-  $: if (lastApiCheck) {
+  // Update time display continuously when we have a lastApiCheck, tab is visible, and Overview tab is active
+  $: if (lastApiCheck && isTabVisible && activeTab === 'overview') {
     // Clear existing interval
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
     }
     // Start new interval to update time display
     timeUpdateInterval = setInterval(() => {
-      currentTime = new Date();
+      // Only update if tab is still visible and Overview is active
+      if (document.visibilityState === 'visible' && activeTab === 'overview') {
+        currentTime = new Date();
+      }
     }, 1000);
   } else {
-    // Clear interval when no lastApiCheck
+    // Clear interval when no lastApiCheck, tab is hidden, or not on Overview tab
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
       timeUpdateInterval = null;
@@ -897,8 +1654,18 @@
   // Cleanup intervals on component destroy
   onDestroy(() => {
     stopPeriodicApiCheck();
+    stopAlertPolling();
     if (timeUpdateInterval) {
       clearInterval(timeUpdateInterval);
+      timeUpdateInterval = null;
+    }
+    if (apiCheckInterval) {
+      clearInterval(apiCheckInterval);
+      apiCheckInterval = null;
+    }
+    // Remove visibility change listener
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     }
   });
 </script>
@@ -908,7 +1675,7 @@
 
   {#if isLoading}
     <div class="loading">Loading console data...</div>
-  {:else if loadError}
+  {:else if loadError && (!stats && !health)}
     <div class="error-message">
       {loadError}
       {#if loadError === 'Access denied: Admin role required' || loadError === 'Authentication required'}
@@ -917,7 +1684,7 @@
         </div>
       {/if}
     </div>
-  {:else if !stats}
+  {:else if !stats && !health}
     <div class="loading">Failed to load data</div>
   {:else}
 
@@ -992,9 +1759,12 @@
             </div>
           {/if}
           
-          <div class="periodic-check-info">
-            <p>Automatic health checks run every 30 seconds while this tab is open.</p>
-          </div>
+            <div class="periodic-check-info">
+              <p>Automatic health checks run every 60 seconds while this tab is open.</p>
+              {#if isRateLimited && rateLimitRetryAfter}
+                <p class="rate-limit-warning">Rate limited. Health checks paused for {rateLimitRetryAfter} seconds.</p>
+              {/if}
+            </div>
         </div>
 
         <div class="info-section">
@@ -1036,6 +1806,56 @@
     {:else if activeTab === 'security'}
       <div class="security">
         <h2>Audit Logs</h2>
+        {#if alertLogs.length > 0}
+          <div class="inline-info alert-box">
+            <div class="alert-header">
+              <strong>Security alerts</strong>
+              <span class="alert-subtext">Recent spikes and role changes</span>
+            </div>
+            <div class="alert-grid">
+              {#each alertLogs as log}
+                <div class="alert-row">
+                  <div class="alert-row-main">
+                    <span class="pill pill-alert">{log.event_type}</span>
+                    <span class="alert-meta">{formatDate(log.created_at)}</span>
+                  </div>
+                  {#if log.details}
+                    <div class="alert-details">{log.details}</div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <div class="alert-actions">
+              <div class="alert-action-list">
+                <div><strong>Recommended actions:</strong></div>
+                <ul>
+                  <li>Lock or reset accounts involved in unexpected promotions/demotions.</li>
+                  <li>Review recent audit logs for suspicious activity.</li>
+                  <li>Force logout active sessions if abuse is suspected.</li>
+                  <li>Consider temporarily restricting role changes or uploads.</li>
+                </ul>
+              </div>
+              <div class="alert-buttons">
+                <button class="secondary" on:click={() => loadAlertLogs()}>Refresh alerts</button>
+                <button class="secondary" on:click={clearAlerts}>Mark as reviewed</button>
+              </div>
+              {#if alertActionsMessage}
+                <div class="inline-info small">{alertActionsMessage}</div>
+              {/if}
+            </div>
+          </div>
+        {:else if alertReviewState?.reviewedAt}
+          <div class="inline-info alert-box">
+            <div class="alert-header">
+              <strong>Alerts marked as reviewed.</strong>
+              <span class="alert-subtext">New alerts will appear automatically when triggered.</span>
+            </div>
+            <div class="inline-info small">
+              {alertActionsMessage ||
+                'Alerts marked as reviewed. New alerts will appear automatically when triggered.'}
+            </div>
+          </div>
+        {/if}
         <div class="filters">
           <input
             type="text"
@@ -1044,6 +1864,29 @@
             on:keydown={(e) => e.key === 'Enter' && handleAuditLogFilter()}
           />
           <button on:click={handleAuditLogFilter}>Filter</button>
+        </div>
+        <div class="cleanup-card">
+          <div class="cleanup-row">
+            <label for="audit-cleanup-days">Delete audit logs older than</label>
+            <input
+              id="audit-cleanup-days"
+              type="number"
+              min="0"
+              bind:value={cleanup.auditDays}
+              aria-label="Audit log retention days"
+            />
+            <span>days (0 = delete all)</span>
+            <button
+              class="secondary"
+              on:click={cleanupAuditLogs}
+              disabled={cleanup.auditLoading}
+            >
+              {cleanup.auditLoading ? 'Cleaning...' : 'Cleanup'}
+            </button>
+          </div>
+          {#if cleanup.auditMessage}
+            <div class="inline-info small">{cleanup.auditMessage}</div>
+          {/if}
         </div>
         {#if loading.auditLog}
           <div>Loading...</div>
@@ -1090,6 +1933,50 @@
         {/if}
 
         <h2>Failed Login Attempts</h2>
+          <div class="cleanup-card">
+            <div class="cleanup-row">
+              <label for="failed-cleanup-days">Delete failed logins older than</label>
+              <input
+                id="failed-cleanup-days"
+              type="number"
+              min="0"
+              bind:value={cleanup.failedDays}
+              aria-label="Failed login retention days"
+            />
+            <span>days (0 = delete all)</span>
+            <button
+              class="secondary"
+              on:click={cleanupFailedLogins}
+              disabled={cleanup.failedLoading}
+            >
+              {cleanup.failedLoading ? 'Cleaning...' : 'Cleanup'}
+            </button>
+            </div>
+            {#if cleanup.failedMessage}
+              <div class="inline-info small">{cleanup.failedMessage}</div>
+            {/if}
+          </div>
+          <div class="purge-card">
+            <label for="purge-days">Permanently delete users soft-deleted more than</label>
+            <input
+              id="purge-days"
+              type="number"
+              min="0"
+              bind:value={purgeDays}
+              aria-label="Purge deleted users older than days"
+            />
+            <span>days (0 = delete all soft-deleted)</span>
+            <button
+              class="secondary"
+              disabled={userActionLoading['__purge__']}
+              on:click={purgeDeletedUsers}
+            >
+              {userActionLoading['__purge__'] ? 'Purging...' : 'Purge deleted users'}
+            </button>
+          </div>
+          {#if purgeMessage}
+            <div class="inline-info small">{purgeMessage}</div>
+          {/if}
         {#if loading.failedLogins}
           <div>Loading...</div>
         {:else}
@@ -1135,6 +2022,25 @@
     {:else if activeTab === 'users'}
       <div class="users">
         <h2>Users</h2>
+        {#if userRoleCounts}
+          <div class="user-summary">
+            <span><strong>Admins:</strong> {userRoleCounts.admin || 0}</span>
+            <span><strong>Artists:</strong> {userRoleCounts.artist || 0}</span>
+            <span><strong>Guests:</strong> {userRoleCounts.guest || 0}</span>
+            <span><strong>Inactive:</strong> {userRoleCounts.inactive || 0}</span>
+          </div>
+        {/if}
+        {#if users.find((u) => u.is_bootstrap_admin)}
+          <div class="inline-info">
+            The bootstrap admin account cannot be promoted, demoted, or deactivated. Keep it as a recovery account.
+          </div>
+        {/if}
+        {#if userActionError}
+          <div class="inline-error">{userActionError}</div>
+        {/if}
+        {#if userActionNotice}
+          <div class="inline-info small">{userActionNotice}</div>
+        {/if}
         {#if loading.users}
           <div>Loading...</div>
         {:else}
@@ -1144,25 +2050,177 @@
                 <th>ID</th>
                 <th>Email</th>
                 <th>Role</th>
-                <th>Active</th>
+                <th>Status</th>
                 <th>Created At</th>
                 <th>Last Login</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {#each users as user}
                 <tr>
                   <td>{user.id}</td>
-                  <td>{user.email}</td>
-                  <td>{user.role}</td>
-                  <td>{user.is_active ? 'Yes' : 'No'}</td>
+                  <td>
+                    <div class="user-email">{user.email}</div>
+                    {#if !user.is_active}
+                      <span class="pill pill-muted">Inactive</span>
+                    {/if}
+                    {#if user.is_bootstrap_admin}
+                      <span class="pill pill-warning">Bootstrap admin</span>
+                    {/if}
+                    {#if user.deleted_at}
+                      <span class="pill pill-danger">Pending deletion</span>
+                    {/if}
+                  </td>
+                  <td><span class={`pill pill-${user.role?.replace(' ', '-')}`}>{user.role}</span></td>
+                  <td>
+                    {#if user.deleted_at}
+                      Pending deletion
+                    {:else}
+                      {user.is_active ? 'Active' : 'Inactive'}
+                    {/if}
+                  </td>
                   <td>{formatDate(user.created_at)}</td>
                   <td>{formatDate(user.last_login)}</td>
+                  <td>
+                    <div class="user-actions">
+                      <button
+                        class="secondary"
+                        disabled={
+                          user.role === 'guest' ||
+                          userActionLoading[user.id] ||
+                          $auth.user?.id === user.id ||
+                          user.is_bootstrap_admin
+                        }
+                        on:click={() => demoteUser(user)}
+                        aria-label={`Demote ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Demote'}
+                      </button>
+                      <button
+                        class="secondary"
+                        disabled={user.role === 'admin' || userActionLoading[user.id]}
+                        on:click={() => promoteUser(user)}
+                        aria-label={`Promote ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Promote'}
+                      </button>
+                      <button
+                        class={user.is_active ? 'danger' : 'secondary'}
+                        disabled={
+                          userActionLoading[user.id] ||
+                          $auth.user?.id === user.id ||
+                          user.is_bootstrap_admin ||
+                          user.deleted_at
+                        }
+                        on:click={() => toggleUserActive(user)}
+                        aria-label={`${user.is_active ? 'Deactivate' : 'Reactivate'} ${user.email}`}
+                      >
+                        {#if userActionLoading[user.id]}
+                          Working...
+                        {:else}
+                          {user.is_active ? 'Deactivate' : 'Reactivate'}
+                        {/if}
+                      </button>
+                      <button
+                        class="secondary"
+                        disabled={
+                          userActionLoading[user.id] ||
+                          $auth.user?.id === user.id ||
+                          user.is_bootstrap_admin ||
+                          user.deleted_at
+                        }
+                        on:click={() => forceLogoutUser(user)}
+                        aria-label={`Force logout ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Force logout'}
+                      </button>
+                      <button
+                        class="secondary"
+                        disabled={
+                          userActionLoading[user.id] ||
+                          user.is_bootstrap_admin ||
+                          user.deleted_at
+                        }
+                        on:click={() => softDeleteUser(user)}
+                        aria-label={`Soft delete ${user.email}`}
+                      >
+                        {userActionLoading[user.id] ? 'Working...' : 'Delete'}
+                      </button>
+                      {#if user.deleted_at}
+                        <button
+                          class="secondary"
+                          disabled={userActionLoading[user.id]}
+                          on:click={() => restoreUser(user)}
+                          aria-label={`Restore ${user.email}`}
+                        >
+                          {userActionLoading[user.id] ? 'Working...' : 'Restore'}
+                        </button>
+                        <button
+                          class="danger"
+                          disabled={
+                            userActionLoading[user.id] ||
+                            user.is_bootstrap_admin ||
+                            $auth.user?.id === user.id
+                          }
+                          on:click={() => hardDeleteUser(user)}
+                          aria-label={`Permanently delete ${user.email}`}
+                        >
+                          {userActionLoading[user.id] ? 'Working...' : 'Delete permanently'}
+                        </button>
+                      {/if}
+                    </div>
+                  </td>
                 </tr>
               {/each}
             </tbody>
           </table>
         {/if}
+
+        <div class="artist-assignments">
+          <div class="artist-assignments-header">
+            <h3>Artist Assignments</h3>
+            <p class="artist-assignments-description">Manage which artist profiles are linked to user accounts.</p>
+          </div>
+          {#if loadingArtists}
+            <div class="loading-state">Loading artists...</div>
+          {:else}
+            <div class="assign-form">
+              <div class="form-field">
+                <label for="assign-user-select">User</label>
+                <div class="select-wrapper">
+                  <select id="assign-user-select" bind:value={assignUserId} class="form-select">
+                    <option value="">Select user</option>
+                    {#each users as u}
+                      <option value={u.id}>{u.email} ({u.role})</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+              <div class="form-field">
+                <label for="assign-artist-select">Artist</label>
+                <div class="select-wrapper">
+                  <select id="assign-artist-select" bind:value={assignArtistId} class="form-select">
+                    <option value="">Select artist</option>
+                    {#each artists as artist}
+                      <option value={artist.id}>
+                        {artist.id} — {artist.name}{artist.user_email ? ` (linked to ${artist.user_email})` : ' (unassigned)'}
+                      </option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+              <div class="assign-actions">
+                <button class="assign-button primary" on:click={assignArtistToUser} disabled={!assignUserId || !assignArtistId}>
+                  Assign
+                </button>
+                <button class="assign-button secondary" on:click={unassignArtist} disabled={!assignArtistId}>
+                  Unassign
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
     {:else if activeTab === 'database'}
       <div class="database">
@@ -1266,7 +2324,7 @@
           </div>
         {/if}
 
-        <div class="cli-output" bind:this={cliOutputElement}>
+        <div class="cli-output" bind:this={cliOutputElement} on:scroll={handleCLIScroll}>
           {#each cliOutput as output}
             <div class="output-line" class:command={output.type === 'command'} class:success={output.type === 'success'} class:error={output.type === 'error'} class:warning={output.type === 'warning'} class:data={output.type === 'data'}>
               {#if output.type === 'command'}
@@ -1491,6 +2549,13 @@
     font-style: italic;
   }
 
+  .rate-limit-warning {
+    color: #f59e0b;
+    font-weight: 500;
+    margin-top: 0.5rem;
+    font-style: normal;
+  }
+
   .filters {
     display: flex;
     gap: 0.5rem;
@@ -1538,6 +2603,242 @@
 
   tr:hover {
     background: var(--bg-secondary);
+  }
+
+  .user-summary {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0.5rem 0 1rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+  }
+
+  .inline-error {
+    background: rgba(211, 47, 47, 0.1);
+    border: 1px solid var(--error-color);
+    color: var(--error-color);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+  }
+
+  .inline-info {
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.35);
+    color: var(--text-primary);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+
+  .inline-info.small {
+    margin-top: 0.35rem;
+    margin-bottom: 0;
+    font-size: 0.9rem;
+  }
+
+  .alert-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .alert-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .alert-subtext {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  .alert-grid {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .alert-type {
+    font-weight: 600;
+    margin-right: 0.5rem;
+    color: var(--accent-color);
+  }
+
+  .alert-meta {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-right: 0.5rem;
+  }
+
+  .alert-details {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    word-break: break-word;
+  }
+
+  .alert-row {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .alert-row-main {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .alert-actions {
+    margin-top: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .alert-action-list ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.2rem;
+    color: var(--text-secondary);
+  }
+
+  .alert-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .purge-card {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .purge-card input[type='number'] {
+    width: 90px;
+    padding: 0.4rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+  }
+
+  .user-email {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    text-transform: capitalize;
+  }
+
+  .pill-admin {
+    background: rgba(16, 185, 129, 0.15);
+    color: #0f9d58;
+    border-color: rgba(16, 185, 129, 0.4);
+  }
+
+  .pill-artist,
+  .pill-artist-guest {
+    background: rgba(59, 130, 246, 0.12);
+    color: #2563eb;
+    border-color: rgba(59, 130, 246, 0.35);
+  }
+
+  .pill-guest,
+  .pill-visitor {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+  }
+
+  .pill-warning {
+    background: rgba(245, 158, 11, 0.16);
+    color: #b45309;
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+
+  .cleanup-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .cleanup-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .cleanup-row input[type='number'] {
+    width: 90px;
+    padding: 0.4rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+  }
+
+  .pill-muted {
+    background: rgba(107, 114, 128, 0.15);
+    color: var(--text-secondary);
+    border-color: rgba(107, 114, 128, 0.4);
+  }
+
+  .user-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .user-actions button {
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .user-actions button.secondary {
+    background: var(--bg-tertiary);
+  }
+
+  .user-actions button.danger {
+    background: #b91c1c;
+    color: white;
+    border-color: #991b1b;
+  }
+
+  .user-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   .pagination {
@@ -1860,5 +3161,190 @@
     background: transparent;
     color: inherit;
   }
-</style>
 
+  /* Artist Assignments Section - Google-like Design */
+  .artist-assignments {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+  }
+
+  .artist-assignments-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .artist-assignments-header h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    letter-spacing: -0.25px;
+  }
+
+  .artist-assignments-description {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .loading-state {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
+
+  .assign-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-field label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+  }
+
+  .select-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .form-select {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    padding-right: 2.5rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 12px;
+  }
+
+  :root[data-theme='light'] .form-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  }
+
+  .form-select:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.1);
+  }
+
+  .form-select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+  }
+
+  .form-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: var(--bg-tertiary);
+  }
+
+  .form-select option {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 0.5rem;
+  }
+
+  .assign-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .assign-button {
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    font-family: inherit;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .assign-button.primary {
+    background: var(--accent-color);
+    color: white;
+  }
+
+  .assign-button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  .assign-button.primary:active:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .assign-button.secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+  }
+
+  .assign-button.secondary:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .assign-button.secondary:active:not(:disabled) {
+    background: var(--bg-tertiary);
+  }
+
+  .assign-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .assign-button.primary:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+  }
+
+  .assign-button.secondary:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    border-color: var(--border-color);
+  }
+
+  @media (max-width: 600px) {
+    .artist-assignments {
+      padding: 1rem;
+    }
+
+    .assign-actions {
+      flex-direction: column;
+    }
+
+    .assign-button {
+      width: 100%;
+    }
+  }
+</style>

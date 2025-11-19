@@ -1,6 +1,8 @@
 """Authentication blueprint for user registration, login, and logout."""
+import os
 import re
 import json as json_lib
+import secrets
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
@@ -10,6 +12,7 @@ from functools import wraps
 
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
 
 
 def get_dependencies():
@@ -40,6 +43,103 @@ def admin_required(f):
             return jsonify({'error': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated_function
+
+
+def get_current_role():
+    """Get the current user's normalized role.
+
+    Returns:
+        str: 'admin', 'guest', or 'anonymous'
+    """
+    try:
+        if current_user.is_authenticated:
+            return current_user.normalized_role
+        else:
+            return 'anonymous'
+    except Exception:
+        return 'anonymous'
+
+
+def is_artwork_owner(artwork):
+    """Check if the current user owns the given artwork via Artist.user_id.
+
+    Args:
+        artwork: Artwork object to check ownership of
+
+    Returns:
+        bool: True if current user owns the artwork, False otherwise
+    """
+    if not current_user.is_authenticated:
+        return False
+
+    try:
+        # Get the artist associated with this artwork
+        from app import db, Artist
+        artist = db.session.get(Artist, artwork.artist_id)
+
+        if not artist:
+            return False
+
+        # Check if artist is linked to current user
+        if artist.user_id and artist.user_id == current_user.id:
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+def log_rbac_denial(resource_type, resource_id, reason):
+    """Log RBAC denial for audit trail with differentiated reasons.
+
+    Args:
+        resource_type: Type of resource (e.g., 'artwork', 'photo')
+        resource_id: ID of the resource
+        reason: Reason for denial ('insufficient_role' or 'not_owner')
+    """
+    log_audit_event('rbac_denied',
+                    user_id=current_user.id if current_user.is_authenticated else None,
+                    email=current_user.email if current_user.is_authenticated else None,
+                    details={
+                        'resource_type': resource_type,
+                        'resource_id': str(resource_id),
+                        'reason': reason,
+                        'user_role': get_current_role()
+                    })
+
+
+def is_photo_owner(photo):
+    """Check if current user owns the photo via artwork ownership.
+
+    Ownership is determined by:
+    1. If photo is orphaned (no artwork_num), only admins can modify
+    2. If photo belongs to artwork, check if user owns that artwork
+
+    Args:
+        photo: ArtworkPhoto object to check ownership of
+
+    Returns:
+        bool: True if current user owns the photo's artwork, False otherwise
+    """
+    if not current_user.is_authenticated:
+        return False
+
+    try:
+        # Orphaned photos can only be managed by admins
+        if photo.artwork_num is None:
+            return False
+
+        # Get the artwork this photo belongs to
+        from app import db, Artwork
+        artwork = db.session.get(Artwork, photo.artwork_num)
+
+        if not artwork:
+            return False
+
+        # Check if user owns the artwork
+        return is_artwork_owner(artwork)
+    except Exception:
+        return False
 
 
 @auth_bp.route('/csrf-token', methods=['GET'])
@@ -120,12 +220,44 @@ def validate_password(password):
     return True, None
 
 
+def is_common_password(password):
+    """Check against a bundled common password list.
+
+    Returns True if the password is in the blocklist.
+    """
+    try:
+        blocklist_path = os.path.join(os.path.dirname(__file__), 'common_passwords.txt')
+        if not os.path.exists(blocklist_path):
+            return False
+        password_lower = password.strip().lower()
+        with open(blocklist_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if password_lower == line.strip().lower():
+                    return True
+    except Exception:
+        # Fail open if blocklist can't be read
+        return False
+    return False
+
+
+def is_user_deleted(user):
+    """Return True if user has been soft-deleted."""
+    return bool(getattr(user, 'deleted_at', None))
+
+
+def is_bootstrap_email(email: str) -> bool:
+    try:
+        return email and email.lower().strip() == BOOTSTRAP_ADMIN_EMAIL
+    except Exception:
+        return False
+
+
 @auth_bp.route('/register', methods=['POST'])
 @rate_limit("3 per minute")
 def register():
     """Register a new user account.
-    
-    security: all new user registrations are forced to 'visitor' role.
+
+    security: all new user registrations are forced to 'guest' role.
     admin role must be granted through admin promotion endpoint.
     
     Expected JSON body:
@@ -151,8 +283,8 @@ def register():
     password = data.get('password', '')
     
     # security fix: ignore any client-supplied role parameter
-    # all new users are forced to 'visitor' role to prevent privilege escalation
-    role = 'visitor'
+    # all new users are forced to 'guest' role to prevent privilege escalation
+    role = 'guest'
     
     # Validate email
     if not email:
@@ -171,6 +303,11 @@ def register():
     is_valid, error_msg = validate_password(password)
     if not is_valid:
         return jsonify({'error': error_msg}), 400
+
+    # Block common passwords
+    if is_common_password(password):
+        log_audit_event('alert_common_password_blocked', email=email, details={'reason': 'common_password'})
+        return jsonify({'error': 'Password is too common. Please choose a stronger password.'}), 400
     
     # Hash password and create user
     hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
@@ -191,7 +328,7 @@ def register():
             'user': {
                 'id': new_user.id,
                 'email': new_user.email,
-                'role': new_user.role,
+                'role': new_user.normalized_role,
                 'created_at': new_user.created_at.isoformat()
             }
         }), 201
@@ -283,8 +420,58 @@ def record_failed_login(email):
     try:
         db.session.add(failed_attempt)
         db.session.commit()
+        _maybe_alert_failed_login_spike(email)
     except Exception:
         db.session.rollback()
+
+
+def _maybe_alert_failed_login_spike(email):
+    """Log a warning if failed logins spike for a single email or IP in a short window.
+
+    Threshold: >= 3 failures in the last 10 minutes by email or IP.
+    """
+    from models import init_models
+    FailedLoginAttempt = init_models(get_dependencies()[0])[1]
+
+    if not request:
+        return
+
+    window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+    ip = get_remote_address()
+
+    email_failures = FailedLoginAttempt.query.filter(
+        FailedLoginAttempt.email == email,
+        FailedLoginAttempt.attempted_at >= window_start
+    ).count()
+
+    ip_failures = FailedLoginAttempt.query.filter(
+        FailedLoginAttempt.ip_address == ip,
+        FailedLoginAttempt.attempted_at >= window_start
+    ).count()
+
+    if email_failures >= 3 or ip_failures >= 3:
+        log_audit_event(
+            'alert_failed_login_spike',
+            email=email,
+            details={
+                'email_failures_last_10m': email_failures,
+                'ip_failures_last_10m': ip_failures,
+                'ip_address': ip
+            }
+        )
+        try:
+            from app import app as flask_app
+            flask_app.logger.warning(
+                "Security alert: failed login spike", 
+                extra={
+                    'email': email,
+                    'ip': ip,
+                    'email_failures_last_10m': email_failures,
+                    'ip_failures_last_10m': ip_failures
+                }
+            )
+        except Exception:
+            pass
 
 
 def clear_failed_login_attempts(email):
@@ -303,12 +490,12 @@ def clear_failed_login_attempts(email):
 
 
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit("5 per 15 minutes")
+@rate_limit("20 per 15 minutes")  # Increased for development/testing
 def login():
     """Login with email and password.
     
     security features:
-    - rate limiting: 5 attempts per 15 minutes per IP address (applied via decorator)
+    - rate limiting: 20 attempts per 15 minutes per IP address (applied via decorator)
     - account lockout: 5 failed attempts per email = 15 minute lockout
     - audit logging: all login attempts (success and failure) are logged
     
@@ -353,7 +540,11 @@ def login():
     # check account lockout (check before user lookup to prevent user enumeration)
     is_locked, lockout_expires_at = check_account_locked(email)
     if is_locked:
-        remaining_time = (lockout_expires_at - datetime.now(timezone.utc)).total_seconds()
+        # Normalize lockout timestamp to UTC to avoid naive/aware subtraction issues
+        now_utc = datetime.now(timezone.utc)
+        if lockout_expires_at.tzinfo is None:
+            lockout_expires_at = lockout_expires_at.replace(tzinfo=timezone.utc)
+        remaining_time = (lockout_expires_at - now_utc).total_seconds()
         log_audit_event('account_locked', email=email, details={
             'lockout_expires_at': lockout_expires_at.isoformat(),
             'remaining_seconds': int(remaining_time)
@@ -381,12 +572,17 @@ def login():
         
         return jsonify({'error': 'Invalid email or password'}), 401
     
-    # check if account is active
-    if not user.is_active:
+    # check if account is active or soft-deleted
+    if not user.is_active or is_user_deleted(user):
         log_audit_event('login_failure', user_id=user.id, email=email, details={
-            'reason': 'account_disabled'
+            'reason': 'account_disabled_or_deleted'
         })
-        return jsonify({'error': 'Account is disabled'}), 403
+        return jsonify({'error': 'Account is disabled or deleted, please contact a Canvas admin to reinstate'}), 403
+
+    # Normalize legacy role values (e.g., 'artist-guest' -> 'artist', 'visitor' -> 'guest')
+    canonical_role = user.normalized_role
+    if canonical_role != user.role:
+        user.role = canonical_role
     
     # successful login - clear failed attempts and log success
     clear_failed_login_attempts(email)
@@ -395,8 +591,20 @@ def login():
         'remember_me': remember
     })
     
+    # Issue a fresh session token so admins can forcibly revoke active sessions
+    session_token = secrets.token_urlsafe(32)
+
     # Login user with remember me option (must be called before session modification)
     login_user(user, remember=remember)
+
+    # Persist token on user and in session to detect forced logout
+    user.remember_token = session_token
+    session['session_token'] = session_token
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Login failed, please try again'}), 500
     
     # Regenerate session to prevent session fixation attacks
     session.permanent = True
@@ -407,7 +615,7 @@ def login():
         'user': {
             'id': user.id,
             'email': user.email,
-            'role': user.role
+            'role': user.normalized_role
         }
     }), 200
 
@@ -436,12 +644,41 @@ def logout():
     return response, 200
 
 
+@auth_bp.route('/delete-account', methods=['POST'])
+@login_required
+def delete_account():
+    """Self-service soft delete for the current user."""
+    db, _, User, _, AuditLog, _ = get_dependencies()
+
+    if is_bootstrap_email(current_user.email):
+        return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
+
+    try:
+        current_user.is_active = False
+        current_user.deleted_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        log_audit_event('user_soft_deleted_self', user_id=current_user.id, email=current_user.email)
+
+        logout_user()
+        for key in list(session.keys()):
+            session.pop(key)
+        session.modified = True
+
+        response = jsonify({'message': 'Account scheduled for deletion in 30 days'})
+        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+        return response, 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete account'}), 500
+
+
 @auth_bp.route('/me', methods=['GET'])
 @rate_limit("100 per minute")  # More lenient limit for frequently-called endpoint
 @login_required
 def get_current_user():
     """Get current authenticated user information.
-    
+
     Returns:
         200: User info
         401: Not authenticated
@@ -450,7 +687,7 @@ def get_current_user():
         'user': {
             'id': current_user.id,
             'email': current_user.email,
-            'role': current_user.role,
+            'role': current_user.normalized_role,
             'created_at': current_user.created_at.isoformat()
         }
     }), 200
@@ -484,5 +721,5 @@ def admin_only_route():
     return jsonify({
         'message': 'Admin access granted',
         'user': current_user.email,
-        'role': current_user.role
+        'role': current_user.normalized_role
     }), 200

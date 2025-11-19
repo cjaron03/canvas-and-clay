@@ -18,7 +18,13 @@
     if (data.filters.search) params.set('search', data.filters.search);
     if (data.filters.artistId) params.set('artist_id', data.filters.artistId);
     if (data.filters.medium) params.set('medium', data.filters.medium);
+    if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
+    if (data.filters.ordering) params.set('ordering', data.filters.ordering);
     return `/artworks?${params.toString()}`;
+  };
+
+  const handleSelectChange = (event) => {
+    event.currentTarget.form?.submit();
   };
 </script>
 
@@ -44,14 +50,57 @@
     </div>
 
     <div class="filter-group">
-      <label for="artist_id">Artist ID</label>
-      <input
-        id="artist_id"
-        name="artist_id"
-        type="text"
-        value={data.filters.artistId}
-        placeholder="e.g. TSTART01"
-      />
+      <label for="ordering">Order</label>
+      <select id="ordering" name="ordering" on:change={handleSelectChange}>
+        <option value="title_asc" selected={data.filters.ordering === 'title_asc'}>
+          A-Z
+        </option>
+        <option value="title_desc" selected={data.filters.ordering === 'title_desc'}>
+          Z-A
+        </option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="artist_id">Artist</label>
+      <select id="artist_id" name="artist_id" on:change={handleSelectChange}>
+        <!-- creates teh all artists option in the dropdown -->
+        <option value="" selected={!data.filters.artistId}>
+          All artists
+        </option>
+        {#each data.artists as artist}
+          <option
+            value={artist.id}
+            selected={data.filters.artistId === artist.id}
+          >
+            {artist.name} ({artist.id})
+          </option>
+        {/each}
+      </select>
+      {#if data.artistsError}
+        <p class="filter-hint">Unable to load artists: {data.artistsError}</p>
+      {/if}
+    </div>
+
+    <div class="filter-group">
+      <label for="storage_id">Location</label>
+      <select id="storage_id" name="storage_id" on:change={handleSelectChange}>
+        <!-- creates teh all storage option in the dropdown -->
+        <option value="" selected={!data.filters.storageId}>
+          All locations
+        </option>
+        {#each data.storage as location}
+          <option
+            value={location.id}
+            selected={data.filters.storageId === location.id}
+          >
+            {location.location} ({location.id})
+          </option>
+        {/each}
+      </select>
+      {#if data.storageError}
+        <p class="filter-hint">Unable to load locations: {data.storageError}</p>
+      {/if}
     </div>
 
     <div class="filter-group">
@@ -178,7 +227,8 @@
     color: var(--text-secondary);
   }
 
-  .filter-group input {
+  .filter-group input,
+  .filter-group select {
     padding: 0.5rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -186,9 +236,16 @@
     color: var(--text-primary);
   }
 
-  .filter-group input:focus {
+  .filter-group input:focus,
+  .filter-group select:focus {
     outline: none;
     border-color: var(--accent-color);
+  }
+
+  .filter-hint {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--danger-color);
   }
 
   .btn-primary {
