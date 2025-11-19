@@ -890,6 +890,7 @@ def restore_deleted_artist(artist_id):
 def delete_artist(artist_id):
     """ Delete an artist 
         - will only delete artists with no associated artwork dependencies
+           (as in, all artworks have been soft-deleted)
         - if not marked as deleted, will change is_deleted to true and mark the date
           of deletion
         - if is_deleted is already set to true, it will hard delete it
@@ -913,10 +914,10 @@ def delete_artist(artist_id):
         return jsonify({'error': 'Artist not found'}), 404
     
     # verify no data dependencies (will adjust this to soft delete after adjusting schema)
-    artworks = Artwork.query.filter_by(artist_id=artist_id, is_deleted=False).count()
-    if artworks > 0:
+    artwork_count = Artwork.query.filter_by(artist_id=artist_id, is_deleted=False).count()
+    if artwork_count > 0:
         return jsonify({
-            'error': f'Cannot delete artist {artist_id}: {artworks} artworks still exist. '
+            'error': f'Cannot delete artist {artist_id}: {artwork_count} artworks still exist. '
                      'Please delete or reassign artworks first.'
         }), 400
     
@@ -925,13 +926,42 @@ def delete_artist(artist_id):
         artist_name = f"{artist.artist_fname} {artist.artist_lname}"
         deletion_date = date.today()
         deletion_type = None
+        artworks = Artwork.query.filter_by(artist_id=artist.artist_id).all()
+        total_artworks = len(artworks)
+        total_photos = 0
 
         # Hard deletion (if is_deleted is already set to True)
         if artist.is_deleted:
+            
+            # Deleting data dependencies
+            for artwork in artworks:
+                # Grab photos associated with artwork
+                photos = ArtworkPhoto.query.filter_by(artwork_num=artwork.artwork_num).all()
+                total_photos += len(photos)
+
+                for photo in photos:
+                    try:
+                        delete_photo_files(photo.file_path, photo.thumbnail_path)
+                    except Exception as e:
+                        app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
+               
+                # Delete photo from ArtworkPhoto
+                ArtworkPhoto.query.filter_by(artwork_num=artwork.artwork_num).delete() 
+
+                # Delete artwork
+                db.session.delete(artwork)
+            
+            # Delete artist
             db.session.delete(artist)
             deletion_type = "Hard-deleted"
         # Soft deletion (if artist has not been deleted before)
         else:
+
+            # Grabbing number of photos for logging purposes
+            for artwork in artworks:
+                photos = ArtworkPhoto.query.filter_by(artwork_num=artwork.artwork_num).all()
+                total_photos += len(photos)
+
             artist.is_deleted = True
             artist.date_deleted = deletion_date
             deletion_type = "Soft-deleted"
@@ -949,13 +979,16 @@ def delete_artist(artist_id):
                 'artist_id': artist_id,
                 'artist_name': artist_name,
                 'deletion_type': deletion_type,
-                'date_deleted': deletion_date.isoformat()
+                'date_deleted': deletion_date.isoformat(),
+                'total_artworks': total_artworks,
+                'total_photos': total_photos
             })
         )
         db.session.add(audit_log)
         db.session.commit()
 
-        app.logger.info(f"Admin {current_user.email} {deletion_type} artist {artist_id} ({artist_name})")
+        app.logger.info(f"Admin {current_user.email} {deletion_type} artist {artist_id} ({artist_name}) "
+                        f"with {total_artworks} artworks and {total_photos} photos.")
 
         return jsonify({
             'message': 'Artist deleted successfully',
@@ -963,7 +996,9 @@ def delete_artist(artist_id):
                 'artist_id': artist_id,
                 'artist_name': artist_name,
                 'deletion_type': deletion_type,
-                'date_deleted': deletion_date.isoformat()
+                'date_deleted': deletion_date.isoformat(),
+                'total_artworks': total_artworks,
+                'total_photos': total_photos
             }
         }), 200
     
@@ -2823,7 +2858,7 @@ def _ensure_bootstrap_on_first_request():
 
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from scheduled_deletes import scheduled_artwork_deletion
+from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
 
 scheduler = None
 # scheduler for deletion of soft-deleted items over 30 days
@@ -2839,6 +2874,11 @@ def start_deletion_scheduler():
         scheduler = BackgroundScheduler(daemon=True)
         scheduler.add_job(
             func=scheduled_artwork_deletion,
+            trigger='interval',
+            days=1
+        )
+        scheduler.add_job(
+            func=scheduled_artist_deletion,
             trigger='interval',
             days=1
         )
