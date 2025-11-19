@@ -1,5 +1,7 @@
 <script>
   import { onMount } from 'svelte';
+  import { auth } from '$lib/stores/auth';
+  import { get } from 'svelte/store';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
 
@@ -30,6 +32,7 @@
   // Fetch CSRF token on mount
   onMount(async () => {
     try {
+      await auth.init();
       const response = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
         credentials: 'include'
       });
@@ -50,8 +53,11 @@
   const loadArtworks = async () => {
     isLoadingArtworks = true;
     try {
+      const authedState = get(auth);
+      const ownedParam =
+        authedState?.isAuthenticated && authedState?.user?.role === 'artist' ? '&owned=true' : '';
       const response = await fetch(
-        `${PUBLIC_API_BASE_URL}/api/artworks?per_page=100`,
+        `${PUBLIC_API_BASE_URL}/api/artworks?per_page=100${ownedParam}`,
         {
           credentials: 'include'
         }

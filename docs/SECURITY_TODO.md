@@ -40,8 +40,6 @@
 - [x] **privilege escalation via self-service admin role** - FIXED (fix-privilege-escalation-csrf branch)
   - removed role parameter from registration endpoint
   - all new users are forced to 'visitor' role
-  - bootstrap admin created via environment variable on startup
-  - migration added to downgrade existing admins to visitor except bootstrap admin
   - admin promotion endpoint deferred to future implementation
 
 - [x] **csrf protection missing** - FIXED (fix-privilege-escalation-csrf branch)
@@ -326,10 +324,10 @@ see `backend/tests/test_rbac_rate_limits.py` for comprehensive test coverage.
 - [ ] Implement HSTS headers
 
 ### Password Policies
-- [ ] Minimum length: 8 characters
-- [ ] Require uppercase, lowercase, number, special char
-- [ ] Prevent common passwords
-- [ ] Implement password strength meter
+- [x] Minimum length: 8 characters
+- [x] Require uppercase, lowercase, number, special char
+- [x] Prevent common passwords
+- [x] Implement password strength meter
 
 ### Two-Factor Authentication (Optional)
 - [ ] Add TOTP-based 2FA
@@ -349,6 +347,19 @@ see `backend/tests/test_rbac_rate_limits.py` for comprehensive test coverage.
 - [x] CSRF testing
 - [ ] File upload bypass testing
 - [ ] Authentication bypass testing
+
+### Password Changes 
+- [ ] Require current passwords before allowing a change 
+- [ ] validate current password using same rules for reg (length, complexity etc)
+- [ ] log password changes in audit log 
+- [ ] require re-auth for sensistive ops after password change 
+
+
+### Prevent Account duplicates (Check)
+ - [ ] Just check to see if a user can register a account using a email already registered
+Notes:
+  make sure to use bycrpt to generate the hash, update hashed passoword in password field under user model, and consider invalidating all existing sessions after change (revoke csrf tokens)
+
 
 ## Implementation Priority Order
 
