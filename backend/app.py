@@ -3761,9 +3761,9 @@ def stop_deletion_scheduler():
         scheduler = None
         app.logger.info("Deletion Scheduler has stopped - using APScheduler.")
 
-# ensure scheduler not running during testing
-if not app.config.get("TESTING", False):
-    start_deletion_scheduler()
+# ensure scheduler not running during testing - uncomment to run schedular
+#if not app.config.get("TESTING", False):
+#    start_deletion_scheduler()
 
 if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
