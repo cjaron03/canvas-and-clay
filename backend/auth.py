@@ -4,11 +4,12 @@ import re
 import json as json_lib
 import secrets
 from datetime import datetime, timezone, timedelta
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, current_app
 from flask_login import login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import generate_csrf
 from flask_limiter.util import get_remote_address
 from functools import wraps
+from utils import sanitize_html
 
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -17,8 +18,8 @@ BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-cla
 
 def get_dependencies():
     """Get dependencies from app context to avoid circular imports."""
-    from app import db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter
-    return db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter
+    from app import db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter
+    return db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter
 
 
 def rate_limit(limit):
@@ -271,7 +272,7 @@ def register():
         400: Validation error or duplicate email
         415: Unsupported media type (missing Content-Type: application/json)
     """
-    db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter = get_dependencies()
     
     data = request.get_json()
     
@@ -348,7 +349,7 @@ def log_audit_event(event_type, user_id=None, email=None, details=None):
         email: Email address associated with the event (optional)
         details: Additional details as dict (will be JSON serialized)
     """
-    db, _, _, _, AuditLog, _ = get_dependencies()
+    db, _, _, _, AuditLog, _, _ = get_dependencies()
     
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
@@ -381,7 +382,7 @@ def check_account_locked(email):
     Returns:
         tuple: (is_locked: bool, lockout_expires_at: datetime or None)
     """
-    db, _, _, FailedLoginAttempt, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _ = get_dependencies()
     
     # check failed attempts in last 15 minutes
     lockout_window = datetime.now(timezone.utc) - timedelta(minutes=15)
@@ -405,7 +406,7 @@ def record_failed_login(email):
     Args:
         email: Email address that failed login
     """
-    db, _, _, FailedLoginAttempt, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _ = get_dependencies()
     
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
@@ -480,7 +481,7 @@ def clear_failed_login_attempts(email):
     Args:
         email: Email address to clear attempts for
     """
-    db, _, _, FailedLoginAttempt, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _ = get_dependencies()
     
     try:
         FailedLoginAttempt.query.filter_by(email=email).delete()
@@ -512,7 +513,7 @@ def login():
         401: Invalid credentials
         403: Account disabled or locked
     """
-    db, bcrypt, User, FailedLoginAttempt, AuditLog, limiter = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter = get_dependencies()
     
     data = request.get_json()
     
@@ -648,7 +649,7 @@ def logout():
 @login_required
 def delete_account():
     """Self-service soft delete for the current user."""
-    db, _, User, _, AuditLog, _ = get_dependencies()
+    db, _, User, _, AuditLog, _, _ = get_dependencies()
 
     if is_bootstrap_email(current_user.email):
         return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
@@ -723,3 +724,169 @@ def admin_only_route():
         'user': current_user.email,
         'role': current_user.normalized_role
     }), 200
+
+
+@auth_bp.route('/password-reset/request', methods=['POST'])
+@rate_limit("3 per hour")
+def request_password_reset():
+    """Allow users to file a manual password reset request for admin review."""
+    db, _, User, _, _, PasswordResetRequest, _ = get_dependencies()
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({'error': 'No data provided'}), 400
+
+    email = data.get('email', '').strip().lower()
+    message = (data.get('message') or '').strip()
+
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+
+    is_valid, error_msg = validate_email(email)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
+
+    # Normalize message and enforce length limit
+    cleaned_message = None
+    if message:
+        cleaned_message = sanitize_html(message)
+        if cleaned_message:
+            max_len = current_app.config.get('PASSWORD_RESET_MESSAGE_MAX_LENGTH', 500)
+            cleaned_message = cleaned_message[:max_len]
+
+    user = User.query.filter_by(email=email).first()
+
+    existing_request = PasswordResetRequest.query.filter(
+        PasswordResetRequest.email == email,
+        PasswordResetRequest.status.in_(['pending', 'approved'])
+    ).order_by(PasswordResetRequest.created_at.desc()).first()
+
+    if existing_request:
+        return jsonify({
+            'message': 'A reset request is already pending. An admin will contact you soon.'
+        }), 200
+
+    new_request = PasswordResetRequest(
+        email=email,
+        user_id=user.id if user else None,
+        user_message=cleaned_message,
+        status='pending'
+    )
+
+    try:
+        db.session.add(new_request)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to record password reset request'}), 500
+
+    log_audit_event(
+        'password_reset_requested',
+        user_id=user.id if user else None,
+        email=email,
+        details={'request_id': new_request.id}
+    )
+
+    return jsonify({
+        'message': 'Request received. An admin will review it shortly.'
+    }), 200
+
+
+@auth_bp.route('/password-reset/confirm', methods=['POST'])
+@rate_limit("5 per hour")
+def confirm_password_reset():
+    """Redeem an admin-issued reset code and set a new password."""
+    db, bcrypt, User, _, _, PasswordResetRequest, _ = get_dependencies()
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({'error': 'No data provided'}), 400
+
+    email = data.get('email', '').strip().lower()
+    reset_code = (data.get('code') or '').strip()
+    new_password = data.get('password', '')
+
+    if not email or not reset_code or not new_password:
+        return jsonify({'error': 'Email, reset code, and new password are required'}), 400
+
+    is_valid_email, error_msg = validate_email(email)
+    if not is_valid_email:
+        return jsonify({'error': error_msg}), 400
+
+    if len(reset_code) < 4 or len(reset_code) > 64:
+        return jsonify({'error': 'Reset code length is invalid'}), 400
+
+    is_valid_password, password_error = validate_password(new_password)
+    if not is_valid_password:
+        return jsonify({'error': password_error}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({'error': 'Invalid email or reset code'}), 400
+
+    reset_request = PasswordResetRequest.query.filter(
+        PasswordResetRequest.email == email,
+        PasswordResetRequest.status == 'approved'
+    ).order_by(
+        PasswordResetRequest.approved_at.desc().nullslast(),
+        PasswordResetRequest.created_at.desc()
+    ).first()
+
+    if not reset_request or not reset_request.reset_code_hash:
+        return jsonify({'error': 'No active reset request found. Please request a new one.'}), 400
+
+    now = datetime.now(timezone.utc)
+    if reset_request.expires_at and reset_request.expires_at <= now:
+        reset_request.status = 'expired'
+        reset_request.reset_code_hash = None
+        reset_request.reset_code_hint = None
+        reset_request.expires_at = None
+        reset_request.resolved_at = now
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        log_audit_event(
+            'password_reset_expired',
+            user_id=reset_request.user_id,
+            email=reset_request.email,
+            details={'request_id': reset_request.id}
+        )
+        return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
+
+    if not bcrypt.check_password_hash(reset_request.reset_code_hash, reset_code):
+        log_audit_event(
+            'password_reset_code_invalid',
+            user_id=reset_request.user_id or user.id,
+            email=email,
+            details={'request_id': reset_request.id}
+        )
+        return jsonify({'error': 'Invalid reset code'}), 400
+
+    try:
+        user.hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
+        user.remember_token = None
+        reset_request.status = 'completed'
+        reset_request.reset_code_hash = None
+        reset_request.reset_code_hint = None
+        reset_request.expires_at = None
+        reset_request.resolved_at = now
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update password'}), 500
+
+    # Clear any failed login attempts after successful reset
+    try:
+        clear_failed_login_attempts(email)
+    except Exception:
+        pass
+
+    log_audit_event(
+        'password_reset_completed',
+        user_id=user.id,
+        email=email,
+        details={'request_id': reset_request.id}
+    )
+
+    return jsonify({'message': 'Password updated successfully'}), 200

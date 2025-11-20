@@ -16,6 +16,7 @@ from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from utils import sanitize_html
 
 load_dotenv()
 
@@ -110,6 +111,8 @@ def build_engine_options(database_uri):
     return engine_options
 
 allow_insecure_cookies = os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true'
+PASSWORD_RESET_CODE_TTL_MINUTES = get_env_int('PASSWORD_RESET_CODE_TTL_MINUTES', 30)
+MAX_PASSWORD_RESET_MESSAGE_LENGTH = get_env_int('PASSWORD_RESET_MESSAGE_MAX_LENGTH', 500)
 
 app = Flask(__name__)
 
@@ -151,6 +154,8 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=14)
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SECURE'] = not allow_insecure_cookies
+app.config['PASSWORD_RESET_CODE_TTL_MINUTES'] = PASSWORD_RESET_CODE_TTL_MINUTES
+app.config['PASSWORD_RESET_MESSAGE_MAX_LENGTH'] = MAX_PASSWORD_RESET_MESSAGE_LENGTH
 
 # CSRF protection configuration
 app.config['WTF_CSRF_ENABLED'] = True
@@ -272,6 +277,7 @@ def unauthorized():
 # Initialize models
 from models import init_models
 User, FailedLoginAttempt, AuditLog = init_models(db)
+PasswordResetRequest = init_models.PasswordResetRequest
 
 # Canonical bootstrap admin email used for safeguard checks
 BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
@@ -2518,6 +2524,10 @@ def admin_console_stats():
         artist_role_count = User.query.filter(User.role.in_(['artist', 'artist-guest'])).count()
         total_storage = Storage.query.count()
         total_audit_logs = AuditLog.query.count()
+        total_reset_requests = PasswordResetRequest.query.count()
+        pending_reset_requests = PasswordResetRequest.query.filter(
+            PasswordResetRequest.status.in_(['pending', 'approved'])
+        ).count()
         
         # Get recent activity (last 24 hours)
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -2537,6 +2547,9 @@ def admin_console_stats():
         recent_failed_logins = FailedLoginAttempt.query.filter(
             FailedLoginAttempt.attempted_at >= twenty_four_hours_ago
         ).count()
+        recent_reset_requests = PasswordResetRequest.query.filter(
+            PasswordResetRequest.created_at >= twenty_four_hours_ago
+        ).count()
         
         return jsonify({
             'counts': {
@@ -2548,13 +2561,16 @@ def admin_console_stats():
                 'photos': total_photos,
                 'users': total_users,
                 'storage_locations': total_storage,
-                'audit_logs': total_audit_logs
+                'audit_logs': total_audit_logs,
+                'password_reset_requests': total_reset_requests,
+                'password_reset_pending': pending_reset_requests
             },
             'recent_activity': {
                 'artworks_last_24h': recent_artworks,
                 'photos_last_24h': recent_photos,
                 'users_last_24h': recent_users,
-                'failed_logins_last_24h': recent_failed_logins
+                'failed_logins_last_24h': recent_failed_logins,
+                'password_resets_last_24h': recent_reset_requests
             }
         }), 200
     except Exception as e:
@@ -2932,6 +2948,51 @@ def _serialize_user_with_last_login(user):
         'last_login': last_login.created_at.isoformat() if last_login and last_login.created_at else None,
         'is_bootstrap_admin': _is_bootstrap_admin(user)
     }
+
+
+def _serialize_password_reset_request(request_obj):
+    """Serialize password reset request for admin console."""
+    def _iso(value):
+        return value.isoformat() if value else None
+
+    expires_at = request_obj.expires_at
+    now = datetime.now(timezone.utc)
+    is_expired = bool(expires_at and expires_at <= now)
+
+    return {
+        'id': request_obj.id,
+        'email': request_obj.email,
+        'user_id': request_obj.user_id,
+        'status': 'expired' if request_obj.status == 'approved' and is_expired else request_obj.status,
+        'user_message': request_obj.user_message,
+        'admin_message': request_obj.admin_message,
+        'approved_by_id': request_obj.approved_by_id,
+        'created_at': _iso(request_obj.created_at),
+        'updated_at': _iso(request_obj.updated_at),
+        'approved_at': _iso(request_obj.approved_at),
+        'expires_at': _iso(expires_at),
+        'resolved_at': _iso(request_obj.resolved_at),
+        'code_hint': request_obj.reset_code_hint,
+        'has_active_code': bool(request_obj.reset_code_hash and not is_expired)
+    }
+
+
+def _generate_reset_code(length=12):
+    """Generate a human-shareable reset code (avoids ambiguous characters)."""
+    alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _sanitize_admin_note(note_value):
+    """Normalize admin-provided notes/messages for reset workflow."""
+    if note_value is None:
+        return None
+    cleaned = sanitize_html(str(note_value).strip())
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_PASSWORD_RESET_MESSAGE_LENGTH:
+        return cleaned[:MAX_PASSWORD_RESET_MESSAGE_LENGTH]
+    return cleaned
 
 
 def _active_admin_count(exclude_user_id=None):
@@ -3360,6 +3421,218 @@ def hard_delete_user(user_id):
         db.session.rollback()
         app.logger.exception("Failed to hard delete user")
         return jsonify({'error': 'Failed to permanently delete user'}), 500
+
+
+# Password reset admin workflow endpoints
+@app.route('/api/admin/console/password-resets', methods=['GET'])
+@login_required
+@admin_required
+@limiter.limit("60 per minute")
+def admin_console_password_resets():
+    """List password reset requests for admin review."""
+    status_filter = (request.args.get('status') or 'pending').strip().lower()
+    page = request.args.get('page', 1)
+    per_page = request.args.get('per_page', 10)
+
+    try:
+        page = max(1, int(page))
+    except (TypeError, ValueError):
+        page = 1
+
+    try:
+        per_page = max(1, min(50, int(per_page)))
+    except (TypeError, ValueError):
+        per_page = 10
+
+    query = PasswordResetRequest.query
+    now = datetime.now(timezone.utc)
+
+    if status_filter in ('pending', 'approved', 'denied', 'completed'):
+        query = query.filter(PasswordResetRequest.status == status_filter)
+    elif status_filter == 'open':
+        query = query.filter(PasswordResetRequest.status.in_(['pending', 'approved']))
+    elif status_filter == 'expired':
+        query = query.filter(
+            db.or_(
+                PasswordResetRequest.status == 'expired',
+                db.and_(
+                    PasswordResetRequest.status == 'approved',
+                    PasswordResetRequest.expires_at.isnot(None),
+                    PasswordResetRequest.expires_at < now
+                )
+            )
+        )
+    elif status_filter == 'all':
+        pass
+    else:
+        # Unknown filter falls back to pending for safety
+        query = query.filter(PasswordResetRequest.status == 'pending')
+
+    pagination = query.order_by(PasswordResetRequest.created_at.desc()).paginate(
+        page=page,
+        per_page=per_page,
+        error_out=False
+    )
+
+    return jsonify({
+        'requests': [_serialize_password_reset_request(req) for req in pagination.items],
+        'pagination': {
+            'page': pagination.page,
+            'pages': pagination.pages or (1 if pagination.total else 0),
+            'per_page': per_page,
+            'total': pagination.total
+        }
+    }), 200
+
+
+@app.route('/api/admin/console/password-resets/<int:request_id>/approve', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("30 per minute")
+def approve_password_reset_request(request_id):
+    """Generate a manual reset code for a pending request."""
+    reset_request = db.session.get(PasswordResetRequest, request_id)
+    if not reset_request:
+        return jsonify({'error': 'Request not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    admin_message = _sanitize_admin_note(data.get('message'))
+    expires_minutes = data.get('expires_in_minutes', PASSWORD_RESET_CODE_TTL_MINUTES)
+    try:
+        expires_minutes = int(expires_minutes)
+    except (TypeError, ValueError):
+        expires_minutes = PASSWORD_RESET_CODE_TTL_MINUTES
+    expires_minutes = max(5, min(1440, expires_minutes))
+
+    if reset_request.status == 'completed':
+        return jsonify({'error': 'Request already completed'}), 400
+
+    reset_code = _generate_reset_code()
+    reset_request.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
+    reset_request.reset_code_hint = reset_code[-4:]
+    reset_request.status = 'approved'
+    if admin_message is not None:
+        reset_request.admin_message = admin_message
+    reset_request.approved_by_id = current_user.id
+    now = datetime.now(timezone.utc)
+    reset_request.approved_at = now
+    reset_request.resolved_at = None
+    reset_request.expires_at = now + timedelta(minutes=expires_minutes)
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to approve password reset request")
+        return jsonify({'error': 'Failed to approve password reset request'}), 500
+
+    log_audit_event(
+        'password_reset_approved',
+        user_id=reset_request.user_id,
+        email=reset_request.email,
+        details={
+            'request_id': reset_request.id,
+            'expires_at': reset_request.expires_at.isoformat() if reset_request.expires_at else None,
+            'approved_by_id': current_user.id
+        }
+    )
+
+    return jsonify({
+        'message': 'Reset code generated. Share it securely with the requester.',
+        'reset_code': reset_code,
+        'request': _serialize_password_reset_request(reset_request)
+    }), 200
+
+
+@app.route('/api/admin/console/password-resets/<int:request_id>/deny', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("30 per minute")
+def deny_password_reset_request(request_id):
+    """Deny a password reset request with an optional admin note."""
+    reset_request = db.session.get(PasswordResetRequest, request_id)
+    if not reset_request:
+        return jsonify({'error': 'Request not found'}), 404
+
+    if reset_request.status == 'completed':
+        return jsonify({'error': 'Request already completed'}), 400
+
+    data = request.get_json(silent=True) or {}
+    admin_message = _sanitize_admin_note(data.get('message'))
+
+    reset_request.status = 'denied'
+    reset_request.reset_code_hash = None
+    reset_request.reset_code_hint = None
+    reset_request.expires_at = None
+    reset_request.resolved_at = datetime.now(timezone.utc)
+    if admin_message is not None:
+        reset_request.admin_message = admin_message
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to deny password reset request")
+        return jsonify({'error': 'Failed to deny password reset request'}), 500
+
+    log_audit_event(
+        'password_reset_denied',
+        user_id=reset_request.user_id,
+        email=reset_request.email,
+        details={
+            'request_id': reset_request.id,
+            'acted_by_id': current_user.id
+        }
+    )
+
+    return jsonify({
+        'message': 'Request denied',
+        'request': _serialize_password_reset_request(reset_request)
+    }), 200
+
+
+@app.route('/api/admin/console/password-resets/<int:request_id>/mark-complete', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("20 per minute")
+def complete_password_reset_request(request_id):
+    """Mark a request as completed/closed when handled out-of-band."""
+    reset_request = db.session.get(PasswordResetRequest, request_id)
+    if not reset_request:
+        return jsonify({'error': 'Request not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    admin_message = _sanitize_admin_note(data.get('message'))
+
+    reset_request.status = 'completed'
+    reset_request.reset_code_hash = None
+    reset_request.reset_code_hint = None
+    reset_request.expires_at = None
+    reset_request.resolved_at = datetime.now(timezone.utc)
+    if admin_message is not None:
+        reset_request.admin_message = admin_message
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to mark password reset request complete")
+        return jsonify({'error': 'Failed to mark request complete'}), 500
+
+    log_audit_event(
+        'password_reset_marked_complete',
+        user_id=reset_request.user_id,
+        email=reset_request.email,
+        details={
+            'request_id': reset_request.id,
+            'acted_by_id': current_user.id
+        }
+    )
+
+    return jsonify({
+        'message': 'Request marked complete',
+        'request': _serialize_password_reset_request(reset_request)
+    }), 200
 
 
 # CLI confirmation tokens storage (in-memory, expires after 30 seconds)

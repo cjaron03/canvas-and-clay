@@ -161,5 +161,33 @@ def init_models(database):
         def __repr__(self):
             return f'<AuditLog {self.event_type} for {self.email} at {self.created_at}>'
     
+    class PasswordResetRequest(database.Model):
+        """Model for manual/admin-assisted password reset workflow."""
+        __tablename__ = 'password_reset_requests'
+
+        id = database.Column(database.Integer, primary_key=True)
+        user_id = database.Column(database.Integer, database.ForeignKey('users.id'), nullable=True, index=True)
+        email = database.Column(database.String(254), nullable=False, index=True)
+        status = database.Column(database.String(20), nullable=False, default='pending', index=True)
+        user_message = database.Column(database.Text, nullable=True)
+        admin_message = database.Column(database.Text, nullable=True)
+        reset_code_hash = database.Column(database.String(255), nullable=True)
+        reset_code_hint = database.Column(database.String(12), nullable=True)
+        approved_by_id = database.Column(database.Integer, database.ForeignKey('users.id'), nullable=True)
+        approved_at = database.Column(database.DateTime, nullable=True)
+        expires_at = database.Column(database.DateTime, nullable=True)
+        resolved_at = database.Column(database.DateTime, nullable=True)
+        created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+        updated_at = database.Column(
+            database.DateTime,
+            nullable=False,
+            default=lambda: datetime.now(timezone.utc),
+            onupdate=lambda: datetime.now(timezone.utc)
+        )
+
+        def __repr__(self):
+            return f'<PasswordResetRequest {self.email} #{self.id} ({self.status})>'
+
     init_models._models_cache = (User, FailedLoginAttempt, AuditLog)
+    init_models.PasswordResetRequest = PasswordResetRequest
     return init_models._models_cache

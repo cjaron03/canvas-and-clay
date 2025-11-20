@@ -15,6 +15,14 @@
 	let isRegisterMode = false;
 	let showLoginPassword = false;
 	let showRegisterPasswords = false;
+	const RESET_MESSAGE_LIMIT = 500;
+	let showResetForm = false;
+	let resetEmail = '';
+	let resetNotes = '';
+	let resetRequestError = '';
+	let resetRequestSuccess = '';
+	let resetRequestLoading = false;
+	let resetCharCount = 0;
 
 	// Password strength + requirements (register form)
 	let passwordRequirements = [];
@@ -142,6 +150,72 @@
 		confirmPassword = '';
 	};
 
+	const toggleResetForm = () => {
+		showResetForm = !showResetForm;
+		resetRequestError = '';
+		resetRequestSuccess = '';
+		if (showResetForm && !resetEmail && email) {
+			resetEmail = email;
+		}
+	};
+
+	const handleResetRequest = async () => {
+		resetRequestError = '';
+		resetRequestSuccess = '';
+
+		const normalizedEmail = resetEmail.trim().toLowerCase();
+		if (!normalizedEmail) {
+			resetRequestError = 'Please enter the email associated with your account.';
+			return;
+		}
+
+		resetRequestLoading = true;
+		let csrfToken = $auth?.csrfToken;
+
+		if (!csrfToken) {
+			try {
+				const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+					credentials: 'include'
+				});
+				if (csrfResponse.ok) {
+					const csrfData = await csrfResponse.json();
+					csrfToken = csrfData.csrf_token;
+				}
+			} catch (err) {
+				resetRequestLoading = false;
+				resetRequestError = 'Unable to reach the server. Please try again.';
+				return;
+			}
+		}
+
+		try {
+			const response = await fetch(`${PUBLIC_API_BASE_URL}/auth/password-reset/request`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					...(csrfToken ? { 'X-CSRFToken': csrfToken } : {})
+				},
+				credentials: 'include',
+				body: JSON.stringify({
+					email: normalizedEmail,
+					message: resetNotes.trim()
+				})
+			});
+
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || 'Failed to submit reset request');
+			}
+
+			resetRequestSuccess = data.message || 'Request submitted. An admin will reach out soon.';
+			resetNotes = '';
+		} catch (err) {
+			resetRequestError = err?.message || 'Failed to submit reset request. Please try again.';
+		} finally {
+			resetRequestLoading = false;
+		}
+	};
+
 	$: passwordRequirements = [
 		{
 			key: 'length',
@@ -188,6 +262,11 @@
 		else if (score === 2) strengthLabel = 'Okay';
 		else if (score === 3) strengthLabel = 'Good';
 		else strengthLabel = 'Strong';
+	}
+
+	$: resetCharCount = resetNotes?.length || 0;
+	$: if (showResetForm && !resetEmail && email) {
+		resetEmail = email;
 	}
 </script>
 
@@ -405,10 +484,56 @@
 						{loading ? 'Signing in...' : 'Sign in'}
 					</button>
 				</div>
-			</form>
-		{/if}
+				</form>
+			{/if}
+			<div class="reset-help">
+				<button type="button" class="link-button" on:click={toggleResetForm}>
+					{showResetForm ? 'Hide password reset help' : 'Need help resetting your password?'}
+				</button>
+				{#if showResetForm}
+					<div class="reset-panel">
+						<p class="reset-copy">
+							Submit a request and a Canvas administrator will review and send you a reset code.
+						</p>
+						<form class="reset-form" on:submit|preventDefault={handleResetRequest}>
+							<div class="form-group">
+								<input
+									type="email"
+									id="reset-email"
+									bind:value={resetEmail}
+									placeholder="Account email"
+									required
+									disabled={resetRequestLoading}
+								/>
+							</div>
+							<div class="form-group">
+								<textarea
+									id="reset-notes"
+									bind:value={resetNotes}
+									placeholder="Add any details you'd like the admin team to know (optional)"
+									maxlength={RESET_MESSAGE_LIMIT}
+									rows="3"
+									disabled={resetRequestLoading}
+								></textarea>
+								<div class="char-count">{resetCharCount}/{RESET_MESSAGE_LIMIT}</div>
+							</div>
+							{#if resetRequestError}
+								<div class="message error">{resetRequestError}</div>
+							{/if}
+							{#if resetRequestSuccess}
+								<div class="message success">{resetRequestSuccess}</div>
+							{/if}
+							<div class="form-actions">
+								<button type="submit" class="secondary-button" disabled={resetRequestLoading}>
+									{resetRequestLoading ? 'Sending...' : 'Submit reset request'}
+								</button>
+							</div>
+						</form>
+					</div>
+				{/if}
+			</div>
+		</div>
 	</div>
-</div>
 
 <style>
 	:global(body) {
@@ -782,5 +907,69 @@
 		.primary-button {
 			width: 100%;
 		}
+	}
+
+	.reset-help {
+		margin-top: 1.5rem;
+		border-top: 1px solid rgba(255, 255, 255, 0.1);
+		padding-top: 1.5rem;
+	}
+
+	.link-button {
+		background: none;
+		border: none;
+		color: #6c63ff;
+		font-weight: 600;
+		cursor: pointer;
+		padding: 0;
+		margin-bottom: 0.75rem;
+		text-decoration: underline;
+	}
+
+	.reset-panel {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		padding: 1rem;
+		border-radius: 10px;
+	}
+
+	.reset-copy {
+		margin: 0 0 0.75rem;
+		font-size: 0.95rem;
+		color: rgba(255, 255, 255, 0.85);
+	}
+
+	.reset-form textarea {
+		width: 100%;
+		padding: 0.75rem;
+		border-radius: 6px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(8, 16, 44, 0.4);
+		color: #fff;
+		font-family: inherit;
+		resize: vertical;
+	}
+
+	.char-count {
+		text-align: right;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.6);
+		margin-top: 0.25rem;
+	}
+
+	.secondary-button {
+		width: 100%;
+		padding: 0.75rem;
+		border-radius: 10px;
+		border: 1px solid #6c63ff;
+		background: transparent;
+		color: #6c63ff;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.secondary-button:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
 	}
 </style>

@@ -58,6 +58,16 @@
   let purgeMessage = '';
   let alertActionsMessage = '';
   let purgeDays = 30;
+  let passwordResetRequests = [];
+  let passwordResetPagination = null;
+  let passwordResetPage = 1;
+  let passwordResetFilter = 'pending';
+  let passwordResetLoading = false;
+  let passwordResetError = '';
+  let passwordResetNotice = '';
+  let passwordResetActionLoading = {};
+  let passwordResetAdminNotes = {};
+  let passwordResetCodes = {};
 
   // API health check state
   let apiTestResult = null;
@@ -523,6 +533,83 @@
       loading.failedLogins = false;
     }
   };
+
+  const loadPasswordResetRequests = async (page = 1, status = passwordResetFilter) => {
+    passwordResetLoading = true;
+    passwordResetError = '';
+    try {
+      const headers = await buildAuthedHeaders();
+      const params = new URLSearchParams({
+        page: page.toString(),
+        per_page: '10',
+        status: status || 'pending'
+      });
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/password-resets?${params.toString()}`, {
+        credentials: 'include',
+        headers
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load password reset requests');
+      }
+      passwordResetRequests = data.requests || [];
+      passwordResetPagination = data.pagination || null;
+      passwordResetPage = data.pagination?.page || page;
+    } catch (err) {
+      console.error('Failed to load password reset requests:', err);
+      passwordResetError = err?.message || 'Failed to load password reset requests';
+    } finally {
+      passwordResetLoading = false;
+    }
+  };
+
+  const handlePasswordResetAction = async (request, actionType, defaultError) => {
+    if (!request?.id) return;
+    const actionKey = `${request.id}-${actionType}`;
+    passwordResetActionLoading = { ...passwordResetActionLoading, [actionKey]: true };
+    passwordResetNotice = '';
+
+    try {
+      const headers = await buildAuthedHeaders();
+      const endpoint = actionType === 'complete' ? 'mark-complete' : actionType;
+      const note = (passwordResetAdminNotes[request.id] || '').trim();
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/password-resets/${request.id}/${endpoint}`,
+        {
+          method: 'POST',
+          headers,
+          credentials: 'include',
+          body: JSON.stringify({ message: note })
+        }
+      );
+      const data = await handleUserActionResponse(response, defaultError);
+      if (actionType === 'approve' && data?.reset_code) {
+        passwordResetCodes = { ...passwordResetCodes, [request.id]: data.reset_code };
+      }
+      passwordResetAdminNotes = { ...passwordResetAdminNotes, [request.id]: '' };
+      passwordResetNotice = data?.message || 'Action completed successfully';
+      await loadPasswordResetRequests(passwordResetPage, passwordResetFilter);
+    } catch (err) {
+      console.error(`Password reset action (${actionType}) failed:`, err);
+      passwordResetError = err?.message || defaultError;
+    } finally {
+      passwordResetActionLoading = { ...passwordResetActionLoading, [actionKey]: false };
+    }
+  };
+
+  const approvePasswordReset = (request) =>
+    handlePasswordResetAction(request, 'approve', 'Failed to approve password reset request');
+
+  const denyPasswordReset = (request) =>
+    handlePasswordResetAction(request, 'deny', 'Failed to deny password reset request');
+
+  const completePasswordReset = (request) =>
+    handlePasswordResetAction(request, 'complete', 'Failed to update password reset request');
+
+  const isResetActionPending = (requestId) =>
+    passwordResetActionLoading[`${requestId}-approve`] ||
+    passwordResetActionLoading[`${requestId}-deny`] ||
+    passwordResetActionLoading[`${requestId}-complete`];
 
   const recomputeRoleCounts = (list = users) => {
     const summary = {
@@ -1012,6 +1099,10 @@
       startAlertPolling();
     } else {
       stopAlertPolling();
+    }
+
+    if (tab === 'requests' && passwordResetRequests.length === 0) {
+      loadPasswordResetRequests();
     }
 
     if (tab === 'users' && users.length === 0) {
@@ -1702,6 +1793,12 @@
       Security
     </button>
     <button
+      class:active={activeTab === 'requests'}
+      on:click={() => handleTabChange('requests')}
+    >
+      Reset Requests
+    </button>
+    <button
       class:active={activeTab === 'users'}
       on:click={() => handleTabChange('users')}
     >
@@ -1791,6 +1888,10 @@
             <div class="stat-label">Users</div>
             <div class="stat-value">{stats?.counts?.users || 0}</div>
           </div>
+          <div class="stat-card">
+            <div class="stat-label">Pending Reset Requests</div>
+            <div class="stat-value">{stats?.counts?.password_reset_pending || 0}</div>
+          </div>
         </div>
 
         <div class="recent-activity">
@@ -1800,6 +1901,7 @@
             <div>New Photos: {stats?.recent_activity?.photos_last_24h || 0}</div>
             <div>New Users: {stats?.recent_activity?.users_last_24h || 0}</div>
             <div>Failed Logins: {stats?.recent_activity?.failed_logins_last_24h || 0}</div>
+            <div>Password Reset Requests: {stats?.recent_activity?.password_resets_last_24h || 0}</div>
           </div>
         </div>
       </div>
@@ -2012,6 +2114,189 @@
               <button
                 disabled={failedLoginsPage >= failedLoginsPagination.pages}
                 on:click={() => loadFailedLogins(failedLoginsPage + 1)}
+              >
+                Next
+              </button>
+            </div>
+          {/if}
+        {/if}
+      </div>
+    {:else if activeTab === 'requests'}
+      <div class="password-reset-tab">
+        <div class="reset-header">
+          <div>
+            <h2>Password Reset Requests</h2>
+            <p class="reset-subtitle">Manual approvals, denials, and admin notes</p>
+          </div>
+          <div class="reset-controls">
+            <label for="reset-filter">
+              Status
+              <select
+                id="reset-filter"
+                bind:value={passwordResetFilter}
+                on:change={() => loadPasswordResetRequests(1, passwordResetFilter)}
+              >
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="denied">Denied</option>
+                <option value="completed">Completed</option>
+                <option value="expired">Expired</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <button
+              class="secondary"
+              on:click={() => loadPasswordResetRequests(passwordResetPage, passwordResetFilter)}
+              disabled={passwordResetLoading}
+            >
+              {passwordResetLoading ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+        {#if passwordResetNotice}
+          <div class="inline-info small">{passwordResetNotice}</div>
+        {/if}
+        {#if passwordResetError}
+          <div class="inline-error">{passwordResetError}</div>
+        {/if}
+        {#if passwordResetLoading}
+          <div>Loading reset requests...</div>
+        {:else if passwordResetRequests.length === 0}
+          <div class="inline-info">No password reset requests found for this filter.</div>
+        {:else}
+          <div class="reset-grid">
+            {#each passwordResetRequests as reset}
+              <div class="reset-card">
+                <div class="reset-card-header">
+                  <div>
+                    <div class="reset-email">{reset.email}</div>
+                    <div class="reset-meta">Requested {formatDate(reset.created_at)}</div>
+                    {#if reset.user_id}
+                      <div class="reset-meta">User ID: {reset.user_id}</div>
+                    {/if}
+                  </div>
+                  <span class={`pill pill-${reset.status}`}>{reset.status}</span>
+                </div>
+                {#if reset.user_message}
+                  <div class="reset-message">
+                    <strong>User:</strong> {reset.user_message}
+                  </div>
+                {/if}
+                {#if reset.admin_message}
+                  <div class="reset-message admin">
+                    <strong>Admin:</strong> {reset.admin_message}
+                  </div>
+                {/if}
+                {#if reset.status === 'approved'}
+                  <div class="reset-meta">
+                    Expires {reset.expires_at ? formatDate(reset.expires_at) : '—'}
+                  </div>
+                  {#if passwordResetCodes[reset.id]}
+                    <div class="code-banner">
+                      Latest reset code: <code>{passwordResetCodes[reset.id]}</code>
+                    </div>
+                    <div class="reset-meta hint">Share this code securely with the requester.</div>
+                  {:else if reset.code_hint}
+                    <div class="reset-meta hint">Code hint: ends with {reset.code_hint}</div>
+                  {/if}
+                {:else if reset.resolved_at}
+                  <div class="reset-meta">
+                    Resolved {reset.resolved_at ? formatDate(reset.resolved_at) : ''}
+                  </div>
+                {/if}
+                <label class="reset-note-label" for={`reset-note-${reset.id}`}>
+                  Admin message
+                </label>
+                <textarea
+                  id={`reset-note-${reset.id}`}
+                  rows="2"
+                  value={passwordResetAdminNotes[reset.id] || ''}
+                  on:input={(event) => {
+                    passwordResetAdminNotes = {
+                      ...passwordResetAdminNotes,
+                      [reset.id]: event.currentTarget.value
+                    };
+                  }}
+                  placeholder="Add a note for the requester or audit log (optional)"
+                  disabled={isResetActionPending(reset.id)}
+                ></textarea>
+                <div class="reset-card-actions">
+                  {#if reset.status === 'pending'}
+                    <button
+                      class="primary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => approvePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-approve`] ? 'Generating...' : 'Approve & generate code'}
+                    </button>
+                    <button
+                      class="danger"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => denyPasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-deny`] ? 'Working...' : 'Deny'}
+                    </button>
+                  {:else if reset.status === 'approved'}
+                    <button
+                      class="primary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => approvePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-approve`] ? 'Generating...' : 'Generate new code'}
+                    </button>
+                    <button
+                      class="secondary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => completePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-complete`] ? 'Marking...' : 'Mark completed'}
+                    </button>
+                    <button
+                      class="danger"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => denyPasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-deny`] ? 'Working...' : 'Deny'}
+                    </button>
+                  {:else if reset.status === 'denied' || reset.status === 'expired'}
+                    <button
+                      class="primary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => approvePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-approve`] ? 'Re-opening...' : 'Re-open & generate code'}
+                    </button>
+                  {:else}
+                    <button
+                      class="primary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => approvePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-approve`] ? 'Generating...' : 'Generate new code'}
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+          {#if passwordResetPagination}
+            <div class="pagination">
+              <button
+                disabled={passwordResetPage === 1}
+                on:click={() => loadPasswordResetRequests(passwordResetPage - 1, passwordResetFilter)}
+              >
+                Previous
+              </button>
+              <span>
+                Page {passwordResetPagination?.page || passwordResetPage} of {passwordResetPagination?.pages || 1}
+              </span>
+              <button
+                disabled={
+                  passwordResetPagination?.pages
+                    ? passwordResetPage >= passwordResetPagination.pages
+                    : passwordResetRequests.length < 10
+                }
+                on:click={() => loadPasswordResetRequests(passwordResetPage + 1, passwordResetFilter)}
               >
                 Next
               </button>
@@ -3160,6 +3445,179 @@
     font-family: inherit;
     background: transparent;
     color: inherit;
+  }
+
+  .password-reset-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .reset-header {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+  }
+
+  .reset-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .reset-controls {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+  }
+
+  .reset-controls label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.8);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .reset-controls select {
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(8, 16, 44, 0.6);
+    color: #fff;
+  }
+
+  .reset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+
+  .reset-card {
+    background: rgba(8, 16, 44, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .reset-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .reset-email {
+    font-weight: 600;
+    font-size: 1rem;
+  }
+
+  .reset-meta {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .reset-meta.hint {
+    font-style: italic;
+  }
+
+  .reset-message {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 0.6rem;
+    font-size: 0.9rem;
+  }
+
+  .reset-message.admin {
+    border-left: 3px solid #6c63ff;
+  }
+
+  .reset-note-label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+  }
+
+  .reset-card textarea {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+    color: #fff;
+    padding: 0.6rem;
+    resize: vertical;
+  }
+
+  .reset-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .reset-card-actions button {
+    padding: 0.45rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .reset-card-actions button.primary {
+    background: #6c63ff;
+    border-color: #6c63ff;
+    color: #fff;
+  }
+
+  .reset-card-actions button.primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .reset-card-actions button.danger {
+    border-color: #ff6b6b;
+    color: #ff6b6b;
+  }
+
+  .code-banner {
+    padding: 0.6rem;
+    background: rgba(108, 99, 255, 0.12);
+    border: 1px solid rgba(108, 99, 255, 0.35);
+    border-radius: 8px;
+    font-size: 0.95rem;
+  }
+
+  .code-banner code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  .pill-pending {
+    background: rgba(255, 215, 0, 0.15);
+    color: #f5d742;
+  }
+
+  .pill-approved {
+    background: rgba(108, 99, 255, 0.15);
+    color: #6c63ff;
+  }
+
+  .pill-denied {
+    background: rgba(255, 107, 107, 0.15);
+    color: #ff6b6b;
+  }
+
+  .pill-completed {
+    background: rgba(0, 200, 83, 0.15);
+    color: #00c853;
+  }
+
+  .pill-expired {
+    background: rgba(255, 152, 0, 0.15);
+    color: #ff9800;
   }
 
   /* Artist Assignments Section - Google-like Design */
