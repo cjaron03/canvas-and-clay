@@ -61,7 +61,7 @@
   let passwordResetRequests = [];
   let passwordResetPagination = null;
   let passwordResetPage = 1;
-  let passwordResetFilter = 'pending';
+  let passwordResetFilter = 'all';
   let passwordResetLoading = false;
   let passwordResetError = '';
   let passwordResetNotice = '';
@@ -542,7 +542,7 @@
       const params = new URLSearchParams({
         page: page.toString(),
         per_page: '10',
-        status: status || 'pending'
+        status: status || 'all'
       });
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/password-resets?${params.toString()}`, {
         credentials: 'include',
@@ -606,10 +606,39 @@
   const completePasswordReset = (request) =>
     handlePasswordResetAction(request, 'complete', 'Failed to update password reset request');
 
+  const deletePasswordReset = async (request) => {
+    if (!request?.id) return;
+    const actionKey = `${request.id}-delete`;
+    passwordResetActionLoading = { ...passwordResetActionLoading, [actionKey]: true };
+    passwordResetNotice = '';
+    passwordResetError = '';
+
+    try {
+      const headers = await buildAuthedHeaders();
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/password-resets/${request.id}`,
+        {
+          method: 'DELETE',
+          headers,
+          credentials: 'include'
+        }
+      );
+      const data = await handleUserActionResponse(response, 'Failed to delete password reset request');
+      passwordResetNotice = data?.message || 'Password reset request deleted successfully';
+      await loadPasswordResetRequests(passwordResetPage, passwordResetFilter);
+    } catch (err) {
+      console.error('Password reset delete failed:', err);
+      passwordResetError = err?.message || 'Failed to delete password reset request';
+    } finally {
+      passwordResetActionLoading = { ...passwordResetActionLoading, [actionKey]: false };
+    }
+  };
+
   const isResetActionPending = (requestId) =>
     passwordResetActionLoading[`${requestId}-approve`] ||
     passwordResetActionLoading[`${requestId}-deny`] ||
-    passwordResetActionLoading[`${requestId}-complete`];
+    passwordResetActionLoading[`${requestId}-complete`] ||
+    passwordResetActionLoading[`${requestId}-delete`];
 
   const recomputeRoleCounts = (list = users) => {
     const summary = {
@@ -2191,6 +2220,7 @@
                   <div class="reset-meta">
                     Expires {reset.expires_at ? formatDate(reset.expires_at) : '—'}
                   </div>
+                  <div class="reset-meta hint">Reset codes expire 15 minutes after approval. Share the code with the requester promptly.</div>
                   {#if passwordResetCodes[reset.id]}
                     <div class="code-banner">
                       Latest reset code: <code>{passwordResetCodes[reset.id]}</code>
@@ -2199,6 +2229,10 @@
                   {:else if reset.code_hint}
                     <div class="reset-meta hint">Code hint: ends with {reset.code_hint}</div>
                   {/if}
+                {:else if reset.status === 'expired'}
+                  <div class="reset-meta" style="color: var(--error-color, #c5221f);">
+                    This reset code has expired. The requester will need a new code.
+                  </div>
                 {:else if reset.resolved_at}
                   <div class="reset-meta">
                     Resolved {reset.resolved_at ? formatDate(reset.resolved_at) : ''}
@@ -2236,6 +2270,13 @@
                     >
                       {passwordResetActionLoading[`${reset.id}-deny`] ? 'Working...' : 'Deny'}
                     </button>
+                    <button
+                      class="secondary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => deletePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-delete`] ? 'Deleting...' : 'Delete'}
+                    </button>
                   {:else if reset.status === 'approved'}
                     <button
                       class="primary"
@@ -2258,6 +2299,13 @@
                     >
                       {passwordResetActionLoading[`${reset.id}-deny`] ? 'Working...' : 'Deny'}
                     </button>
+                    <button
+                      class="secondary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => deletePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-delete`] ? 'Deleting...' : 'Delete'}
+                    </button>
                   {:else if reset.status === 'denied' || reset.status === 'expired'}
                     <button
                       class="primary"
@@ -2266,6 +2314,13 @@
                     >
                       {passwordResetActionLoading[`${reset.id}-approve`] ? 'Re-opening...' : 'Re-open & generate code'}
                     </button>
+                    <button
+                      class="secondary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => deletePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-delete`] ? 'Deleting...' : 'Delete'}
+                    </button>
                   {:else}
                     <button
                       class="primary"
@@ -2273,6 +2328,13 @@
                       on:click={() => approvePasswordReset(reset)}
                     >
                       {passwordResetActionLoading[`${reset.id}-approve`] ? 'Generating...' : 'Generate new code'}
+                    </button>
+                    <button
+                      class="secondary"
+                      disabled={isResetActionPending(reset.id)}
+                      on:click={() => deletePasswordReset(reset)}
+                    >
+                      {passwordResetActionLoading[`${reset.id}-delete`] ? 'Deleting...' : 'Delete'}
                     </button>
                   {/if}
                 </div>

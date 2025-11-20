@@ -792,6 +792,79 @@ def request_password_reset():
     }), 200
 
 
+@auth_bp.route('/password-reset/verify', methods=['POST'])
+@rate_limit("10 per hour")
+def verify_reset_code():
+    """Verify a reset code without changing the password."""
+    db, bcrypt, User, _, _, PasswordResetRequest, _ = get_dependencies()
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({'error': 'No data provided'}), 400
+
+    email = data.get('email', '').strip().lower()
+    reset_code = (data.get('code') or '').strip()
+
+    if not email or not reset_code:
+        return jsonify({'error': 'Email and reset code are required'}), 400
+
+    is_valid_email, error_msg = validate_email(email)
+    if not is_valid_email:
+        return jsonify({'error': error_msg}), 400
+
+    if len(reset_code) < 4 or len(reset_code) > 64:
+        return jsonify({'error': 'Reset code length is invalid'}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({'error': 'Invalid email or reset code'}), 400
+
+    reset_request = PasswordResetRequest.query.filter(
+        PasswordResetRequest.email == email,
+        PasswordResetRequest.status == 'approved'
+    ).order_by(
+        PasswordResetRequest.approved_at.desc().nullslast(),
+        PasswordResetRequest.created_at.desc()
+    ).first()
+
+    if not reset_request or not reset_request.reset_code_hash:
+        return jsonify({'error': 'No active reset request found. Please request a new one.'}), 400
+
+    now = datetime.now(timezone.utc)
+    if reset_request.expires_at:
+        expires_at_aware = reset_request.expires_at
+        if expires_at_aware.tzinfo is None:
+            expires_at_aware = expires_at_aware.replace(tzinfo=timezone.utc)
+        if expires_at_aware <= now:
+            reset_request.status = 'expired'
+            reset_request.reset_code_hash = None
+            reset_request.reset_code_hint = None
+            reset_request.expires_at = None
+            reset_request.resolved_at = now
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            log_audit_event(
+                'password_reset_expired',
+                user_id=reset_request.user_id,
+                email=reset_request.email,
+                details={'request_id': reset_request.id}
+            )
+            return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
+
+    if not bcrypt.check_password_hash(reset_request.reset_code_hash, reset_code):
+        log_audit_event(
+            'password_reset_code_invalid',
+            user_id=reset_request.user_id or user.id,
+            email=email,
+            details={'request_id': reset_request.id}
+        )
+        return jsonify({'error': 'Invalid reset code'}), 400
+
+    return jsonify({'message': 'Reset code verified successfully'}), 200
+
+
 @auth_bp.route('/password-reset/confirm', methods=['POST'])
 @rate_limit("5 per hour")
 def confirm_password_reset():

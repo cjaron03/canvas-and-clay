@@ -111,7 +111,7 @@ def build_engine_options(database_uri):
     return engine_options
 
 allow_insecure_cookies = os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true'
-PASSWORD_RESET_CODE_TTL_MINUTES = get_env_int('PASSWORD_RESET_CODE_TTL_MINUTES', 30)
+PASSWORD_RESET_CODE_TTL_MINUTES = get_env_int('PASSWORD_RESET_CODE_TTL_MINUTES', 15)
 MAX_PASSWORD_RESET_MESSAGE_LENGTH = get_env_int('PASSWORD_RESET_MESSAGE_MAX_LENGTH', 500)
 
 app = Flask(__name__)
@@ -2950,6 +2950,53 @@ def _serialize_user_with_last_login(user):
     }
 
 
+def _update_expired_password_resets():
+    """Automatically update approved password reset requests that have expired."""
+    now = datetime.now(timezone.utc)
+    
+    # get all approved requests with expiration times
+    approved_requests = PasswordResetRequest.query.filter(
+        PasswordResetRequest.status == 'approved',
+        PasswordResetRequest.expires_at.isnot(None)
+    ).all()
+    
+    app.logger.debug(f"Checking {len(approved_requests)} approved password reset requests for expiration")
+    
+    expired_requests = []
+    for req in approved_requests:
+        expires_at = req.expires_at
+        # ensure timezone-aware comparison
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        app.logger.debug(f"Request {req.id}: expires_at={expires_at}, now={now}, expired={expires_at <= now}")
+        
+        if expires_at <= now:
+            expired_requests.append(req)
+    
+    if expired_requests:
+        app.logger.info(f"Found {len(expired_requests)} expired password reset request(s), updating status...")
+        for req in expired_requests:
+            req.status = 'expired'
+            req.expires_at = None
+            log_audit_event(
+                'password_reset_expired',
+                user_id=req.user_id,
+                email=req.email,
+                details={
+                    'request_id': req.id,
+                    'auto_expired': True
+                }
+            )
+        
+        try:
+            db.session.commit()
+            app.logger.info(f"Successfully auto-expired {len(expired_requests)} password reset request(s)")
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Failed to auto-expire password reset requests")
+
+
 def _serialize_password_reset_request(request_obj):
     """Serialize password reset request for admin console."""
     def _iso(value):
@@ -3438,7 +3485,10 @@ def hard_delete_user(user_id):
 @limiter.limit("60 per minute")
 def admin_console_password_resets():
     """List password reset requests for admin review."""
-    status_filter = (request.args.get('status') or 'pending').strip().lower()
+    # automatically update expired requests before listing
+    _update_expired_password_resets()
+    
+    status_filter = (request.args.get('status') or 'all').strip().lower()
     page = request.args.get('page', 1)
     per_page = request.args.get('per_page', 10)
 
@@ -3510,7 +3560,8 @@ def approve_password_reset_request(request_id):
         expires_minutes = int(expires_minutes)
     except (TypeError, ValueError):
         expires_minutes = PASSWORD_RESET_CODE_TTL_MINUTES
-    expires_minutes = max(5, min(1440, expires_minutes))
+    # allow minimum of 1 minute for testing, max 1440 (24 hours)
+    expires_minutes = max(1, min(1440, expires_minutes))
 
     if reset_request.status == 'completed':
         return jsonify({'error': 'Request already completed'}), 400
@@ -3640,6 +3691,51 @@ def complete_password_reset_request(request_id):
     return jsonify({
         'message': 'Request marked complete',
         'request': _serialize_password_reset_request(reset_request)
+    }), 200
+
+
+@app.route('/api/admin/console/password-resets/<int:request_id>', methods=['DELETE', 'OPTIONS'])
+def delete_password_reset_request(request_id):
+    """Delete a password reset request."""
+    if request.method == 'OPTIONS':
+        # handle CORS preflight
+        return '', 200
+    
+    # apply decorators manually for DELETE method
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Authentication required'}), 401
+    if not current_user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    reset_request = db.session.get(PasswordResetRequest, request_id)
+    if not reset_request:
+        return jsonify({'error': 'Request not found'}), 404
+
+    email = reset_request.email
+    user_id = reset_request.user_id
+    previous_status = reset_request.status
+    
+    try:
+        db.session.delete(reset_request)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to delete password reset request")
+        return jsonify({'error': 'Failed to delete password reset request'}), 500
+
+    log_audit_event(
+        'password_reset_deleted',
+        user_id=user_id,
+        email=email,
+        details={
+            'request_id': request_id,
+            'deleted_by_id': current_user.id,
+            'previous_status': previous_status
+        }
+    )
+
+    return jsonify({
+        'message': 'Password reset request deleted successfully'
     }), 200
 
 
