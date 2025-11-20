@@ -157,6 +157,12 @@
 		if (showResetForm && !resetEmail && email) {
 			resetEmail = email;
 		}
+		if (!showResetForm) {
+			// reset form when hiding
+			resetNotes = '';
+			resetRequestError = '';
+			resetRequestSuccess = '';
+		}
 	};
 
 	const handleResetRequest = async () => {
@@ -504,6 +510,7 @@
 									placeholder="Account email"
 									required
 									disabled={resetRequestLoading}
+									autocomplete="email"
 								/>
 							</div>
 							<div class="form-group">
@@ -514,6 +521,7 @@
 									maxlength={RESET_MESSAGE_LIMIT}
 									rows="3"
 									disabled={resetRequestLoading}
+									autocomplete="off"
 								></textarea>
 								<div class="char-count">{resetCharCount}/{RESET_MESSAGE_LIMIT}</div>
 							</div>
@@ -524,7 +532,7 @@
 								<div class="message success">{resetRequestSuccess}</div>
 							{/if}
 							<div class="form-actions">
-								<button type="submit" class="secondary-button" disabled={resetRequestLoading}>
+								<button type="submit" class="primary-button" disabled={resetRequestLoading}>
 									{resetRequestLoading ? 'Sending...' : 'Submit reset request'}
 								</button>
 							</div>
@@ -911,65 +919,122 @@
 
 	.reset-help {
 		margin-top: 1.5rem;
-		border-top: 1px solid rgba(255, 255, 255, 0.1);
+		border-top: 1px solid var(--border-color);
 		padding-top: 1.5rem;
 	}
 
 	.link-button {
 		background: none;
 		border: none;
-		color: #6c63ff;
-		font-weight: 600;
+		color: var(--link-color);
+		font-weight: 500;
 		cursor: pointer;
 		padding: 0;
-		margin-bottom: 0.75rem;
+		margin-bottom: 1rem;
+		text-decoration: none;
+		font-size: 0.875rem;
+		transition: color 0.2s;
+	}
+
+	.link-button:hover {
+		color: var(--accent-color);
 		text-decoration: underline;
 	}
 
 	.reset-panel {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		padding: 1rem;
-		border-radius: 10px;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		padding: 1.5rem;
+		border-radius: 8px;
+		margin-top: 0.5rem;
+		animation: slideDown 0.2s ease-out;
+	}
+
+	@keyframes slideDown {
+		from {
+			opacity: 0;
+			transform: translateY(-8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
 	}
 
 	.reset-copy {
-		margin: 0 0 0.75rem;
-		font-size: 0.95rem;
-		color: rgba(255, 255, 255, 0.85);
+		margin: 0 0 1.25rem;
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+		line-height: 1.5;
+	}
+
+	.reset-form {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.reset-form .form-group {
+		margin: 0;
+	}
+
+	.reset-form input[type='email'] {
+		width: 100%;
+		padding: 0.875rem 1rem;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 4px;
+		color: var(--text-primary);
+		font-size: 1rem;
+		transition: all 0.2s;
+		box-sizing: border-box;
+	}
+
+	.reset-form input[type='email']:focus {
+		outline: none;
+		border-color: var(--accent-color);
+		box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+	}
+
+	.reset-form input[type='email']:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 
 	.reset-form textarea {
 		width: 100%;
-		padding: 0.75rem;
-		border-radius: 6px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: rgba(8, 16, 44, 0.4);
-		color: #fff;
+		padding: 0.875rem 1rem;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 4px;
+		color: var(--text-primary);
 		font-family: inherit;
+		font-size: 1rem;
 		resize: vertical;
+		transition: all 0.2s;
+		box-sizing: border-box;
+		min-height: 80px;
+	}
+
+	.reset-form textarea:focus {
+		outline: none;
+		border-color: var(--accent-color);
+		box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+	}
+
+	.reset-form textarea:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 
 	.char-count {
 		text-align: right;
-		font-size: 0.8rem;
-		color: rgba(255, 255, 255, 0.6);
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
 		margin-top: 0.25rem;
 	}
 
-	.secondary-button {
-		width: 100%;
-		padding: 0.75rem;
-		border-radius: 10px;
-		border: 1px solid #6c63ff;
-		background: transparent;
-		color: #6c63ff;
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.secondary-button:disabled {
-		cursor: not-allowed;
-		opacity: 0.6;
+	.reset-form .form-actions {
+		margin-top: 0;
 	}
 </style>

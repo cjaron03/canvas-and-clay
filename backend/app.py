@@ -2957,7 +2957,15 @@ def _serialize_password_reset_request(request_obj):
 
     expires_at = request_obj.expires_at
     now = datetime.now(timezone.utc)
-    is_expired = bool(expires_at and expires_at <= now)
+    
+    # ensure both datetimes are timezone-aware for comparison
+    is_expired = False
+    if expires_at:
+        expires_at_aware = expires_at
+        if expires_at.tzinfo is None:
+            # assume naive datetime is UTC
+            expires_at_aware = expires_at.replace(tzinfo=timezone.utc)
+        is_expired = expires_at_aware <= now
 
     return {
         'id': request_obj.id,

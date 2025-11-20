@@ -2211,10 +2211,10 @@
                   id={`reset-note-${reset.id}`}
                   rows="2"
                   value={passwordResetAdminNotes[reset.id] || ''}
-                  on:input={(event) => {
+                  on:input={(e) => {
                     passwordResetAdminNotes = {
                       ...passwordResetAdminNotes,
-                      [reset.id]: event.currentTarget.value
+                      [reset.id]: e.currentTarget.value
                     };
                   }}
                   placeholder="Add a note for the requester or audit log (optional)"
@@ -3450,7 +3450,7 @@
   .password-reset-tab {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.5rem;
   }
 
   .reset-header {
@@ -3459,12 +3459,14 @@
     flex-wrap: wrap;
     gap: 1rem;
     align-items: flex-end;
+    margin-bottom: 0.5rem;
   }
 
   .reset-subtitle {
     margin: 0.25rem 0 0;
-    font-size: 0.9rem;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
   }
 
   .reset-controls {
@@ -3474,35 +3476,95 @@
   }
 
   .reset-controls label {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.875rem;
+    color: var(--text-primary);
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.5rem;
+    font-weight: 500;
   }
 
   .reset-controls select {
-    padding: 0.4rem 0.6rem;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(8, 16, 44, 0.6);
-    color: #fff;
+    padding: 0.625rem 0.875rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 140px;
+  }
+
+  .reset-controls select:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.1);
+  }
+
+  .reset-controls select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+  }
+
+  .reset-controls select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .reset-controls button.secondary {
+    padding: 0.625rem 1rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .reset-controls button.secondary:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  .reset-controls button.secondary:active:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .reset-controls button.secondary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
   }
 
   .reset-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.25rem;
   }
 
   .reset-card {
-    background: rgba(8, 16, 44, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    padding: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 1rem;
+    transition: all 0.2s;
+  }
+
+  .reset-card:hover {
+    border-color: var(--accent-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
 
   .reset-card-header {
@@ -3515,109 +3577,196 @@
   .reset-email {
     font-weight: 600;
     font-size: 1rem;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
   }
 
   .reset-meta {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-top: 0.25rem;
   }
 
   .reset-meta.hint {
     font-style: italic;
+    color: var(--text-tertiary);
   }
 
   .reset-message {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    padding: 0.6rem;
-    font-size: 0.9rem;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    padding: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    line-height: 1.5;
+    border-left: 3px solid var(--border-color);
   }
 
   .reset-message.admin {
-    border-left: 3px solid #6c63ff;
+    border-left-color: var(--accent-color);
+    background: rgba(66, 133, 244, 0.08);
   }
 
   .reset-note-label {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    font-weight: 500;
+    margin-bottom: 0.25rem;
   }
 
   .reset-card textarea {
     width: 100%;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(0, 0, 0, 0.2);
-    color: #fff;
-    padding: 0.6rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 0.75rem;
     resize: vertical;
+    font-family: inherit;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+    box-sizing: border-box;
+  }
+
+  .reset-card textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+  }
+
+  .reset-card textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--bg-tertiary);
   }
 
   .reset-card-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+    margin-top: 0.25rem;
   }
 
   .reset-card-actions button {
-    padding: 0.45rem 0.8rem;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: transparent;
-    color: #fff;
+    padding: 0.625rem 1rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    font-family: inherit;
+    transition: all 0.2s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .reset-card-actions button.secondary {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .reset-card-actions button.secondary:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .reset-card-actions button:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
   }
 
   .reset-card-actions button.primary {
-    background: #6c63ff;
-    border-color: #6c63ff;
-    color: #fff;
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: white;
+  }
+
+  .reset-card-actions button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  .reset-card-actions button.primary:active:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .reset-card-actions button.primary:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    border-color: var(--border-color);
   }
 
   .reset-card-actions button.danger {
-    border-color: #ff6b6b;
-    color: #ff6b6b;
+    border-color: var(--error-color);
+    color: var(--error-color);
+    background: transparent;
+  }
+
+  .reset-card-actions button.danger:hover:not(:disabled) {
+    background: rgba(211, 47, 47, 0.1);
+    border-color: var(--error-color);
+  }
+
+  .reset-card-actions button.danger:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .code-banner {
-    padding: 0.6rem;
-    background: rgba(108, 99, 255, 0.12);
-    border: 1px solid rgba(108, 99, 255, 0.35);
-    border-radius: 8px;
-    font-size: 0.95rem;
+    padding: 0.75rem;
+    background: rgba(66, 133, 244, 0.12);
+    border: 1px solid rgba(66, 133, 244, 0.35);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    line-height: 1.5;
   }
 
   .code-banner code {
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--accent-color);
+    background: rgba(66, 133, 244, 0.1);
+    padding: 0.125rem 0.375rem;
+    border-radius: 3px;
   }
 
   .pill-pending {
-    background: rgba(255, 215, 0, 0.15);
-    color: #f5d742;
+    background: rgba(245, 158, 11, 0.16);
+    color: #b45309;
+    border-color: rgba(245, 158, 11, 0.4);
   }
 
   .pill-approved {
-    background: rgba(108, 99, 255, 0.15);
-    color: #6c63ff;
+    background: rgba(66, 133, 244, 0.12);
+    color: #1a73e8;
+    border-color: rgba(66, 133, 244, 0.35);
   }
 
   .pill-denied {
-    background: rgba(255, 107, 107, 0.15);
-    color: #ff6b6b;
+    background: rgba(211, 47, 47, 0.12);
+    color: #c5221f;
+    border-color: rgba(211, 47, 47, 0.35);
   }
 
   .pill-completed {
-    background: rgba(0, 200, 83, 0.15);
-    color: #00c853;
+    background: rgba(52, 168, 83, 0.12);
+    color: #137333;
+    border-color: rgba(52, 168, 83, 0.35);
   }
 
   .pill-expired {
-    background: rgba(255, 152, 0, 0.15);
-    color: #ff9800;
+    background: rgba(255, 152, 0, 0.16);
+    color: #b45309;
+    border-color: rgba(255, 152, 0, 0.4);
   }
 
   /* Artist Assignments Section - Google-like Design */

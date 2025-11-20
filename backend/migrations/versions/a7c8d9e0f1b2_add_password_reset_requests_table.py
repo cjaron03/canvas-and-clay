@@ -1,7 +1,7 @@
 """add_password_reset_requests_table
 
 Revision ID: a7c8d9e0f1b2
-Revises: f1a2b3c4d5e6
+Revises: a9b8c7d6e5f4
 Create Date: 2024-05-16 00:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'a7c8d9e0f1b2'
-down_revision = 'f1a2b3c4d5e6'
+down_revision = 'a9b8c7d6e5f4'
 branch_labels = None
 depends_on = None
 
