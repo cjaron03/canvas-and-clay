@@ -4,7 +4,7 @@ import json
 import secrets
 import string
 import sys
-from datetime import timedelta, datetime, timezone
+from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
 from dotenv import load_dotenv
@@ -597,11 +597,571 @@ def api_search():
     })
 
 
+# Artist CRUD Endpoints
+@app.route('/api/artists', methods=['GET'])
+def list_artists_page():
+    """ List all artists with pagenation, search, and filtering.
+    
+     Query Parameters:
+        page (int): Page number (default: 1)
+        per_page (int): Items per page (default: 20, max: 100)
+        search (str): Search term (searches last name, first name, phone number)
+        sort_by (str): sort by artist_id or artist_lname (artist_id default)
+        sort_order (str): order by ascending or descending (ascending default)
+
+    Returns:
+        200: Paginated list of artists with full details
+    """
+    # Get querey parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), 100)  # Cap at 100
+    search = request.args.get('search', '').strip()
+    sort_by = request.args.get('sort_by', 'artist_id').lower() # artist_id default
+    sort_order = request.args.get('sort_order', 'asc').lower() # asdcending default
+    
+    # Build base query, filter out deleted artists
+    query = db.session.query(Artist).filter(Artist.is_deleted==False)
+    
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            db.or_(
+                Artist.artist_fname.ilike(search_pattern),
+                Artist.artist_lname.ilike(search_pattern),
+                Artist.artist_phone.ilike(search_pattern)
+            )
+        )
+    
+    if sort_by == 'artist_lname':
+        sort_field = Artist.artist_lname
+    else:
+        sort_field = Artist.artist_id
+
+    if sort_order == 'desc':
+        query = query.order_by(sort_field.desc())
+    else:
+        query = query.order_by(sort_field.asc())
+    
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination
+    query = query.offset((page - 1) * per_page).limit(per_page)
+
+    # Execute query
+    results = query.all()
+
+    # Build response
+    artists = []
+    for artist in results:
+        artists.append({
+            'id': artist.artist_id,
+            'name': f"{artist.artist_fname} {artist.artist_lname}",
+            'email': artist.artist_email,
+            'site': artist.artist_site,
+            'bio': artist.artist_bio,
+            'phone': artist.artist_phone
+        })
+
+     # Calculate pagination metadata
+    total_pages = (total + per_page - 1) // per_page
+
+    return jsonify({
+        'artists': artists,
+        'pagination': {
+            'page': page,
+            'per_page': per_page,
+            'total': total,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1
+        }
+    })
+
+
+@app.route('/api/artists', methods=['POST'])
+@login_required
+@admin_required
+def create_artist():
+    """Create a new artist with auto-generated ID.
+        
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Auto-generates artist ID
+        - Audit logged
+    
+    Request Body: 
+        artist_fname (str, required): Artist first name
+        artist_lname (str, required): Artist last name
+        email        (str, optional): Artist email
+        artist_site  (str, optional): Artist website or social media
+        artist_bio   (str, optional): Artist biography/description
+        artist_phone (str, optional): Artist phone number - must be formatted as 
+                                                           (123)-456-7890
+        is_deleted   (bool, required): Deletion status -  always set to false 
+                                                        (only changed in deletion)
+        date_deleted (date, optional):  date of deletion - will be set to none
+        user_id      (str, optional): foreign key to users table
+    Returns:
+        201: Artist created sucessfully
+        400: Validation error
+        403: Permission denied
+        404: User ID not found
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+    
+    # Entry is missing artist_fname and/or artist_lname
+    required_fields = ['artist_fname', 'artist_lname']
+    missing_fields = [field for field in required_fields if not data.get(field)]
+    if missing_fields:
+        return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+    
+    # Verify user exists if provided
+    if data.get('user_id'):
+        user = User.query.get(data['user_id'])
+        if not user:
+            return jsonify({'error': f'User not found: {data["user_id"]}'}), 404
+        
+    # Generate new artist ID using cryptographically secure random generation
+    def generate_random_artist_id():
+        """Generate a random artist ID in format A#######"""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))
+            artist_id = f"A{random_part}"
+            if not Artist.query.get(artist_id):
+                return artist_id
+        raise ValueError("Failed to generate unique artwork ID after max attempts")
+    
+    new_artistid = generate_random_artist_id()
+
+    # Handling phone number if provided, as it is a CHAR(8)
+    # Format as (123)-456-7890
+    artist_phone = None
+    if data.get('artist_phone'):
+        try:
+            import re
+            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
+            artist_phone = str(data['artist_phone']).strip()
+            if not phone_regex.match(artist_phone):
+                return jsonify({'error': 'Invalid phone-number format. Expected (123)-456-7890'}), 400
+        except:
+            return jsonify({'error': 'Failed to validate phone-number'}), 400
+
+    # adding artist
+    try:
+        artist = Artist(
+            artist_id = new_artistid,
+            artist_fname = data['artist_fname'],
+            artist_lname = data['artist_lname'],
+            artist_email = data.get('email'),
+            artist_site = data.get('artist_site'),
+            artist_bio = data.get('artist_bio'),
+            artist_phone = artist_phone,
+            is_deleted = False,
+            date_deleted = None,
+            user_id = data.get('user_id')
+        )
+
+        db.session.add(artist)
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_created',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': new_artistid,
+                'artist_fname': data['artist_fname'],
+                'artist_lname': data['artist_lname'],
+            })
+        )
+
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(
+            f"Admin {current_user.email} created artist {new_artistid}: "
+            f"{data['artist_fname']} {data['artist_lname']}")
+        
+        return jsonify({
+            'message': 'Artist created successfully',
+            'artist': {
+                'id': new_artistid,
+                'artist_fname': artist.artist_fname,
+                'artist_lname': artist.artist_lname,
+                'email': artist.artist_email,
+                'artist_site': artist.artist_site,
+                'artist_bio': artist.artist_bio,
+                'artist_phone': artist.artist_phone,
+                'is_deleted': artist.is_deleted,
+                'date_deleted': artist.date_deleted,
+                'user_id': artist.user_id
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artist creation failed")
+        return jsonify({'error': 'Failed to create artist. Please try again.'}), 500
+
+
+@app.route('/api/artists/<artist_id>', methods=['PUT'])
+@login_required
+@admin_required
+def update_artist(artist_id):
+    """Update an existing artist
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Audit logged
+
+    Args:
+        artist_id: The ID of artist to update
+
+    Request Body: 
+        artist_fname (str, required): Artist first name
+        artist_lname (str, required): Artist last name
+        email (str, optional): Artist email
+        artist_site  (str, optional): Artist website or social media
+        artist_bio   (str, optional): Artist biography/description
+        artist_phone (str, optional): Artist phone number - must be formatted as 
+                                                           (123)-456-7890
+        user_id      (str, optional): foriegn key to user table
+    
+    Returns:
+        200: Artist updated successfully or no changes
+        400: Validation error
+        403: Permission denied
+        404: Artist not found, or artist is deleted
+    """
+    # Verify artists exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+    
+    # Verify artist is not deleted
+    if artist.is_deleted:
+        return jsonify({'error': 'Artist is deleted.'}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+
+    # Track changes for audit log
+    changes = {}
+
+    # Update artist first name
+    if 'artist_fname' in data and data['artist_fname'] != artist.artist_fname:
+        changes['artist_fname'] = {'old': artist.artist_fname, 'new': data['artist_fname']}
+        artist.artist_fname = data['artist_fname']
+    
+    # Update artist last name
+    if 'artist_lname' in data and data['artist_lname'] != artist.artist_lname:
+        changes['artist_lname'] = {'old': artist.artist_lname, 'new': data['artist_lname']}
+        artist.artist_lname = data['artist_lname']
+    
+    # Update artist email
+    if 'email' in data and data['email'] != artist.artist_email:
+        changes['email'] = {'old': artist.artist_email, 'new': data['email']}
+        artist.artist_email = data['email']
+
+    # Update artist site
+    if 'artist_site' in data and data['artist_site'] != artist.artist_site:
+        changes['artist_site'] = {'old': artist.artist_site, 'new': data['artist_site']}
+        artist.artist_site = data['artist_site']
+    
+    # Update artist bio
+    if 'artist_bio' in data and data['artist_bio'] != artist.artist_bio:
+        changes['artist_bio'] = {'old': artist.artist_bio, 'new': data['artist_bio']}
+        artist.artist_bio = data['artist_bio']
+    
+    # Update artist phone
+    if 'artist_phone' in data:
+        try:
+            import re
+            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
+            new_phone = str(data['artist_phone']).strip()
+            if not phone_regex.match(new_phone):
+                return jsonify({'error': 'Invalid phone-number format. Expected (123)-456-7890'}), 400
+           
+            if new_phone != artist.artist_phone:
+                changes['artist_phone'] = {
+                    'old': artist.artist_phone,
+                    'new': new_phone
+                }
+                artist.artist_phone = new_phone
+        except Exception as e:
+            return jsonify({'error': 'Failed to validate phone-number'}), 400
+        
+    # Update user id
+    if 'user_id' in data and data['user_id'] != artist.user_id:
+        user = User.query.get(data['user_id'])
+        if not user:
+            return jsonify({'error': f'User ID not found: {data["user_id"]}'}), 404
+        changes['user_id'] = {'old': artist.user_id, 'new': data['user_id']}
+        artist.user_id = data['user_id']
+    
+    # If no changes, return early
+    if not changes:
+        return jsonify({'message': 'No changes detected', 'artist': {'id': artist_id}}), 200
+
+    try:
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_updated',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': artist_id,
+                'changes': changes
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} updated artist {artist_id}")
+
+        return jsonify({
+            'message': 'Artist updated successfully',
+            'artist': {
+                'artist_id': artist.artist_id,
+                'artist_fname': artist.artist_fname,
+                'artist_lname': artist.artist_lname,
+                'email': artist.artist_email,
+                'artist_site': artist.artist_site,
+                'artist_bio': artist.artist_bio,
+                'artist_phone': artist.artist_phone,
+                'user_id': artist.user_id
+            }
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artist update failed")
+        return jsonify({'error': 'Failed to update artist. Please try again.'}), 500
+
+
+# need to add directory in front end /api/artists/[id]/restore
+@app.route('/api/artists/<artist_id>/restore', methods=['PUT'])
+@login_required
+@admin_required
+def restore_deleted_artist(artist_id):
+    """ Restores a SOFT deleted artist
+        - hard deletions will not be able to be restored
+        - will change date_deleted back to None
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Audit logged
+    Args:
+        - artwist_id: The artist ID to be restored
+
+    Returns:
+        200: Artist restored successfully
+        403: Permisison denied
+        404: Artist not found, artist is not deleted
+    """
+    # Verify artwork exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+    
+    # Verify artwork is currently deleted
+    if not artist.is_deleted:
+        return jsonify({'error': 'Artist is not deleted'}), 404
+    
+    try:
+        # restoring soft deleted artwork
+        artist.is_deleted = False
+        artist.date_deleted = None
+
+        artist_name = f"{artist.artist_fname} {artist.artist_lname}"
+        artist_id = artist.artist_id
+
+        is_deleted = artist.is_deleted
+        date_deleted = artist.date_deleted
+
+        db.session.commit()
+
+        # audit restoration
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='deleted_artist_restored',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_name': artist_name,
+                'artist_id': artist_id,
+                'is_deleted': is_deleted,
+                'date_deleted': date_deleted
+            })
+        )
+
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} restored artwork {artist_id}")
+
+        return jsonify({
+            'message': 'Deleted artist restored successfully',
+            'restored': {
+                'artist_id': artist_id,
+                'artist_name': artist_name,
+                'is_deleted': is_deleted,
+                'date_deleted': date_deleted
+            }
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Deleted Artist restoration failed")
+        return jsonify({'error': 'Failed to restore deleted artist. Please try again'}), 500
+
+
+
+@app.route('/api/artists/<artist_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_artist(artist_id):
+    """ Delete an artist 
+        - will only delete artists with no associated artwork dependencies
+           (as in, all artworks have been soft-deleted)
+        - if not marked as deleted, will change is_deleted to true and mark the date
+          of deletion
+        - if is_deleted is already set to true, it will hard delete it
+    Security:
+    - Requires authentication
+    - Requires admin role
+    - Audit logged
+    
+    Args:
+    - artist_id: the artist to delete
+    
+    Returns:
+        200: Artists deleted successfully
+        400: Artist is unable to be deleted due to existing artworks
+        403: Permission denied
+        404: Artist not found
+    """
+    # verify artist exists
+    artist = Artist.query.get(artist_id)
+    if not artist:
+        return jsonify({'error': 'Artist not found'}), 404
+    
+    # verify no data dependencies (will adjust this to soft delete after adjusting schema)
+    artwork_count = Artwork.query.filter_by(artist_id=artist_id, is_deleted=False).count()
+    if artwork_count > 0:
+        return jsonify({
+            'error': f'Cannot delete artist {artist_id}: {artwork_count} artworks still exist. '
+                     'Please delete or reassign artworks first.'
+        }), 400
+    
+    try:
+        # Grab deletion status
+        artist_name = f"{artist.artist_fname} {artist.artist_lname}"
+        deletion_date = date.today()
+        deletion_type = None
+        artworks = Artwork.query.filter_by(artist_id=artist.artist_id).all()
+        total_artworks = len(artworks)
+        total_photos = 0
+
+        # Hard deletion (if is_deleted is already set to True)
+        if artist.is_deleted:
+            
+            # Deleting data dependencies
+            for artwork in artworks:
+                # Grab photos associated with artwork
+                photos = ArtworkPhoto.query.filter_by(artwork_num=artwork.artwork_num).all()
+                total_photos += len(photos)
+
+                for photo in photos:
+                    try:
+                        delete_photo_files(photo.file_path, photo.thumbnail_path)
+                    except Exception as e:
+                        app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
+               
+                # Delete photo from ArtworkPhoto
+                ArtworkPhoto.query.filter_by(artwork_num=artwork.artwork_num).delete() 
+
+                # Delete artwork
+                db.session.delete(artwork)
+            
+            # Delete artist
+            db.session.delete(artist)
+            deletion_type = "Hard-deleted"
+        # Soft deletion (if artist has not been deleted before)
+        else:
+
+            # Grabbing number of photos for logging purposes
+            for artwork in artworks:
+                photos = ArtworkPhoto.query.filter_by(artwork_num=artwork.artwork_num).all()
+                total_photos += len(photos)
+
+            artist.is_deleted = True
+            artist.date_deleted = deletion_date
+            deletion_type = "Soft-deleted"
+
+        db.session.commit() 
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_deleted',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': artist_id,
+                'artist_name': artist_name,
+                'deletion_type': deletion_type,
+                'date_deleted': deletion_date.isoformat(),
+                'total_artworks': total_artworks,
+                'total_photos': total_photos
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} {deletion_type} artist {artist_id} ({artist_name}) "
+                        f"with {total_artworks} artworks and {total_photos} photos.")
+
+        return jsonify({
+            'message': 'Artist deleted successfully',
+            'deleted': {
+                'artist_id': artist_id,
+                'artist_name': artist_name,
+                'deletion_type': deletion_type,
+                'date_deleted': deletion_date.isoformat(),
+                'total_artworks': total_artworks,
+                'total_photos': total_photos
+            }
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Artist deletion failed")
+        return jsonify({'error': 'Failed to delete artist. Please try again.'}), 500
+
+
 # Artwork CRUD Endpoints
 @app.route('/api/artworks', methods=['GET'])
 @limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def list_artworks():
     """List all artworks with pagination, search, and filtering.
+       Will not show soft deleted artworks.
 
     Query Parameters:
         page (int): Page number (default: 1)
@@ -615,6 +1175,7 @@ def list_artworks():
 
     Returns:
         200: Paginated list of artworks with full details
+=======
     """
     # Get query parameters
     page = request.args.get('page', 1, type=int)
@@ -646,7 +1207,8 @@ def list_artworks():
                 Artist, Artwork.artist_id == Artist.artist_id
             ).filter(
                 Artist.user_id.isnot(None),
-                Artist.user_id == current_user_id
+                Artist.user_id == current_user_id,
+                Artwork.is_deleted == False
             )
             # Log for debugging
             app.logger.info(f"Filtering artworks for user_id={current_user_id}, email={current_user.email}, owned_only={owned_only}")
@@ -664,7 +1226,7 @@ def list_artworks():
             # Build base query with LEFT JOIN to handle artworks without artists
             query = db.session.query(Artwork, Artist).outerjoin(
                 Artist, Artwork.artist_id == Artist.artist_id
-            )
+            ).filter(Artwork.is_deleted==False)
 
         # Apply filters
         if search:
@@ -844,12 +1406,16 @@ def get_artwork(artwork_id):
 
     Returns:
         200: Complete artwork details
-        404: Artwork not found
+        404: Artwork not found, or artwork is deleted
     """
     # Get artwork
     artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
+    
+    # if artwork is deleted
+    if artwork.is_deleted:
+        return jsonify({'error': 'Artwork is deleted'}), 404
 
     # Get artist
     artist = db.session.get(Artist, artwork.artist_id)
@@ -894,7 +1460,7 @@ def get_artwork(artwork_id):
             'is_primary': photo.is_primary,
             'uploaded_at': photo.uploaded_at.isoformat()
         } for photo in photos]
-    })
+    }), 200
 
 
 @app.route('/api/artists', methods=['GET'])
@@ -905,7 +1471,7 @@ def list_artists():
         200: List of all artists with id and name
     """
     try:
-        artists = Artist.query.order_by(Artist.artist_fname, Artist.artist_lname).all()
+        artists = Artist.query.filter(Artist.is_deleted==False).order_by(Artist.artist_fname, Artist.artist_lname).all()
         return jsonify({
             'artists': [
                 {
@@ -969,7 +1535,7 @@ def create_artwork():
         201: Artwork created successfully
         400: Validation error
         403: Permission denied
-        404: Artist or storage not found
+        404: Artist or storage not found, or artist deleted
     """
     data = request.get_json()
     if not data:
@@ -986,6 +1552,7 @@ def create_artwork():
     if not artist:
         return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
 
+   
     # Authorization: admins can create any; artists can create only for their linked artist record
     if not current_user.is_admin:
         if current_user.normalized_role != 'artist':
@@ -995,6 +1562,10 @@ def create_artwork():
             log_rbac_denial('artwork', 'create', 'not_owner')
             return jsonify({'error': 'You can only create artworks for your own artist profile'}), 403
 
+    # Verify artist is not deleted
+    if artist.is_deleted:
+        return jsonify({'error': f'Artist is deleted: {data["artist_id"]}'}), 404
+    
     # Verify storage exists
     storage = db.session.get(Storage, data['storage_id'])
     if not storage:
@@ -1030,6 +1601,9 @@ def create_artwork():
             artwork_medium=data.get('medium'),
             date_created=date_created,
             artwork_size=data.get('artwork_size'),
+            is_viewable=True,
+            is_deleted=False,
+            date_deleted=None,
             artist_id=data['artist_id'],
             storage_id=data['storage_id']
         )
@@ -1065,6 +1639,9 @@ def create_artwork():
                 'medium': artwork.artwork_medium,
                 'size': artwork.artwork_size,
                 'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'is_viewable': artwork.is_viewable,
+                'is_deleted': artwork.is_deleted,
+                'date_deleted': artwork.date_deleted.isoformat() if artwork.date_deleted else None,
                 'artist_id': artwork.artist_id,
                 'storage_id': artwork.storage_id
             }
@@ -1102,12 +1679,16 @@ def update_artwork(artwork_id):
         200: Artwork updated successfully
         400: Validation error
         403: Permission denied
-        404: Artwork, artist, or storage not found
+        404: Artwork, artist, or storage not found, or artist deleted
     """
     # Verify artwork exists
     artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
+    
+    # Verify artwork is not deleted
+    if artwork.is_deleted:
+        return jsonify({'error': 'Artwork is deleted'}), 404
 
     # Check permissions: admin or artwork owner
     if not current_user.is_admin and not is_artwork_owner(artwork):
@@ -1131,6 +1712,10 @@ def update_artwork(artwork_id):
         artist = db.session.get(Artist, data['artist_id'])
         if not artist:
             return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
+        
+        # Verify artist is not deleted
+        if artist.is_deleted:
+            return jsonify({'error': f'Artist is deleted: {data["artist_id"]}'}), 404
         changes['artist_id'] = {'old': artwork.artist_id, 'new': data['artist_id']}
         artwork.artist_id = data['artist_id']
 
@@ -1199,6 +1784,8 @@ def update_artwork(artwork_id):
                 'medium': artwork.artwork_medium,
                 'size': artwork.artwork_size,
                 'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'is_deleted': artwork.is_deleted,
+                'date_deleted': artwork.date_deleted.isoformat() if artwork.date_deleted else None,
                 'artist_id': artwork.artist_id,
                 'storage_id': artwork.storage_id
             }
@@ -1208,6 +1795,84 @@ def update_artwork(artwork_id):
         db.session.rollback()
         app.logger.exception("Artwork update failed")
         return jsonify({'error': 'Failed to update artwork. Please try again.'}), 500
+
+
+# need to add directory in front end /api/artists/[id]/restore
+@app.route('/api/artworks/<artwork_id>/restore', methods=['PUT'])
+@login_required
+@admin_required
+def restore_deleted_artwork(artwork_id):
+    """ Restores a SOFT deleted artwork
+        - hard deletions will not be able to be restored
+        - will change date_deleted back to None
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Audit logged
+    Args:
+        - artwork_id: The artwork ID to be restored
+
+    Returns:
+        200: Artwork restored successfully
+        403: Permisison denied
+        404: Artwork not found, artwork is not deleted
+    """
+    # Verify artwork exists
+    artwork = Artwork.query.get(artwork_id)
+    if not artwork:
+        return jsonify({'error': 'Artwork not found'}), 404
+    
+    # Verify artwork is currently deleted
+    if not artwork.is_deleted:
+        return jsonify({'error': 'Artwork is not deleted'}), 404
+    
+    try:
+        # restoring soft deleted artwork
+        artwork.is_deleted = False
+        artwork.date_deleted = None
+
+        artwork_title = artwork.artwork_ttl
+        artist_id = artwork.artist_id
+        is_deleted = artwork.is_deleted
+        date_deleted = artwork.date_deleted
+        db.session.commit()
+
+        # audit restoration
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='deleted_artwork_restored',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artwork_id': artwork_id,
+                'title': artwork_title,
+                'artist_id': artist_id,
+                'is_deleted': is_deleted,
+                'date_deleted': date_deleted
+            })
+        )
+
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} restored artwork {artwork_id}")
+
+        return jsonify({
+            'message': 'Deleted artwork restored successfully',
+            'restored': {
+                'artwork_id': artwork_id,
+                'title': artwork_title,
+                'artist_id': artist_id,
+                'is_deleted': is_deleted,
+                'date_deleted': date_deleted
+            }
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Deleted Artwork restoration failed")
+        return jsonify({'error': 'Failed to restore deleted artwork. Please try again'}), 500
 
 
 @app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
@@ -1244,20 +1909,34 @@ def delete_artwork(artwork_id):
     photo_count = len(photos)
 
     try:
-        # Delete photo files from filesystem
-        for photo in photos:
-            try:
-                delete_photo_files(photo.file_path, photo.thumbnail_path)
-            except Exception as e:
-                app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
-
-        # Delete photo database records
-        ArtworkPhoto.query.filter_by(artwork_num=artwork_id).delete()
-
-        # Delete artwork
+        deletion_type = None # specifying hard/soft delete
+        deletion_date = date.today() # date of deletion
         artwork_title = artwork.artwork_ttl
         artist_id = artwork.artist_id
-        db.session.delete(artwork)
+
+        # hard deletion - also deletes photos
+        if artwork.is_deleted:
+            # Delete photo files from filesystem
+            for photo in photos:
+                try:
+                    delete_photo_files(photo.file_path, photo.thumbnail_path)
+                except Exception as e:
+                    app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
+
+            # Delete photo database records
+            ArtworkPhoto.query.filter_by(artwork_num=artwork_id).delete()
+
+            # Delete artwork
+            db.session.delete(artwork)
+            deletion_type = "Hard-deleted"
+
+        else:
+            artwork.is_deleted = True
+            artwork.date_deleted = deletion_date
+            deletion_type = "Soft-deleted"
+
+        # Commit artwork     
+        
         db.session.commit()
 
         # Audit log
@@ -1271,7 +1950,9 @@ def delete_artwork(artwork_id):
                 'artwork_id': artwork_id,
                 'title': artwork_title,
                 'artist_id': artist_id,
-                'photos_deleted': photo_count
+                'photos_deleted': photo_count,
+                'deletion_type': deletion_type,
+                'deletion_date': deletion_date.isoformat()
             })
         )
         db.session.add(audit_log)
@@ -3028,6 +3709,61 @@ def _ensure_bootstrap_on_first_request():
     except Exception as e:
         app.logger.warning(f"Bootstrap initialization skipped: {e}")
         # Don't set _bootstrap_complete, will retry on next request
+
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
+
+scheduler = None
+# scheduler for deletion of soft-deleted items over 30 days
+def start_deletion_scheduler():
+    """ The scheduler for running auto-deletion tasks
+        for items such as artwork that have been soft-deleted
+        for longer than 30 days. Will only start in the case 
+        of there being no existing scheduler to prevent
+        multiple instances of a scheduler.
+    """
+    global scheduler
+    if scheduler is None:
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(
+            func=scheduled_artwork_deletion,
+            trigger='interval',
+            days=1
+        )
+        scheduler.add_job(
+            func=scheduled_artist_deletion,
+            trigger='interval',
+            days=1
+        )
+        scheduler.start()
+        app.logger.info("Deletion Scheduler started - using APScheduler.")
+    else:
+        app.logger.info("Deletion Scheduler already running, skipping start.")
+    
+
+# for stopping the deletion scheduler, mostly for testing purposes
+def stop_deletion_scheduler():
+    """ Function to stop the deletion scheduler.
+
+        Mostly for testing purposes, since the
+        scheduler runs in the backgound and calling
+        docker compose down automatically shuts down
+        the scheduler due is specifically being a daemon. 
+        
+        Allows for control during testing, as well as a 
+        fallback in the case of wanting to stop scheduled
+        deletions. 
+    """
+    global scheduler
+    if scheduler:
+        scheduler.shutdown(wait=False)
+        scheduler = None
+        app.logger.info("Deletion Scheduler has stopped - using APScheduler.")
+
+# ensure scheduler not running during testing - uncomment to run schedular
+#if not app.config.get("TESTING", False):
+#    start_deletion_scheduler()
 
 if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
