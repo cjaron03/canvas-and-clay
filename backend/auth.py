@@ -923,13 +923,13 @@ def confirm_password_reset():
                 db.session.commit()
             except Exception:
                 db.session.rollback()
-        log_audit_event(
-            'password_reset_expired',
-            user_id=reset_request.user_id,
-            email=reset_request.email,
-            details={'request_id': reset_request.id}
-        )
-        return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
+            log_audit_event(
+                'password_reset_expired',
+                user_id=reset_request.user_id,
+                email=reset_request.email,
+                details={'request_id': reset_request.id}
+            )
+            return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
 
     if not bcrypt.check_password_hash(reset_request.reset_code_hash, reset_code):
         log_audit_event(
