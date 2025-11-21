@@ -963,3 +963,134 @@ def confirm_password_reset():
     )
 
     return jsonify({'message': 'Password updated successfully'}), 200
+
+
+@auth_bp.route('/change-password', methods=['POST', 'OPTIONS'])
+def change_password():
+    """Change user's password (requires current password)."""
+    if request.method == 'OPTIONS':
+        # handle CORS preflight
+        return '', 200
+    
+    # apply decorators manually for POST method
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    db, bcrypt, User, _, _, _, _ = get_dependencies()
+    
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password', '').strip()
+    new_password = data.get('new_password', '').strip()
+    
+    if not current_password:
+        return jsonify({'error': 'Current password is required'}), 400
+    
+    if not new_password:
+        return jsonify({'error': 'New password is required'}), 400
+    
+    # validate new password
+    is_valid, error_msg = validate_password(new_password)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
+    
+    # block common passwords
+    if is_common_password(new_password):
+        log_audit_event('alert_common_password_blocked', user_id=current_user.id, email=current_user.email, details={'reason': 'common_password'})
+        return jsonify({'error': 'Password is too common. Please choose a stronger password.'}), 400
+    
+    # verify current password
+    if not bcrypt.check_password_hash(current_user.hashed_password, current_password):
+        log_audit_event('password_change_failed', user_id=current_user.id, email=current_user.email, details={'reason': 'incorrect_current_password'})
+        return jsonify({'error': 'Current password is incorrect'}), 400
+    
+    # check if new password is same as current
+    if bcrypt.check_password_hash(current_user.hashed_password, new_password):
+        return jsonify({'error': 'New password must be different from current password'}), 400
+    
+    # update password
+    try:
+        current_user.hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
+        # invalidate remember token to force re-login
+        current_user.remember_token = None
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update password'}), 500
+    
+    log_audit_event(
+        'password_changed',
+        user_id=current_user.id,
+        email=current_user.email,
+        details={'self_change': True}
+    )
+    
+    return jsonify({'message': 'Password updated successfully'}), 200
+
+
+@auth_bp.route('/change-email', methods=['POST', 'OPTIONS'])
+def change_email():
+    """Change user's email address."""
+    if request.method == 'OPTIONS':
+        # handle CORS preflight
+        return '', 200
+    
+    # apply decorators manually for POST method
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    db, bcrypt, User, _, _, _, _ = get_dependencies()
+    
+    data = request.get_json(silent=True) or {}
+    new_email = data.get('new_email', '').strip().lower()
+    password = data.get('password', '').strip()
+    
+    if not new_email:
+        return jsonify({'error': 'New email is required'}), 400
+    
+    if not password:
+        return jsonify({'error': 'Password is required to change email'}), 400
+    
+    # validate email format
+    is_valid, error_msg = validate_email(new_email)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
+    
+    # verify password
+    if not bcrypt.check_password_hash(current_user.hashed_password, password):
+        log_audit_event('email_change_failed', user_id=current_user.id, email=current_user.email, details={'reason': 'incorrect_password', 'attempted_email': new_email})
+        return jsonify({'error': 'Password is incorrect'}), 400
+    
+    # check if email is already in use
+    existing_user = User.query.filter_by(email=new_email).first()
+    if existing_user and existing_user.id != current_user.id:
+        return jsonify({'error': 'Email address is already in use'}), 400
+    
+    # check if same email
+    if current_user.email.lower() == new_email:
+        return jsonify({'error': 'New email must be different from current email'}), 400
+    
+    old_email = current_user.email
+    
+    # update email
+    try:
+        current_user.email = new_email
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update email'}), 500
+    
+    log_audit_event(
+        'email_changed',
+        user_id=current_user.id,
+        email=old_email,
+        details={'old_email': old_email, 'new_email': new_email, 'self_change': True}
+    )
+    
+    return jsonify({
+        'message': 'Email updated successfully',
+        'user': {
+            'id': current_user.id,
+            'email': current_user.email,
+            'role': current_user.normalized_role
+        }
+    }), 200

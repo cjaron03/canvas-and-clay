@@ -3739,6 +3739,107 @@ def delete_password_reset_request(request_id):
     }), 200
 
 
+@app.route('/api/account/admin-info', methods=['GET'])
+@login_required
+@admin_required
+@limiter.limit("30 per minute")
+def get_personal_admin_info():
+    """Get personal admin account information and statistics."""
+    try:
+        # get recent audit log entries for this admin (last 10)
+        recent_actions = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id
+        ).order_by(AuditLog.created_at.desc()).limit(10).all()
+        
+        # count admin actions
+        password_resets_approved = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'password_reset_approved'
+        ).count()
+        
+        password_resets_denied = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'password_reset_denied'
+        ).count()
+        
+        users_promoted = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'user_promoted'
+        ).count()
+        
+        users_demoted = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'user_demoted'
+        ).count()
+        
+        # get personal upload statistics
+        photos_uploaded = ArtworkPhoto.query.filter(
+            ArtworkPhoto.uploaded_by == current_user.id
+        ).count()
+        
+        # get artworks count (if user has assigned artists)
+        assigned_artists = Artist.query.filter_by(user_id=current_user.id).all()
+        artist_ids = [a.artist_id for a in assigned_artists]
+        artworks_count = 0
+        if artist_ids:
+            artworks_count = Artwork.query.filter(
+                Artwork.artist_id.in_(artist_ids),
+                Artwork.is_deleted == False
+            ).count()
+        
+        # get last login from audit log
+        last_login = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'login_success'
+        ).order_by(AuditLog.created_at.desc()).first()
+        
+        # get password/email change history
+        password_changed = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'password_changed'
+        ).order_by(AuditLog.created_at.desc()).first()
+        
+        email_changed = AuditLog.query.filter(
+            AuditLog.user_id == current_user.id,
+            AuditLog.event_type == 'email_changed'
+        ).order_by(AuditLog.created_at.desc()).first()
+        
+        def _iso(value):
+            return value.isoformat() if value else None
+        
+        return jsonify({
+            'account_info': {
+                'email': current_user.email,
+                'role': current_user.normalized_role,
+                'created_at': _iso(current_user.created_at),
+                'last_login': _iso(last_login.created_at) if last_login else None,
+                'password_last_changed': _iso(password_changed.created_at) if password_changed else None,
+                'email_last_changed': _iso(email_changed.created_at) if email_changed else None
+            },
+            'statistics': {
+                'password_resets_approved': password_resets_approved,
+                'password_resets_denied': password_resets_denied,
+                'users_promoted': users_promoted,
+                'users_demoted': users_demoted,
+                'photos_uploaded': photos_uploaded,
+                'artworks_count': artworks_count,
+                'assigned_artists': len(assigned_artists)
+            },
+            'recent_actions': [
+                {
+                    'id': log.id,
+                    'event_type': log.event_type,
+                    'created_at': _iso(log.created_at),
+                    'details': json.loads(log.details) if log.details else None
+                }
+                for log in recent_actions
+            ]
+        }), 200
+    except Exception as e:
+        app.logger.exception("Error in get_personal_admin_info")
+        return jsonify({'error': 'Failed to load admin information'}), 500
+
+
 # CLI confirmation tokens storage (in-memory, expires after 30 seconds)
 _cli_confirmation_tokens = {}
 

@@ -130,6 +130,12 @@
   onMount(async () => {
     // Initialize auth first (layout also calls this, but we need to ensure it's done)
     await auth.init();
+    
+    // Read tab from URL query parameter
+    const tabParam = $page.url.searchParams.get('tab');
+    if (tabParam && ['overview', 'security', 'requests', 'users', 'database', 'cli'].includes(tabParam)) {
+      activeTab = tabParam;
+    }
 
     // Restore persisted alert review state so previously reviewed alerts stay hidden
     alertReviewState = readStoredAlertReviewState();
