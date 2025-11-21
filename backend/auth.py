@@ -909,16 +909,20 @@ def confirm_password_reset():
         return jsonify({'error': 'No active reset request found. Please request a new one.'}), 400
 
     now = datetime.now(timezone.utc)
-    if reset_request.expires_at and reset_request.expires_at <= now:
-        reset_request.status = 'expired'
-        reset_request.reset_code_hash = None
-        reset_request.reset_code_hint = None
-        reset_request.expires_at = None
-        reset_request.resolved_at = now
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+    if reset_request.expires_at:
+        expires_at = reset_request.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= now:
+            reset_request.status = 'expired'
+            reset_request.reset_code_hash = None
+            reset_request.reset_code_hint = None
+            reset_request.expires_at = None
+            reset_request.resolved_at = now
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
         log_audit_event(
             'password_reset_expired',
             user_id=reset_request.user_id,

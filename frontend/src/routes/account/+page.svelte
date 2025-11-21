@@ -5,9 +5,6 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
 
   let activeSection = 'profile';
-  let loading = false;
-  let error = '';
-  let success = '';
 
   // password change
   let currentPassword = '';
