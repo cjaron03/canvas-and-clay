@@ -1,6 +1,7 @@
 """Tests for authentication endpoints and session security."""
+from datetime import datetime, timezone, timedelta
 import pytest
-from app import app, db, User
+from app import app, db, User, PasswordResetRequest, bcrypt
 
 
 @pytest.fixture
@@ -553,3 +554,90 @@ class TestCSRFProtection:
         
         # should fail with 400
         assert response.status_code == 400
+
+
+class TestPasswordResetFlow:
+    """Tests for manual password reset workflow endpoints."""
+
+    def test_password_reset_request_creates_entry(self, client, sample_user):
+        """Verify requesting a reset creates a pending record."""
+        client.post('/auth/register', json=sample_user)
+
+        response = client.post('/auth/password-reset/request', json={
+            'email': sample_user['email'],
+            'message': 'Please reset my password'
+        })
+        assert response.status_code == 200
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            assert entry is not None
+            assert entry.status == 'pending'
+            assert entry.user_message is not None
+
+    def test_password_reset_request_deduplicates(self, client, sample_user):
+        """Ensure duplicate requests are ignored while still returning 200."""
+        client.post('/auth/register', json=sample_user)
+        client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+
+        response = client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+        assert response.status_code == 200
+        data = response.get_json()
+        assert 'pending' in data['message'].lower()
+
+        with app.app_context():
+            assert PasswordResetRequest.query.filter_by(email=sample_user['email']).count() == 1
+
+    def test_password_reset_confirm_success(self, client, sample_user):
+        """End-to-end reset confirmation updates the stored password hash."""
+        client.post('/auth/register', json=sample_user)
+        client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+        reset_code = 'RESETCODE12'
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry.status = 'approved'
+            entry.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
+            entry.reset_code_hint = reset_code[-4:]
+            entry.expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+            db.session.commit()
+
+        response = client.post('/auth/password-reset/confirm', json={
+            'email': sample_user['email'],
+            'code': reset_code,
+            'password': 'BrandNewPass123'
+        })
+        assert response.status_code == 200
+
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert bcrypt.check_password_hash(user.hashed_password, 'BrandNewPass123')
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            assert entry.status == 'completed'
+
+    def test_password_reset_confirm_expired_code(self, client, sample_user):
+        """Expired reset codes are rejected and marked as expired."""
+        client.post('/auth/register', json=sample_user)
+        client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+        reset_code = 'EXPIRED12'
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry.status = 'approved'
+            entry.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
+            entry.reset_code_hint = reset_code[-4:]
+            entry.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.session.commit()
+
+        response = client.post('/auth/password-reset/confirm', json={
+            'email': sample_user['email'],
+            'code': reset_code,
+            'password': 'AnotherPass123'
+        })
+        assert response.status_code == 400
+        data = response.get_json()
+        assert 'expired' in data['error'].lower()
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            assert entry.status == 'expired'

@@ -311,7 +311,7 @@ see `backend/tests/test_rbac_rate_limits.py` for comprehensive test coverage.
   - [x] Log account lockout events
   - [x] Log rate limit exceeded events
   - [ ] Log admin actions and role changes (pending admin promotion endpoint)
-  - [ ] Log sensitive operations (password resets, account modifications)
+  - [x] Log sensitive operations (password resets, account modifications)
   - [ ] Log file uploads (pending file upload feature)
   - [ ] Set up log rotation and aggregation (operational concern)
   - [ ] Configure alerting for suspicious patterns (operational concern)
