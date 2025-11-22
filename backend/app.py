@@ -583,7 +583,7 @@ def api_search():
 
             items.append(photo_item)
 
-    except Exception as exc:
+    except Exception:
         app.logger.exception("Search failed for query '%s'", query)
         return jsonify({
             'query': raw_query,
@@ -897,8 +897,8 @@ def get_artwork(artwork_id):
     })
 
 
-@app.route('/api/artists', methods=['GET'])
-def list_artists():
+@app.route('/api/artists_dropdown', methods=['GET'])
+def list_artists_dropdown():
     """List all artists for dropdown selection.
     
     Returns:
