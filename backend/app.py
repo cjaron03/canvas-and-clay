@@ -597,7 +597,6 @@ def api_search():
     })
 
 
-# Artwork CRUD Endpoints
 @app.route('/api/artworks', methods=['GET'])
 @limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def list_artworks():
@@ -615,6 +614,14 @@ def list_artworks():
 
     Returns:
         200: Paginated list of artworks with full details
+        JSON:
+            artworks: 
+                id, title, medium, size, date_created
+                artist: {id, name, email, user_id}
+                storage: {id, location, type} or null
+                primary_photo: {id, thumbnail_url} or null
+                photo_count: integer
+            pagination: {page, per_page, total, total_pages, has_next, has_prev}
     """
     # Get query parameters
     page = request.args.get('page', 1, type=int)
@@ -631,7 +638,7 @@ def list_artworks():
         app.logger.info(f"list_artworks called with: owned_only={owned_only}, page={page}, per_page={per_page}, search={search}, artist_id={artist_id}")
         app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'N/A'}")
         
-        # Build base query - use inner join when filtering by ownership to ensure artist exists
+        # Build base query. Use inner join when filtering by ownership to ensure artist exists
         if owned_only:
             app.logger.info(f"owned_only is True, checking authentication...")
             if not current_user.is_authenticated:
@@ -918,6 +925,187 @@ def list_artists_dropdown():
         }), 200
     except Exception as e:
         app.logger.exception("Failed to list artists")
+        return jsonify({'error': 'Failed to load artists'}), 500
+
+
+@app.route('/api/artists', methods=['GET'])
+@limiter.limit(get_rate_limit_by_identity)
+def list_artists_catalog():
+    """
+    List all artists after search filters are applied with pagination details.
+
+    Query Parameters:
+        page (int): Page number (default: 1)
+        per_page (int): Items per page (default: 20, max: 100)
+        search (str): Search term
+        medium (str): Filter by medium
+        storage_id (str): Filter by storage location ID
+        ordering (str): Sort order for results (title_asc/title_desc, default: title_asc)
+        owned_only (bool): Implements views by account permissions
+    Returns:
+        200: List of artists with pagination details
+        {
+        artists: [
+            {
+                'id': artist.artist_id,
+                'first_name': artist.artist_fname,
+                'last_name': artist.artist_lname,
+                'email': artist.artist_email,
+                'user_id': artist.user_id,
+                'photo': TODO
+            }
+            // more artists
+        ],
+        pagination: 
+        {
+            'page': page,
+            'per_page': per_page,
+            'total_num_relevant_artists': total_num_relevant_artists,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1
+        }
+    """
+
+    # Get query parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), 100)
+    search = request.args.get('search', '').strip()
+    medium = request.args.get('medium', '').strip()
+    storage_id = request.args.get('storage_id', '').strip()
+    if not storage_id:
+        storage_id = request.args.get('location', '').strip()
+    ordering = request.args.get('ordering', 'name_asc').strip().lower()
+    owned_only = request.args.get('owned', 'false').lower() == 'true'
+
+    try:
+        # Log all query parameters for debugging
+        app.logger.info(f"/artists GET called with: owned_only={owned_only}, page={page}, per_page={per_page},"
+                        f"search={search}, medium={medium}, storage_id={storage_id}"
+                        f"ordering={ordering}, owned_only={owned_only}")
+        app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'auth N/A'}")
+       
+    #   TODO check that this works when I'm signed in as an artist-user profile 
+        current_user_id = None
+        if owned_only:
+            if not current_user.is_authenticated:
+                return jsonify({'error': 'Authentication required'}), 401
+            current_user_id = int(current_user.id)
+
+        # Helper function to build the base query which has all artists. Equivalent SQL: 
+        # SELECT artist_id, artist_fname, artist_lname
+        # FROM artist
+        # LEFT JOIN artwork ON artwork.artist_id = artist.artist_id
+        # LEFT JOIN storage ON artwork.storage_id = storage.storage_id
+        def base_query(*entities):
+            query = db.session.query(*entities).select_from(Artist)
+            query = query.outerjoin(Artwork, Artwork.artist_id == Artist.artist_id)
+            query = query.outerjoin(Storage, Artwork.storage_id == Storage.storage_id)
+            return query
+
+        # Helper function to apply search filters to the base query
+        def apply_filters(query):
+            # if the user is an artist, only shows that artist's entry
+            if current_user_id is not None:
+                query = query.filter(
+                    Artist.user_id.isnot(None),
+                    Artist.user_id == current_user_id
+                )
+            if medium:
+                query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+            if storage_id:
+                query = query.filter(Artwork.storage_id == storage_id)
+            if search:
+                like_pattern = f"%{search}%"
+                search_filters = [
+                    Artist.artist_fname.ilike(like_pattern),
+                    Artist.artist_lname.ilike(like_pattern),
+                    Artist.artist_id.ilike(like_pattern),
+                    Artist.artist_bio.ilike(like_pattern),
+                    Storage.storage_loc.ilike(like_pattern),
+                    Artwork.artwork_medium.ilike(like_pattern)
+                ]
+                query = query.filter(db.or_(*search_filters))
+            return query
+
+        # Builds ordering_map to order by first name, then last name
+        ordering_map = {
+            'name_asc': [
+                Artist.artist_fname.asc(),
+                Artist.artist_lname.asc(),
+            ],
+            'name_desc': [
+                Artist.artist_fname.desc(),
+                Artist.artist_lname.desc(),
+            ]
+        }
+        # Assigns the ordering preference to order_by_clauses which now has the full ordering scheme
+        order_by_clauses = ordering_map.get(ordering, ordering_map['name_asc'])
+
+        # Builds a SQL query that incorporates the base query, applies filters, distinct results, and ordering
+        # first and last name are also fetched for ordering. 
+        results_query = apply_filters(
+            base_query(
+                Artist.artist_id,
+                Artist.artist_fname,
+                Artist.artist_lname
+            )
+        ).distinct()
+        for clause in order_by_clauses:
+            results_query = results_query.order_by(clause)
+
+        # Gets the TOTAL result count for pagination purposes
+        count_query = apply_filters(
+            base_query(db.func.count(db.distinct(Artist.artist_id)))
+        )
+        total_num_relevant_artists = count_query.scalar() or 0
+
+        # all() calls the results_query and assigns the results to rows
+        # includes pagination so only the relevant artists for that page will show up
+        rows = results_query.offset((page - 1) * per_page).limit(per_page).all()
+        # Builds a simple list of artist_ids that are present in rows
+        artist_ids = [row.artist_id for row in rows]
+
+        # Builds artist_map, a dictionary with the id as key and artist row as the value
+        artist_map = {}
+        if artist_ids:
+            # SELECT * FROM artist WHERE artist_id IN (artist_ids);
+            artist_records = Artist.query.filter(
+                Artist.artist_id.in_(artist_ids)
+            ).all()
+            artist_map = {artist.artist_id: artist for artist in artist_records}
+
+        ordered_artists = []
+        for artist_id in artist_ids:
+            artist = artist_map.get(artist_id)
+            if not artist:
+                continue
+            ordered_artists.append({
+                'id': artist.artist_id,
+                'first_name': artist.artist_fname,
+                'last_name': artist.artist_lname,
+                'email': artist.artist_email,
+                'user_id': artist.user_id,
+                'photo': None
+            })
+
+        # Tells the front end how many pages are needed for the entire query
+        total_pages = (total_num_relevant_artists + per_page - 1) // per_page if total_num_relevant_artists > 0 else 0
+        pagination = {
+            'page': page,
+            'per_page': per_page,
+            'total_num_relevant_artists': total_num_relevant_artists,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1
+        }
+
+        return jsonify({
+            'artists': ordered_artists,
+            'pagination': pagination
+        }), 200
+    except Exception:
+        app.logger.exception("Failed to list artists with filters")
         return jsonify({'error': 'Failed to load artists'}), 500
 
 

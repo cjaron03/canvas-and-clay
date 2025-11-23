@@ -13,7 +13,7 @@ export const load = async ({ params, fetch }) => {
           accept: 'application/json'
         }
       }),
-      fetch(`${API_BASE_URL}/api/artists`, {
+      fetch(`${API_BASE_URL}/api/artists_dropdown`, {
         headers: {
           accept: 'application/json'
         }
@@ -72,4 +72,3 @@ export const load = async ({ params, fetch }) => {
     throw error(500, message);
   }
 };
-

@@ -6,7 +6,7 @@ export const load = async ({ fetch }) => {
   try {
     // Fetch artists and storage locations in parallel
     const [artistsResponse, storageResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/artists`, {
+      fetch(`${API_BASE_URL}/api/artists_dropdown`, {
         headers: {
           accept: 'application/json'
         }

@@ -45,7 +45,7 @@ export const load = async ({ url, fetch }) => {
     }
 
     const data = await response.json();
-    const artistsResponse = await fetch(`${API_BASE_URL}/api/artists`, {
+    const artistsResponse = await fetch(`${API_BASE_URL}/api/artists_dropdown`, {
       headers: {
         accept: 'application/json'
       }

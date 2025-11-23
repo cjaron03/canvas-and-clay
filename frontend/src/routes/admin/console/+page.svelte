@@ -608,7 +608,7 @@
 
       // Fallback to public artists list if admin endpoint fails for any reason
       if (!response.ok) {
-        response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists`, {
+        response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists_dropdown`, {
           headers: { accept: 'application/json' }
         });
       }

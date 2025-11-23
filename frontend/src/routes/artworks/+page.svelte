@@ -64,7 +64,6 @@
     <div class="filter-group">
       <label for="artist_id">Artist</label>
       <select id="artist_id" name="artist_id" on:change={handleSelectChange}>
-        <!-- creates teh all artists option in the dropdown -->
         <option value="" selected={!data.filters.artistId}>
           All artists
         </option>
@@ -85,7 +84,6 @@
     <div class="filter-group">
       <label for="storage_id">Location</label>
       <select id="storage_id" name="storage_id" on:change={handleSelectChange}>
-        <!-- creates teh all storage option in the dropdown -->
         <option value="" selected={!data.filters.storageId}>
           All locations
         </option>
