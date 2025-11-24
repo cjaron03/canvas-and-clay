@@ -20,3 +20,4 @@ bleach>=6.0.0                # HTML sanitization for XSS protection
 # TODO(security, JC): Adding these security packages eventually:
 # PyJWT==2.8.0                 # JWT token authentication
 
+APScheduler==3.11.0          # Scheduled deletions after 30 days
