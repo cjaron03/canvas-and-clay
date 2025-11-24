@@ -2075,6 +2075,7 @@ def bulk_upload_artists_artworks_photos():
         return jsonify({'error': 'No file selected'}), 400
 
     results = {'artists': [], 'artworks': [], 'photos': [], 'errors': [], 'warnings': []}
+    created_photo_paths = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, 'bulk_upload.zip')
@@ -2141,6 +2142,17 @@ def bulk_upload_artists_artworks_photos():
                         'message': message,
                         'detail': detail
                     })
+
+                def cleanup_created_photos():
+                    nonlocal created_photo_paths
+                    if not created_photo_paths:
+                        return
+                    for file_path, thumb_path in created_photo_paths:
+                        try:
+                            delete_photo_files(file_path, thumb_path)
+                        except Exception:
+                            app.logger.warning("Failed to delete photo files after rollback", exc_info=True)
+                    created_photo_paths = []
 
                 # Create or fetch artists
                 for entry in artists_payload:
@@ -2225,8 +2237,7 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
-                        # Mark error but don't rollback - failed object may not have been added to session
-                        # If it was added, it will be rolled back with the final atomic transaction
+                        db.session.rollback()
                         add_error('artist', 'Failed to create artist', {'entry': entry, 'error': str(e)})
 
                 # Create artworks
@@ -2312,8 +2323,7 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
-                        # Mark error but don't rollback - failed object may not have been added to session
-                        # If it was added, it will be rolled back with the final atomic transaction
+                        db.session.rollback()
                         add_error('artwork', 'Failed to create artwork', {'entry': entry, 'error': str(e)})
 
                 # Process photos
@@ -2436,7 +2446,9 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created',
                             'is_primary': is_primary
                         })
+                        created_photo_paths.append((photo.file_path, photo.thumbnail_path))
                     except FileValidationError as e:
+                        db.session.rollback()
                         # Clean up files that were created before validation failed
                         if created_paths:
                             try:
@@ -2447,6 +2459,7 @@ def bulk_upload_artists_artworks_photos():
                         # Final atomic transaction will handle rollback if needed
                         add_error('photo', f"File validation failed for {entry.get('filename')}: {str(e)}", entry)
                     except Exception as e:
+                        db.session.rollback()
                         # Clean up files that were created before error occurred
                         if created_paths:
                             try:
@@ -2458,33 +2471,26 @@ def bulk_upload_artists_artworks_photos():
                         add_error('photo', 'Failed to process photo', {'entry': entry, 'error': str(e)})
 
                 # Final atomic commit or rollback based on errors
-                # CRITICAL: If ANY errors occurred, rollback everything - nothing should be committed
-                commit_successful = False
                 if results['errors']:
                     db.session.rollback()
                     db.session.expunge_all()
+                    cleanup_created_photos()
                     app.logger.warning(f"Bulk upload completed with {len(results['errors'])} errors. All changes rolled back.")
-                    # Remove all 'created' items from results since they weren't actually persisted
                     results['artists'] = [a for a in results['artists'] if a.get('status') != 'created']
                     results['artworks'] = [a for a in results['artworks'] if a.get('status') != 'created']
                     results['photos'] = [p for p in results['photos'] if p.get('status') != 'created']
                 else:
-                    # No errors - safe to commit
                     try:
                         db.session.commit()
-                        commit_successful = True
                         app.logger.info("Bulk upload successful. All changes committed.")
                     except Exception as e:
-                        # Commit failed - rollback everything
                         db.session.rollback()
                         db.session.expunge_all()
+                        cleanup_created_photos()
                         app.logger.exception("Failed to commit bulk upload transaction")
                         add_error('system', 'Failed to commit transaction', {'error': str(e)})
-                        # After adding the error, ensure we're in a rolled-back state
-                        # (rollback already happened above, but be explicit)
                         db.session.rollback()
                         db.session.expunge_all()
-                        # Remove all 'created' items from results since they weren't actually persisted
                         results['artists'] = [a for a in results['artists'] if a.get('status') != 'created']
                         results['artworks'] = [a for a in results['artworks'] if a.get('status') != 'created']
                         results['photos'] = [p for p in results['photos'] if p.get('status') != 'created']

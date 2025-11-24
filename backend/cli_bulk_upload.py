@@ -194,7 +194,7 @@ def filter_zip_files(zip_path):
             if ext not in ALLOWED_EXT:
                 continue
             # File passed all checks - add it
-            files.append(base)
+            files.append(name)
     if not files:
         raise RuntimeError("Zip contains no supported image files (JPG, JPEG, PNG, WebP, AVIF).")
     step_done(f"Found {len(files)} image(s)")
