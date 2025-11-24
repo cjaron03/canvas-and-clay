@@ -11,11 +11,25 @@
   let isDeleting = false;
   let selectedPhoto = null;
   let modalElement;
+  let imageErrors = new Set();
 
   const getThumbnailUrl = (path) => {
     if (!path) return null;
     if (path.startsWith('http')) return path;
-    return `${PUBLIC_API_BASE_URL}${path}`;
+    const url = `${PUBLIC_API_BASE_URL}${path}`;
+    if (!PUBLIC_API_BASE_URL) {
+      console.warn('PUBLIC_API_BASE_URL is not set, image may not load:', url);
+    }
+    return url;
+  };
+
+  const handleImageError = (photoId, event) => {
+    console.error('image failed to load for photo:', photoId, event.target.src);
+    imageErrors.add(photoId);
+  };
+
+  const isImageError = (photoId) => {
+    return imageErrors.has(photoId);
   };
 
   const formatDate = (dateStr) => {
@@ -135,6 +149,17 @@
   onMount(() => {
     // Add global keydown listener for ESC key
     window.addEventListener('keydown', handleKeyDown);
+    
+    // Debug: log photo data structure
+    if (data.artwork?.photos) {
+      console.log('photos data:', data.artwork.photos);
+      console.log('photos type:', typeof data.artwork.photos);
+      console.log('is array:', Array.isArray(data.artwork.photos));
+      if (Array.isArray(data.artwork.photos) && data.artwork.photos.length > 0) {
+        console.log('first photo:', data.artwork.photos[0]);
+      }
+    }
+    
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
@@ -170,30 +195,47 @@
 
   <div class="artwork-detail">
     <div class="photos-section">
-      {#if data.artwork.photos && data.artwork.photos.length > 0}
-        <div class="photo-gallery">
-          {#each data.artwork.photos as photo}
-            {@const thumbnailUrl = photo.thumbnail_url || photo.thumbnail}
-            <button
-              type="button"
-              class="photo-item"
-              on:click={() => openPhotoModal(photo)}
-              disabled={!thumbnailUrl}
-            >
+      {#if data.artwork.photos && Array.isArray(data.artwork.photos) && data.artwork.photos.length > 0}
+        {@const validPhotos = data.artwork.photos.filter(p => p && typeof p === 'object' && (p.thumbnail_url || p.thumbnail))}
+        {#if validPhotos.length > 0}
+          <div class="photo-gallery">
+            {#each validPhotos as photo}
+              {@const thumbnailUrl = photo.thumbnail_url || photo.thumbnail}
+              {@const photoId = photo.id || photo.photo_id}
               {#if thumbnailUrl}
-                <img
-                  src={getThumbnailUrl(thumbnailUrl)}
-                  alt={photo.filename || 'Artwork photo'}
-                />
-                <div class="photo-overlay">
-                  <span>View Full Size</span>
-                </div>
-              {:else}
-                <div class="no-image-placeholder">No Image</div>
+                <button
+                  type="button"
+                  class="photo-item"
+                  on:click={() => openPhotoModal(photo)}
+                  disabled={isImageError(photoId)}
+                >
+                  {#if !isImageError(photoId)}
+                    <img
+                      src={getThumbnailUrl(thumbnailUrl)}
+                      alt={photo.filename || 'Artwork photo'}
+                      on:error={(e) => handleImageError(photoId, e)}
+                      on:load={() => imageErrors.delete(photoId)}
+                    />
+                    <div class="photo-overlay">
+                      <span>View Full Size</span>
+                    </div>
+                  {:else}
+                    <div class="no-image-placeholder">
+                      Image failed to load
+                    </div>
+                  {/if}
+                </button>
               {/if}
-            </button>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="no-photos">
+            <p>No photos available for this artwork</p>
+            {#if canUpload}
+              <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Upload Photo</a>
+            {/if}
+          </div>
+        {/if}
       {:else}
         <div class="no-photos">
           <p>No photos available for this artwork</p>

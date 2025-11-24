@@ -88,6 +88,30 @@ npm run dev
   ```
   (Adjust `TEST_DATABASE_URL` if you prefer a different test database.)
 
+### Admin bulk upload (zip + manifest)
+- Endpoint: `POST /api/admin/bulk-upload` (admin-only). Send multipart form with `file` = zip containing `manifest.json` and images.
+- Manifest example:
+  ```json
+  {
+    "default_storage_id": "STOR001",
+    "artists": [{ "key": "artist-one", "first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.com" }],
+    "artworks": [{ "key": "art-1", "title": "Sunset", "artist_key": "artist-one", "medium": "Oil" }],
+    "photos": [{ "filename": "sunset.jpg", "artwork_key": "art-1", "is_primary": true }]
+  }
+  ```
+- CLI helper inside backend container:
+  ```bash
+  docker compose exec backend python cli_bulk_upload.py \
+    --zip /app/path/to/bulk.zip \
+    --admin-email admin@example.com \
+    --admin-password 'password' \
+    --base-url http://backend:5000
+  ```
+- One-command helper (interactive prompts):  
+  ```bash
+  docker compose -f infra/docker-compose.yml exec backend bash /app/tools/uploads.sh /app/path/to/bulk.zip
+  ```
+
 ## Docker Optimization
 
 This project uses **multi-stage builds** and **BuildKit** for optimized Docker performance:
