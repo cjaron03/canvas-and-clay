@@ -1986,7 +1986,7 @@ def delete_artwork(artwork_id):
 
 
 # Photo Upload Endpoints
-from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
+from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename, MAX_FILE_SIZE
 from auth import admin_required
 
 
@@ -2320,6 +2320,20 @@ def bulk_upload_artists_artworks_photos():
 
                         if not zip_member:
                             add_error('photo', f'File not found in zip: {filename}', entry)
+                            continue
+
+                        # Guard against zip bombs by checking uncompressed size before reading
+                        try:
+                            info = archive.getinfo(zip_member)
+                            if info.file_size > MAX_FILE_SIZE:
+                                add_error(
+                                    'photo',
+                                    f'File too large after decompression ({info.file_size} bytes), max {MAX_FILE_SIZE} bytes',
+                                    entry
+                                )
+                                continue
+                        except KeyError:
+                            add_error('photo', f'Could not read zip metadata for {filename}', entry)
                             continue
 
                         file_data = archive.read(zip_member)
