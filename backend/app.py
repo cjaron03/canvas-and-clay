@@ -2157,6 +2157,7 @@ def bulk_upload_artists_artworks_photos():
                                 artist_key_map[key] = existing.artist_id
                             if email:
                                 artist_email_map[email] = existing.artist_id
+                            db.session.commit()
                             results['artists'].append({
                                 'id': existing.artist_id,
                                 'email': existing.artist_email,
@@ -2178,6 +2179,7 @@ def bulk_upload_artists_artworks_photos():
                             user_id=user_id
                         )
                         db.session.add(artist)
+                        db.session.commit()
 
                         if key:
                             artist_key_map[key] = new_id
@@ -2190,7 +2192,6 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
-                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
                         add_error('artist', 'Failed to create artist', {'entry': entry, 'error': str(e)})
 
@@ -2237,6 +2238,7 @@ def bulk_upload_artists_artworks_photos():
                         if existing_artwork:
                             if entry.get('key'):
                                 artwork_key_map[entry['key']] = existing_artwork.artwork_num
+                            db.session.commit()
                             results['artworks'].append({
                                 'id': existing_artwork.artwork_num,
                                 'title': existing_artwork.artwork_ttl,
@@ -2265,6 +2267,7 @@ def bulk_upload_artists_artworks_photos():
                             storage_id=storage_id
                         )
                         db.session.add(artwork)
+                        db.session.commit()
 
                         if entry.get('key'):
                             artwork_key_map[entry['key']] = artwork_id
@@ -2275,12 +2278,12 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
-                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
                         add_error('artwork', 'Failed to create artwork', {'entry': entry, 'error': str(e)})
 
                 # Process photos
                 for entry in photos_payload:
+                    created_paths = None
                     try:
                         filename = entry.get('filename')
                         if not filename:
@@ -2322,6 +2325,7 @@ def bulk_upload_artists_artworks_photos():
                         file_data = archive.read(zip_member)
 
                         photo_metadata = process_upload(file_data, Path(filename).name)
+                        created_paths = (photo_metadata['file_path'], photo_metadata['thumbnail_path'])
 
                         is_primary = False
                         if isinstance(entry.get('is_primary'), str):
@@ -2350,6 +2354,7 @@ def bulk_upload_artists_artworks_photos():
                             is_primary=is_primary
                         )
                         db.session.add(photo)
+                        db.session.commit()
 
                         results['photos'].append({
                             'id': photo.photo_id,
@@ -2361,28 +2366,16 @@ def bulk_upload_artists_artworks_photos():
                             'is_primary': is_primary
                         })
                     except FileValidationError as e:
-                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
-                        add_error('photo', f'File validation failed for {entry.get("filename")}: {str(e)}', entry)
+                        add_error('photo', f"File validation failed for {entry.get('filename')}: {str(e)}", entry)
                     except Exception as e:
-                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
+                        if created_paths:
+                            try:
+                                delete_photo_files(created_paths[0], created_paths[1])
+                            except Exception:
+                                app.logger.warning("Failed to delete photo files after rollback", exc_info=True)
                         add_error('photo', 'Failed to process photo', {'entry': entry, 'error': str(e)})
-
-                # Commit all changes atomically at the end
-                if results['errors']:
-                    # If there were any errors, rollback all changes to maintain atomicity
-                    db.session.rollback()
-                else:
-                    # Only commit if all operations succeeded
-                    try:
-                        db.session.commit()
-                    except Exception as e:
-                        db.session.rollback()
-                        return jsonify({
-                            'error': 'Failed to commit bulk upload changes',
-                            'message': str(e)
-                        }), 500
 
         except zipfile.BadZipFile:
             db.session.rollback()
