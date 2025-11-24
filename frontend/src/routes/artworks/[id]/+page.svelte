@@ -25,7 +25,7 @@
 
   const handleImageError = (photoId, event) => {
     console.error('image failed to load for photo:', photoId, event.target.src);
-    imageErrors.add(photoId);
+    imageErrors = new Set(imageErrors).add(photoId);
   };
 
   const isImageError = (photoId) => {
@@ -185,13 +185,15 @@
   <div class="artwork-detail">
     <div class="photos-section">
       {#if data.artwork.photos && Array.isArray(data.artwork.photos) && data.artwork.photos.length > 0}
-        {@const validPhotos = data.artwork.photos.filter(p => p && typeof p === 'object' && (p.thumbnail_url || p.thumbnail))}
+        {@const validPhotos = data.artwork.photos.filter(p => p && typeof p === 'object' && (p.thumbnail_url || p.thumbnail || p.url))}
         {#if validPhotos.length > 0}
           <div class="photo-gallery">
             {#each validPhotos as photo}
               {@const thumbnailUrl = photo.thumbnail_url || photo.thumbnail}
+              {@const mainImageUrl = photo.url}
               {@const photoId = photo.id || photo.photo_id}
-              {#if thumbnailUrl}
+              {@const displayUrl = thumbnailUrl || mainImageUrl}
+              {#if displayUrl}
                 <button
                   type="button"
                   class="photo-item"
@@ -200,10 +202,14 @@
                 >
                   {#if !isImageError(photoId)}
                     <img
-                      src={getThumbnailUrl(thumbnailUrl)}
+                      src={getThumbnailUrl(displayUrl)}
                       alt={photo.filename || 'Artwork photo'}
                       on:error={(e) => handleImageError(photoId, e)}
-                      on:load={() => imageErrors.delete(photoId)}
+                      on:load={() => {
+                        const newErrors = new Set(imageErrors);
+                        newErrors.delete(photoId);
+                        imageErrors = newErrors;
+                      }}
                     />
                     <div class="photo-overlay">
                       <span>View Full Size</span>
