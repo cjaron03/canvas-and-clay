@@ -16,11 +16,11 @@
   const getThumbnailUrl = (path) => {
     if (!path) return null;
     if (path.startsWith('http')) return path;
-    const url = `${PUBLIC_API_BASE_URL}${path}`;
     if (!PUBLIC_API_BASE_URL) {
-      console.warn('PUBLIC_API_BASE_URL is not set, image may not load:', url);
+      console.warn('PUBLIC_API_BASE_URL is not set, image may not load');
+      return null;
     }
-    return url;
+    return `${PUBLIC_API_BASE_URL}${path}`;
   };
 
   const handleImageError = (photoId, event) => {
@@ -149,17 +149,6 @@
   onMount(() => {
     // Add global keydown listener for ESC key
     window.addEventListener('keydown', handleKeyDown);
-    
-    // Debug: log photo data structure
-    if (data.artwork?.photos) {
-      console.log('photos data:', data.artwork.photos);
-      console.log('photos type:', typeof data.artwork.photos);
-      console.log('is array:', Array.isArray(data.artwork.photos));
-      if (Array.isArray(data.artwork.photos) && data.artwork.photos.length > 0) {
-        console.log('first photo:', data.artwork.photos[0]);
-      }
-    }
-    
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };

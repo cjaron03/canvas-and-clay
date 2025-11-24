@@ -2153,7 +2153,6 @@ def bulk_upload_artists_artworks_photos():
                             # Update user_id if we found a match and artist not linked yet
                             if user_id and not existing.user_id:
                                 existing.user_id = user_id
-                                db.session.commit()
                             if key:
                                 artist_key_map[key] = existing.artist_id
                             if email:
@@ -2179,7 +2178,6 @@ def bulk_upload_artists_artworks_photos():
                             user_id=user_id
                         )
                         db.session.add(artist)
-                        db.session.commit()
 
                         if key:
                             artist_key_map[key] = new_id
@@ -2192,6 +2190,7 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
+                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
                         add_error('artist', 'Failed to create artist', {'entry': entry, 'error': str(e)})
 
@@ -2236,7 +2235,8 @@ def bulk_upload_artists_artworks_photos():
                         artwork_id = entry.get('artwork_id') or entry.get('id') or generate_random_artwork_id(db)
                         existing_artwork = db.session.get(Artwork, artwork_id)
                         if existing_artwork:
-                            artwork_key_map[entry.get('key')] = existing_artwork.artwork_num if entry.get('key') else None
+                            if entry.get('key'):
+                                artwork_key_map[entry['key']] = existing_artwork.artwork_num
                             results['artworks'].append({
                                 'id': existing_artwork.artwork_num,
                                 'title': existing_artwork.artwork_ttl,
@@ -2265,7 +2265,6 @@ def bulk_upload_artists_artworks_photos():
                             storage_id=storage_id
                         )
                         db.session.add(artwork)
-                        db.session.commit()
 
                         if entry.get('key'):
                             artwork_key_map[entry['key']] = artwork_id
@@ -2276,6 +2275,7 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
+                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
                         add_error('artwork', 'Failed to create artwork', {'entry': entry, 'error': str(e)})
 
@@ -2350,7 +2350,6 @@ def bulk_upload_artists_artworks_photos():
                             is_primary=is_primary
                         )
                         db.session.add(photo)
-                        db.session.commit()
 
                         results['photos'].append({
                             'id': photo.photo_id,
@@ -2362,14 +2361,39 @@ def bulk_upload_artists_artworks_photos():
                             'is_primary': is_primary
                         })
                     except FileValidationError as e:
+                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
                         add_error('photo', f'File validation failed for {entry.get("filename")}: {str(e)}', entry)
                     except Exception as e:
+                        # Rollback to clear session state, but don't commit successful operations yet
                         db.session.rollback()
                         add_error('photo', 'Failed to process photo', {'entry': entry, 'error': str(e)})
 
+                # Commit all changes atomically at the end
+                if results['errors']:
+                    # If there were any errors, rollback all changes to maintain atomicity
+                    db.session.rollback()
+                else:
+                    # Only commit if all operations succeeded
+                    try:
+                        db.session.commit()
+                    except Exception as e:
+                        db.session.rollback()
+                        return jsonify({
+                            'error': 'Failed to commit bulk upload changes',
+                            'message': str(e)
+                        }), 500
+
         except zipfile.BadZipFile:
+            db.session.rollback()
             return jsonify({'error': 'Failed to read zip archive'}), 400
+        except Exception as e:
+            db.session.rollback()
+            app.logger.exception("Bulk upload failed")
+            return jsonify({
+                'error': 'Bulk upload failed',
+                'message': str(e)
+            }), 500
 
     status_code = 200 if not results['errors'] else 207  # Multi-Status when partial failures
     return jsonify({
