@@ -1305,6 +1305,25 @@ def list_artworks():
                     artwork_num=artwork.artwork_num
                 ).first()
 
+            # Helper function to check if file exists and return URL, or None if missing
+            def get_photo_url_if_exists(photo, is_thumbnail=False):
+                """Return photo URL only if file exists on disk."""
+                if is_thumbnail:
+                    stored_path = photo.thumbnail_path
+                    filename = os.path.basename(stored_path)
+                    url_path = f"/uploads/thumbnails/{filename}"
+                    full_path = os.path.join(os.path.dirname(__file__), stored_path)
+                else:
+                    stored_path = photo.file_path
+                    filename = os.path.basename(stored_path)
+                    url_path = f"/uploads/artworks/{filename}"
+                    full_path = os.path.join(os.path.dirname(__file__), stored_path)
+                
+                if os.path.exists(full_path):
+                    return url_path
+                app.logger.warning(f"photo file not found: {full_path} (stored_path: {stored_path})")
+                return None
+
             # Get photo count
             photo_count = ArtworkPhoto.query.filter_by(
                 artwork_num=artwork.artwork_num
@@ -1338,6 +1357,16 @@ def list_artworks():
                     'user_id': None
                 }
 
+            # Only include primary_photo if thumbnail file exists
+            primary_photo_data = None
+            if primary_photo:
+                thumbnail_url = get_photo_url_if_exists(primary_photo, is_thumbnail=True)
+                if thumbnail_url:
+                    primary_photo_data = {
+                        'id': primary_photo.photo_id,
+                        'thumbnail_url': thumbnail_url
+                    }
+
             artwork_data = {
                 'id': artwork.artwork_num,
                 'title': artwork.artwork_ttl,
@@ -1350,10 +1379,7 @@ def list_artworks():
                     'location': storage.storage_loc or '',
                     'type': storage.storage_type or ''
                 } if storage else None,
-                'primary_photo': {
-                    'id': primary_photo.photo_id,
-                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
-                } if primary_photo else None,
+                'primary_photo': primary_photo_data,
                 'photo_count': photo_count
             }
             
@@ -2048,7 +2074,7 @@ def bulk_upload_artists_artworks_photos():
     if zip_file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
 
-    results = {'artists': [], 'artworks': [], 'photos': [], 'errors': []}
+    results = {'artists': [], 'artworks': [], 'photos': [], 'errors': [], 'warnings': []}
 
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, 'bulk_upload.zip')
@@ -2109,6 +2135,13 @@ def bulk_upload_artists_artworks_photos():
                         'detail': detail
                     })
 
+                def add_warning(scope, message, detail=None):
+                    results['warnings'].append({
+                        'scope': scope,
+                        'message': message,
+                        'detail': detail
+                    })
+
                 # Create or fetch artists
                 for entry in artists_payload:
                     try:
@@ -2157,7 +2190,7 @@ def bulk_upload_artists_artworks_photos():
                                 artist_key_map[key] = existing.artist_id
                             if email:
                                 artist_email_map[email] = existing.artist_id
-                            db.session.commit()
+                            # Don't commit here - wait for atomic transaction at end
                             results['artists'].append({
                                 'id': existing.artist_id,
                                 'email': existing.artist_email,
@@ -2179,7 +2212,7 @@ def bulk_upload_artists_artworks_photos():
                             user_id=user_id
                         )
                         db.session.add(artist)
-                        db.session.commit()
+                        # Don't commit here - wait for atomic transaction at end
 
                         if key:
                             artist_key_map[key] = new_id
@@ -2192,7 +2225,8 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
-                        db.session.rollback()
+                        # Mark error but don't rollback - failed object may not have been added to session
+                        # If it was added, it will be rolled back with the final atomic transaction
                         add_error('artist', 'Failed to create artist', {'entry': entry, 'error': str(e)})
 
                 # Create artworks
@@ -2238,7 +2272,7 @@ def bulk_upload_artists_artworks_photos():
                         if existing_artwork:
                             if entry.get('key'):
                                 artwork_key_map[entry['key']] = existing_artwork.artwork_num
-                            db.session.commit()
+                            # Don't commit here - wait for atomic transaction at end
                             results['artworks'].append({
                                 'id': existing_artwork.artwork_num,
                                 'title': existing_artwork.artwork_ttl,
@@ -2267,7 +2301,7 @@ def bulk_upload_artists_artworks_photos():
                             storage_id=storage_id
                         )
                         db.session.add(artwork)
-                        db.session.commit()
+                        # Don't commit here - wait for atomic transaction at end
 
                         if entry.get('key'):
                             artwork_key_map[entry['key']] = artwork_id
@@ -2278,7 +2312,8 @@ def bulk_upload_artists_artworks_photos():
                             'status': 'created'
                         })
                     except Exception as e:
-                        db.session.rollback()
+                        # Mark error but don't rollback - failed object may not have been added to session
+                        # If it was added, it will be rolled back with the final atomic transaction
                         add_error('artwork', 'Failed to create artwork', {'entry': entry, 'error': str(e)})
 
                 # Process photos
@@ -2288,6 +2323,25 @@ def bulk_upload_artists_artworks_photos():
                         filename = entry.get('filename')
                         if not filename:
                             add_error('photo', 'filename is required', entry)
+                            continue
+
+                        # Skip macOS resource fork/metadata files (they start with ._)
+                        # These are hidden system files created by macOS and not actual images
+                        base_name = Path(filename).name
+                        if base_name.startswith('._') or filename.startswith('._'):
+                            app.logger.warning(f"Skipping macOS metadata file: {filename}")
+                            add_warning('photo', f"Skipping macOS metadata file: {base_name}", entry)
+                            continue  # Skip this entry, don't treat as error
+
+                        ext = Path(base_name).suffix.lower()
+                        hidden_prefix = base_name.startswith('.') and not base_name.startswith('._')
+                        allowed_exts = {'.jpg', '.jpeg', '.png', '.webp', '.avif'}
+                        if hidden_prefix or ext not in allowed_exts:
+                            try:
+                                app.logger.info("Skipping hidden/unsupported file during bulk upload", extra={'filename': base_name})
+                            except Exception:
+                                pass
+                            add_warning('photo', f"Skipping unsupported or hidden file: {base_name}", entry)
                             continue
 
                         artwork_ref = entry.get('artwork_id') or entry.get('artwork_key')
@@ -2348,10 +2402,13 @@ def bulk_upload_artists_artworks_photos():
                             is_primary = entry['is_primary']
 
                         if is_primary:
-                            ArtworkPhoto.query.filter_by(
+                            # Use session-based update instead of query.update() to keep it in transaction
+                            existing_primary_photos = db.session.query(ArtworkPhoto).filter_by(
                                 artwork_num=artwork_id,
                                 is_primary=True
-                            ).update({'is_primary': False})
+                            ).all()
+                            for existing_photo in existing_primary_photos:
+                                existing_photo.is_primary = False
 
                         photo = ArtworkPhoto(
                             photo_id=photo_metadata['photo_id'],
@@ -2368,7 +2425,7 @@ def bulk_upload_artists_artworks_photos():
                             is_primary=is_primary
                         )
                         db.session.add(photo)
-                        db.session.commit()
+                        # Don't commit here - wait for atomic transaction at end
 
                         results['photos'].append({
                             'id': photo.photo_id,
@@ -2380,27 +2437,80 @@ def bulk_upload_artists_artworks_photos():
                             'is_primary': is_primary
                         })
                     except FileValidationError as e:
-                        db.session.rollback()
-                        add_error('photo', f"File validation failed for {entry.get('filename')}: {str(e)}", entry)
-                    except Exception as e:
-                        db.session.rollback()
+                        # Clean up files that were created before validation failed
                         if created_paths:
                             try:
                                 delete_photo_files(created_paths[0], created_paths[1])
                             except Exception:
-                                app.logger.warning("Failed to delete photo files after rollback", exc_info=True)
+                                app.logger.warning("Failed to delete photo files after validation error", exc_info=True)
+                        # Mark error but don't rollback - failed object was not added to session
+                        # Final atomic transaction will handle rollback if needed
+                        add_error('photo', f"File validation failed for {entry.get('filename')}: {str(e)}", entry)
+                    except Exception as e:
+                        # Clean up files that were created before error occurred
+                        if created_paths:
+                            try:
+                                delete_photo_files(created_paths[0], created_paths[1])
+                            except Exception:
+                                app.logger.warning("Failed to delete photo files after error", exc_info=True)
+                        # Mark error but don't rollback - failed object may not have been added to session
+                        # If it was added, it will be rolled back with the final atomic transaction
                         add_error('photo', 'Failed to process photo', {'entry': entry, 'error': str(e)})
+
+                # Final atomic commit or rollback based on errors
+                # CRITICAL: If ANY errors occurred, rollback everything - nothing should be committed
+                commit_successful = False
+                if results['errors']:
+                    db.session.rollback()
+                    db.session.expunge_all()
+                    app.logger.warning(f"Bulk upload completed with {len(results['errors'])} errors. All changes rolled back.")
+                    # Remove all 'created' items from results since they weren't actually persisted
+                    results['artists'] = [a for a in results['artists'] if a.get('status') != 'created']
+                    results['artworks'] = [a for a in results['artworks'] if a.get('status') != 'created']
+                    results['photos'] = [p for p in results['photos'] if p.get('status') != 'created']
+                else:
+                    # No errors - safe to commit
+                    try:
+                        db.session.commit()
+                        commit_successful = True
+                        app.logger.info("Bulk upload successful. All changes committed.")
+                    except Exception as e:
+                        # Commit failed - rollback everything
+                        db.session.rollback()
+                        db.session.expunge_all()
+                        app.logger.exception("Failed to commit bulk upload transaction")
+                        add_error('system', 'Failed to commit transaction', {'error': str(e)})
+                        # After adding the error, ensure we're in a rolled-back state
+                        # (rollback already happened above, but be explicit)
+                        db.session.rollback()
+                        db.session.expunge_all()
+                        # Remove all 'created' items from results since they weren't actually persisted
+                        results['artists'] = [a for a in results['artists'] if a.get('status') != 'created']
+                        results['artworks'] = [a for a in results['artworks'] if a.get('status') != 'created']
+                        results['photos'] = [p for p in results['photos'] if p.get('status') != 'created']
 
         except zipfile.BadZipFile:
             db.session.rollback()
+            db.session.expunge_all()
             return jsonify({'error': 'Failed to read zip archive'}), 400
         except Exception as e:
             db.session.rollback()
+            db.session.expunge_all()
             app.logger.exception("Bulk upload failed")
             return jsonify({
                 'error': 'Bulk upload failed',
                 'message': str(e)
             }), 500
+
+    # Final safety check: if there are ANY errors, ensure nothing was committed
+    if results['errors']:
+        # If we somehow got here with errors, ensure rollback happened
+        try:
+            db.session.rollback()
+            db.session.expunge_all()
+        except Exception:
+            pass  # Session might already be rolled back
+        app.logger.warning(f"Bulk upload response with {len(results['errors'])} errors - ensuring no data was committed")
 
     status_code = 200 if not results['errors'] else 207  # Multi-Status when partial failures
     return jsonify({
@@ -2411,7 +2521,8 @@ def bulk_upload_artists_artworks_photos():
             'artworks_created': sum(1 for a in results['artworks'] if a['status'] == 'created'),
             'artworks_existing': sum(1 for a in results['artworks'] if a['status'] == 'existing'),
             'photos_created': len(results['photos']),
-            'errors': len(results['errors'])
+            'errors': len(results['errors']),
+            'warnings': len(results['warnings'])
         },
         'results': results
     }), status_code
@@ -3516,12 +3627,12 @@ def _maybe_alert_role_change_spike(event_type):
 
 def generate_random_artist_id(db):
     """Generate a random artist ID in format A#######."""
+    from create_tbls import init_tables  # imported lazily to avoid circular refs
+    Artist, *_ = init_tables(db)  # Import once outside loop
     max_attempts = 100
     for _ in range(max_attempts):
         random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))
         artist_id = f"A{random_part}"
-        from create_tbls import init_tables  # imported lazily to avoid circular refs
-        Artist, *_ = init_tables(db)
         if not db.session.get(Artist, artist_id):
             return artist_id
     raise ValueError("Failed to generate unique artist ID after max attempts")
@@ -3529,12 +3640,12 @@ def generate_random_artist_id(db):
 
 def generate_random_artwork_id(db):
     """Generate a random artwork ID in format AW######."""
+    from create_tbls import init_tables  # imported lazily to avoid circular refs
+    _, Artwork, *_ = init_tables(db)  # Import once outside loop
     max_attempts = 100
     for _ in range(max_attempts):
         random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
         artwork_id = f"AW{random_part}"
-        from create_tbls import init_tables  # imported lazily to avoid circular refs
-        _, Artwork, *_ = init_tables(db)
         if not db.session.get(Artwork, artwork_id):
             return artwork_id
     raise ValueError("Failed to generate unique artwork ID after max attempts")

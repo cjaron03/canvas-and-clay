@@ -107,10 +107,10 @@ npm run dev
     --admin-password 'password' \
     --base-url http://backend:5000
   ```
-- One-command helper (interactive prompts):  
-  ```bash
-  docker compose -f infra/docker-compose.yml exec backend bash /app/tools/uploads.sh /app/path/to/bulk.zip
-  ```
+- One-command helper (interactive prompts):
+  - From host (repo root): `./upload.sh backend/your.zip`
+  - Inside container: `bash /app/tools/uploads.sh /app/your.zip`
+  The wizard will: log in as admin, let you pick/create an artist (with user creation/promote/assign), choose storage, choose artwork distribution (single/per-file), auto-build the manifest, and upload.
 
 ## Docker Optimization
 

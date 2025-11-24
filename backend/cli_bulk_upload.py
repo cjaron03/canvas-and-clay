@@ -1,16 +1,64 @@
-"""CLI helper to call the admin bulk upload API from inside the backend container.
+"""Interactive admin bulk upload helper.
 
-Usage (inside docker):
-    python cli_bulk_upload.py --zip /path/to/archive.zip --admin-email admin@example.com --admin-password '...' --base-url http://backend:5000
+Flow:
+- Admin logs in (CSRF + session)
+- Optionally list existing artists
+- Choose existing artist or create new artist + user (register -> promote to artist -> create artist -> assign user)
+- Choose how to distribute photos (single artwork or one per file)
+- Auto-build manifest and call /api/admin/bulk-upload
+
+Usage (inside container, interactive):
+    python cli_bulk_upload.py --zip /app/path/to/archive.zip
 """
 import argparse
-import os
-import sys
-import requests
-import zipfile
+import getpass
 import json
+import os
+import secrets
+import string
+import sys
 import tempfile
+import time
+import zipfile
 from datetime import datetime
+from pathlib import Path
+
+import requests
+
+ALLOWED_EXT = {'.jpg', '.jpeg', '.png', '.webp', '.avif'}
+ICON_SPIN = ['|', '/', '-', '\\']
+ICON_OK = "✓"
+ICON_FAIL = "✗"
+
+
+def step(msg):
+    print(f"[..] {msg}")
+
+
+def step_done(msg="done"):
+    print(f"[{ICON_OK}] {msg}")
+
+
+def step_fail(msg="failed"):
+    print(f"[{ICON_FAIL}] {msg}")
+
+
+def prompt(msg, default=None, secret=False, allow_empty=False):
+    full = f"{msg} " + (f"[{default}] " if default is not None else "")
+    while True:
+        try:
+            val = getpass.getpass(full) if secret else input(full)
+        except (EOFError, KeyboardInterrupt):
+            sys.exit(1)
+        if val.lower().strip() == 'exit':
+            print("Exiting.")
+            sys.exit(0)
+        if not val and default is not None:
+            return default
+        if not val and not allow_empty:
+            print("Value required (or type 'exit' to quit).")
+            continue
+        return val
 
 
 def get_csrf_token(session: requests.Session, base_url: str) -> str:
@@ -21,6 +69,7 @@ def get_csrf_token(session: requests.Session, base_url: str) -> str:
 
 
 def login(session: requests.Session, base_url: str, email: str, password: str) -> None:
+    step("Fetching CSRF token...")
     csrf_token = get_csrf_token(session, base_url)
     resp = session.post(
         f"{base_url}/auth/login",
@@ -30,9 +79,87 @@ def login(session: requests.Session, base_url: str, email: str, password: str) -
     )
     if resp.status_code != 200:
         raise RuntimeError(f"Login failed ({resp.status_code}): {resp.text}")
+    step_done("Authenticated")
+
+
+def list_artists(session: requests.Session, base_url: str):
+    step("Fetching artists...")
+    resp = session.get(f"{base_url}/api/admin/console/artists", timeout=20)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to load artists ({resp.status_code}): {resp.text}")
+    step_done("Artists loaded")
+    return resp.json().get('artists', [])
+
+
+def list_storage_locations(session: requests.Session, base_url: str):
+    step("Fetching storage locations...")
+    resp = session.get(f"{base_url}/api/storage", timeout=20)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to load storage locations ({resp.status_code}): {resp.text}")
+    data = resp.json().get('storage', [])
+    step_done(f"Storage loaded ({len(data)} found)")
+    return data
+
+
+def register_user(session, base_url, email, password):
+    step(f"Registering user {email} ...")
+    csrf_token = get_csrf_token(session, base_url)
+    resp = session.post(
+        f"{base_url}/auth/register",
+        json={'email': email, 'password': password},
+        headers={'X-CSRFToken': csrf_token},
+        timeout=20
+    )
+    if resp.status_code != 201:
+        raise RuntimeError(f"User registration failed ({resp.status_code}): {resp.text}")
+    step_done("User created")
+    return resp.json()['user']['id']
+
+
+def promote_to_artist(session, base_url, user_id):
+    step(f"Promoting user {user_id} to artist...")
+    csrf_token = get_csrf_token(session, base_url)
+    resp = session.post(
+        f"{base_url}/api/admin/console/users/{user_id}/promote",
+        headers={'X-CSRFToken': csrf_token},
+        timeout=20
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Promote user {user_id} failed ({resp.status_code}): {resp.text}")
+    step_done("User promoted")
+
+
+def create_artist(session, base_url, payload):
+    step(f"Creating artist {payload.get('artist_fname','')} {payload.get('artist_lname','')} ...")
+    csrf_token = get_csrf_token(session, base_url)
+    resp = session.post(
+        f"{base_url}/api/artists",
+        json=payload,
+        headers={'X-CSRFToken': csrf_token},
+        timeout=20
+    )
+    if resp.status_code != 201:
+        raise RuntimeError(f"Create artist failed ({resp.status_code}): {resp.text}")
+    step_done("Artist created")
+    return resp.json()['artist']['artist_id']
+
+
+def assign_artist_user(session, base_url, artist_id, user_id):
+    step(f"Linking artist {artist_id} to user {user_id} ...")
+    csrf_token = get_csrf_token(session, base_url)
+    resp = session.post(
+        f"{base_url}/api/admin/artists/{artist_id}/assign-user",
+        json={'user_id': user_id},
+        headers={'X-CSRFToken': csrf_token},
+        timeout=20
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Assign artist {artist_id} to user {user_id} failed ({resp.status_code}): {resp.text}")
+    step_done("Artist linked to user")
 
 
 def bulk_upload(session: requests.Session, base_url: str, zip_path: str) -> dict:
+    step("Uploading bulk zip...")
     csrf_token = get_csrf_token(session, base_url)
     with open(zip_path, 'rb') as fh:
         files = {'file': (os.path.basename(zip_path), fh, 'application/zip')}
@@ -44,71 +171,139 @@ def bulk_upload(session: requests.Session, base_url: str, zip_path: str) -> dict
         )
     if resp.status_code not in (200, 207):
         raise RuntimeError(f"Bulk upload failed ({resp.status_code}): {resp.text}")
+    step_done("Upload finished")
     return resp.json()
 
 
-def _slug_title_from_filename(name: str) -> str:
-    stem = os.path.splitext(os.path.basename(name))[0]
-    cleaned = stem.replace('_', ' ').replace('-', ' ').strip()
-    title = cleaned or stem or "Untitled"
-    return title[:50]  # match artwork_ttl length constraint
-
-
-def generate_manifest(zip_path: str, storage_id: str, artist_email: str, artist_name: str) -> str:
-    """Create a manifest.json and return path to a new zip that includes it."""
+def filter_zip_files(zip_path):
+    step("Scanning zip for images...")
     with zipfile.ZipFile(zip_path, 'r') as zf:
-        filenames = [n for n in zf.namelist() if not n.endswith('/')]
-
-    allowed_ext = {'.jpg', '.jpeg', '.png', '.webp', '.avif'}
-    files = []
-    seen = set()
-    for name in filenames:
-        base = os.path.basename(name)
-        ext = os.path.splitext(base)[1].lower()
-        if base.startswith('._') or base.startswith('.'):
-            # Skip macOS resource forks/hidden files
-            continue
-        if ext not in allowed_ext:
-            continue
-        if base in seen:
-            continue
-        seen.add(base)
-        files.append(name)
-
+        files = []
+        for name in zf.namelist():
+            if name.endswith('/'):
+                continue
+            base = os.path.basename(name)
+            ext = Path(base).suffix.lower()
+            # Skip macOS metadata files and hidden files
+            if base.startswith('._') or base.startswith('.'):
+                continue
+            # Skip files in __MACOSX directory (macOS metadata)
+            if '__MACOSX' in name:
+                continue
+            # Only include valid image extensions
+            if ext not in ALLOWED_EXT:
+                continue
+            # File passed all checks - add it
+            files.append(base)
     if not files:
-        raise RuntimeError("Zip contains no supported image files (JPG, PNG, WebP, AVIF).")
+        raise RuntimeError("Zip contains no supported image files (JPG, JPEG, PNG, WebP, AVIF).")
+    step_done(f"Found {len(files)} image(s)")
+    return files
 
-    artist_first, artist_last = (artist_name.split(' ', 1) + [''])[:2]
+
+def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=None, use_filenames=True):
+    step("Building manifest...")
     manifest = {
         "default_storage_id": storage_id,
-        "artists": [
-            {
-                "key": "auto-artist",
-                "first_name": artist_first or "Auto",
-                "last_name": artist_last or "Uploader",
-                "email": artist_email or None
-            }
-        ],
+        "artists": [],
         "artworks": [],
         "photos": []
     }
+    art_key_map = {}
 
-    for idx, fname in enumerate(files, start=1):
-        art_key = f"art-{idx}"
+    def safe_title(name):
+        stem = Path(name).stem
+        cleaned = stem.replace('_', ' ').replace('-', ' ').strip() or stem or "Untitled"
+        return cleaned[:50]
+
+    if mode == 'single':
+        art_key = "art-1"
         manifest["artworks"].append({
             "key": art_key,
-            "title": _slug_title_from_filename(fname),
-            "artist_key": "auto-artist",
+            "title": (title_base or "Bulk Upload")[:50],
+            "artist_id": artist_id,
+            "artist_email": artist_email,
             "storage_id": storage_id
         })
-        manifest["photos"].append({
-            "filename": os.path.basename(fname),
-            "artwork_key": art_key,
-            "is_primary": idx == 1
-        })
+        art_key_map[art_key] = True
+        for idx, f in enumerate(files, start=1):
+            manifest["photos"].append({
+                "filename": f,
+                "artwork_key": art_key,
+                "is_primary": idx == 1
+            })
+    else:
+        for idx, f in enumerate(files, start=1):
+            art_key = f"art-{idx}"
+            title = safe_title(f) if use_filenames else f"{title_base or 'Artwork'} {idx}"
+            manifest["artworks"].append({
+                "key": art_key,
+                "title": title[:50],
+                "artist_id": artist_id,
+                "artist_email": artist_email,
+                "storage_id": storage_id
+            })
+            manifest["photos"].append({
+                "filename": f,
+                "artwork_key": art_key,
+                "is_primary": True
+            })
+            art_key_map[art_key] = True
+    step_done("Manifest built")
+    return manifest
 
+
+def pick_storage(storage_list, default_storage):
+    if not storage_list:
+        print(f"No storage locations found. Using default: {default_storage}")
+        return default_storage
+
+    page = 0
+    per_page = 4
+    total_pages = (len(storage_list) + per_page - 1) // per_page
+
+    while True:
+        start = page * per_page
+        end = start + per_page
+        slice_ = storage_list[start:end]
+        print(f"\nStorage page {page+1}/{total_pages}:")
+        for idx, s in enumerate(slice_, start=1):
+            print(f"  {idx}) {s.get('id')} | {s.get('location')} | {s.get('type')}")
+        choice = prompt(
+            "Select storage (number/id), n=next, p=prev, Enter=default "
+            f"[{default_storage}]:",
+            default=None,
+            allow_empty=True
+        )
+        if choice == "" and default_storage:
+            return default_storage
+        if choice.lower() in ("n", "next"):
+            if page + 1 < total_pages:
+                page += 1
+            else:
+                print("Already at last page.")
+            continue
+        if choice.lower() in ("p", "prev"):
+            if page > 0:
+                page -= 1
+            else:
+                print("Already at first page.")
+            continue
+        # direct id match
+        match = next((s for s in storage_list if str(s.get('id')) == choice), None)
+        if match:
+            return match.get('id')
+        # number on current page
+        if choice.isdigit():
+            num = int(choice)
+            if 1 <= num <= len(slice_):
+                return slice_[num - 1].get('id')
+        print("Invalid selection. Try again (or type 'exit' to quit).")
+
+
+def stitch_zip_with_manifest(src_zip, manifest):
     tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    with zipfile.ZipFile(zip_path, 'r') as zin, zipfile.ZipFile(tmp_zip, 'w') as zout:
+    with zipfile.ZipFile(src_zip, 'r') as zin, zipfile.ZipFile(tmp_zip, 'w') as zout:
         for item in zin.infolist():
             if item.filename.endswith('/'):
                 continue
@@ -118,43 +313,19 @@ def generate_manifest(zip_path: str, storage_id: str, artist_email: str, artist_
     return tmp_zip.name
 
 
-def ensure_manifest(zip_path: str, auto_mode: bool, storage_id: str, artist_email: str, artist_name: str) -> str:
-    """Ensure the zip has a manifest; auto-generate if absent."""
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        if 'manifest.json' in zf.namelist():
-            return zip_path
-
-    if not auto_mode:
-        # Prompt the user
-        print("manifest.json not found in the zip.")
-        answer = input("Auto-generate a manifest from image filenames? [y/N]: ").strip().lower()
-        if answer not in ('y', 'yes'):
-            raise RuntimeError("Manifest required. Add manifest.json to the zip or rerun with --auto-manifest.")
-        if not storage_id:
-            storage_id = input("Enter default storage_id (e.g., STOR001): ").strip()
-        if not artist_email:
-            artist_email = input("Enter artist email (optional, press Enter to skip): ").strip()
-        if not artist_name:
-            artist_name = input("Enter artist name (e.g., Auto Uploader): ").strip() or "Auto Uploader"
-
-    if not storage_id:
-        raise RuntimeError("Storage ID is required to auto-generate a manifest.")
-
-    auto_zip = generate_manifest(zip_path, storage_id, artist_email, artist_name or "Auto Uploader")
-    print(f"Generated manifest.json and built new zip: {auto_zip}")
-    return auto_zip
+def generate_password(length=16):
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Admin bulk upload client (zip + manifest.json)")
-    parser.add_argument('--zip', required=True, help='Path to zip archive containing manifest.json and images')
-    parser.add_argument('--admin-email', required=True, help='Admin email for authentication')
-    parser.add_argument('--admin-password', required=True, help='Admin password for authentication')
+    parser = argparse.ArgumentParser(description="Interactive admin bulk upload helper")
+    parser.add_argument('--zip', required=True, help='Path to zip archive containing images (manifest will be generated)')
     parser.add_argument('--base-url', default=os.getenv('API_BASE_URL', 'http://backend:5000'), help='API base URL (default: http://backend:5000)')
-    parser.add_argument('--auto-manifest', action='store_true', help='Auto-generate manifest.json if missing')
-    parser.add_argument('--default-storage', help='Storage ID to use when auto-generating manifest (e.g., STOR001)')
-    parser.add_argument('--artist-email', help='Artist email to use when auto-generating manifest')
-    parser.add_argument('--artist-name', help='Artist name to use when auto-generating manifest (e.g., "Auto Uploader")')
+    parser.add_argument('--default-storage', default='STOR001', help='Default storage ID for artworks')
+    parser.add_argument('--mode', choices=['single', 'per-file'], help='Artwork distribution mode (single=all photos on one artwork, per-file=one artwork per photo)')
+    parser.add_argument('--artist-email', help='Force an existing artist email (skip interactive selection)')
+    parser.add_argument('--interactive', action='store_true', default=True, help='Run interactively (default)')
     args = parser.parse_args()
 
     if not os.path.exists(args.zip):
@@ -165,18 +336,103 @@ def main():
     session = requests.Session()
 
     try:
-        zip_with_manifest = ensure_manifest(
-            args.zip,
-            auto_mode=args.auto_manifest,
-            storage_id=args.default_storage,
-            artist_email=args.artist_email,
-            artist_name=args.artist_name
-        )
-
-        print(f"[{datetime.now().isoformat()}] Logging in as {args.admin_email} ...")
-        login(session, base_url, args.admin_email, args.admin_password)
+        admin_email = prompt("Admin email:")
+        admin_password = prompt("Admin password:", secret=True)
+        print(f"[{datetime.now().isoformat()}] Logging in as {admin_email} ...")
+        login(session, base_url, admin_email, admin_password)
         print("Login successful.")
 
+        files = filter_zip_files(args.zip)
+
+        # Fetch artists for lookup
+        artists = list_artists(session, base_url)
+        if artists:
+            print("Existing artists (id | name | email | linked_user_email):")
+            for a in artists:
+                print(f"- {a.get('id')} | {a.get('name')} | {a.get('email')} | user:{a.get('user_email')}")
+
+        # Choose artist
+        chosen_artist_id = None
+        chosen_artist_email = None
+
+        use_existing = prompt("Use existing artist? [y/n]:", default="y").lower().startswith('y')
+        if use_existing:
+            if args.artist_email:
+                match = next((a for a in artists if (a.get('email') or '').lower() == args.artist_email.lower()), None)
+                if not match:
+                    raise RuntimeError(f"Artist with email {args.artist_email} not found")
+                chosen_artist_id = match['id']
+                chosen_artist_email = match['email']
+            else:
+                while not chosen_artist_id:
+                    picked = prompt("Enter artist email or id (or 'exit' to quit):", allow_empty=False)
+                    match = next((a for a in artists if str(a.get('id')) == picked or (a.get('email') or '').lower() == picked.lower()), None)
+                    if match:
+                        chosen_artist_id = match['id']
+                        chosen_artist_email = match['email']
+                    else:
+                        print("No matching artist found. Try again.")
+        else:
+            # Create new user
+            new_email = prompt("New artist user email:")
+            new_password = prompt("Artist user password (leave blank to auto-generate):", secret=True, allow_empty=True)
+            if not new_password:
+                new_password = generate_password()
+                print(f"Generated password: {new_password}")
+
+            user_id = register_user(session, base_url, new_email, new_password)
+            promote_to_artist(session, base_url, user_id)
+
+            first_name = prompt("Artist first name:")
+            last_name = prompt("Artist last name:")
+            site = prompt("Artist site (optional, Enter to skip):", allow_empty=True)
+            bio = prompt("Artist bio (optional, Enter to skip):", allow_empty=True)
+            phone = prompt("Artist phone (optional, format (123)-456-7890, Enter to skip):", allow_empty=True)
+
+            artist_payload = {
+                "artist_fname": first_name,
+                "artist_lname": last_name,
+                "artist_email": new_email,
+                "artist_site": site or None,
+                "artist_bio": bio or None,
+                "artist_phone": phone or None,
+                "user_id": user_id
+            }
+            artist_id = create_artist(session, base_url, artist_payload)
+            assign_artist_user(session, base_url, artist_id, user_id)
+            chosen_artist_id = artist_id
+            chosen_artist_email = new_email
+
+        # Artwork distribution
+        # Storage selection with paging (4 per page)
+        storage_list = list_storage_locations(session, base_url)
+        storage_id = pick_storage(storage_list, default_storage=args.default_storage)
+
+        mode = args.mode or prompt("Artwork mode? (single/per-file):", default="single").strip().lower()
+        if mode not in ('single', 'per-file'):
+            mode = 'single'
+
+        title_base = None
+        use_filenames = True
+        if mode == 'single':
+            title_base = prompt("Artwork title for all photos:", default="Bulk Upload")
+        else:
+            use_filenames_answer = prompt("Use filenames as titles? [y/n]:", default="y").lower().startswith('y')
+            use_filenames = use_filenames_answer
+            if not use_filenames:
+                title_base = prompt("Base title prefix:", default="Artwork")
+
+        manifest = build_manifest(
+            files=files,
+            artist_id=chosen_artist_id,
+            artist_email=chosen_artist_email,
+            storage_id=storage_id,
+            mode=mode,
+            title_base=title_base,
+            use_filenames=use_filenames
+        )
+
+        zip_with_manifest = stitch_zip_with_manifest(args.zip, manifest)
         print(f"Uploading bulk zip ({zip_with_manifest}) ...")
         result = bulk_upload(session, base_url, zip_with_manifest)
 
@@ -185,13 +441,35 @@ def main():
         print(f"- Artists created:  {summary.get('artists_created', 0)} (existing: {summary.get('artists_existing', 0)})")
         print(f"- Artworks created: {summary.get('artworks_created', 0)} (existing: {summary.get('artworks_existing', 0)})")
         print(f"- Photos created:   {summary.get('photos_created', 0)}")
+        if summary.get('warnings'):
+            print(f"- Warnings:         {summary.get('warnings')}")
         if summary.get('errors'):
             print(f"- Errors:           {summary.get('errors')}")
+
+        warnings = result.get('results', {}).get('warnings', [])
         errors = result.get('results', {}).get('errors', [])
+
+        if warnings:
+            print("Warnings:")
+            for warn in warnings:
+                scope = warn.get('scope')
+                message = warn.get('message')
+                detail = warn.get('detail')
+                entry = ""
+                if isinstance(detail, dict):
+                    entry = detail.get('entry') or detail.get('filename') or ''
+                print(f"  - [{scope}] {message} {entry}")
+
         if errors:
-            print("Error details:")
+            print("Errors:")
             for err in errors:
-                print(f"- [{err.get('scope')}] {err.get('message')}: {err.get('detail')}")
+                scope = err.get('scope')
+                message = err.get('message')
+                detail = err.get('detail')
+                entry = ""
+                if isinstance(detail, dict):
+                    entry = detail.get('entry') or detail.get('filename') or ''
+                print(f"  - [{scope}] {message} {entry}")
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
