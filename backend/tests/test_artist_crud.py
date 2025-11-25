@@ -111,6 +111,48 @@ def regular_user(client):
     return User.query.filter_by(email='user@test.com').first()
 
 
+@pytest.fixture
+def artist_user(client, test_data):
+    """Create, assign, and log in as an artist user owning ARTIST01."""
+    client.post('/auth/register', json={
+        'email': 'artist-owner@test.com',
+        'password': 'ArtistOwnerPass123!'
+    })
+
+    user = User.query.filter_by(email='artist-owner@test.com').first()
+    user.role = 'artist'
+    test_data['artist1'].user_id = user.id
+    db.session.commit()
+
+    client.post('/auth/login', json={
+        'email': 'artist-owner@test.com',
+        'password': 'ArtistOwnerPass123!'
+    })
+
+    return user
+
+
+@pytest.fixture
+def artist_user_unassigned(client, test_data):
+    """Create an artist user assigned to a different artist."""
+    client.post('/auth/register', json={
+        'email': 'artist-other@test.com',
+        'password': 'ArtistOtherPass123!'
+    })
+
+    user = User.query.filter_by(email='artist-other@test.com').first()
+    user.role = 'artist'
+    test_data['artist2'].user_id = user.id
+    db.session.commit()
+
+    client.post('/auth/login', json={
+        'email': 'artist-other@test.com',
+        'password': 'ArtistOtherPass123!'
+    })
+
+    return user
+
+
 class TestListArtists:
     """ Test GET /api/artists endpoint."""
 
@@ -248,6 +290,23 @@ class TestUpdateArtist:
         """Test that regular users cannot update artists."""
         response = client.put('/api/artists/ARTIST01', json={
             'artist_lname': 'Unauthorized Update'
+        })
+
+        assert response.status_code == 403
+
+    def test_update_artist_owner_success(self, client, artist_user, test_data):
+        """Assigned artist users can update their own records."""
+        response = client.put('/api/artists/ARTIST01', json={
+            'artist_bio': 'Owner updated bio'
+        })
+
+        assert response.status_code == 200
+        assert response.json['artist']['artist_bio'] == 'Owner updated bio'
+
+    def test_update_artist_unassigned_artist_forbidden(self, client, artist_user_unassigned, test_data):
+        """Artist users cannot update records they do not own."""
+        response = client.put('/api/artists/ARTIST01', json={
+            'artist_bio': 'Should fail'
         })
 
         assert response.status_code == 403

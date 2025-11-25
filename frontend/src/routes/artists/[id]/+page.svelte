@@ -90,10 +90,6 @@
     deleteConfirm = false;
   };
 
-  const openPhotoModal = (photo) => {
-    selectedPhoto = photo;
-  };
-
   const closePhotoModal = () => {
     selectedPhoto = null;
   };
@@ -156,10 +152,39 @@
   {/if}
 
   <div class="artist-detail">
-    <div class="photos-section">
-      <div class="artist-placeholder">
-        <span>Artist media placeholder</span>
-      </div>
+    <div class="artworks-section">
+      {#if data.artworksError}
+        <div class="artworks-error">{data.artworksError}</div>
+      {:else if data.artworks && data.artworks.length > 0}
+        <div class="artwork-grid">
+          {#each data.artworks as artwork}
+            {@const thumbnailPath = artwork.primary_photo?.thumbnail_url || artwork.primary_photo?.thumbnail}
+            <a href="/artworks/{artwork.id}" class="artwork-card">
+              <div class="artwork-thumbnail">
+                {#if thumbnailPath}
+                  <img src={getThumbnailUrl(thumbnailPath)} alt={artwork.title || 'Artwork thumbnail'} />
+                {:else}
+                  <div class="no-image">No Image</div>
+                {/if}
+              </div>
+              <div class="artwork-info">
+                <h3>{artwork.title || 'Untitled'}</h3>
+                <p class="artwork-id"><code>{artwork.id}</code></p>
+                {#if artwork.medium}
+                  <p class="medium">{artwork.medium}</p>
+                {/if}
+                {#if artwork.storage?.location}
+                  <p class="storage">Storage: {artwork.storage.location}</p>
+                {/if}
+              </div>
+            </a>
+          {/each}
+        </div>
+      {:else}
+        <div class="no-artworks">
+          <p>No artworks recorded for this artist yet.</p>
+        </div>
+      {/if}
     </div>
 
     <div class="info-section">
@@ -405,83 +430,107 @@
     gap: 2rem;
   }
 
-  .photos-section {
+  .artworks-section {
     background: var(--bg-tertiary);
     border-radius: 8px;
     padding: 1.5rem;
+    min-height: 400px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .artworks-error {
+    padding: 1rem;
+    background: var(--error-color);
+    color: white;
+    border-radius: 4px;
+  }
+
+  .artwork-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 350px));
+    gap: 1.5rem;
+    justify-content: center;
+  }
+
+  .artwork-card {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+  }
+
+  .artwork-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  .artwork-thumbnail {
+    width: 100%;
+    height: 200px;
+    background: var(--bg-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 400px;
-  }
-
-  .photo-gallery {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 1rem;
-  }
-
-  .photo-item {
-    position: relative;
-    aspect-ratio: 1;
-    border-radius: 8px;
     overflow: hidden;
-    cursor: pointer;
-    display: block;
-    width: 100%;
-    border: none;
-    padding: 0;
-    background: transparent;
   }
 
-  .photo-item:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .photo-item img {
+  .artwork-thumbnail img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: transform 0.2s;
   }
 
-  .photo-item:hover img {
-    transform: scale(1.05);
-  }
-
-  .photo-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-
-  .photo-item:hover .photo-overlay {
-    opacity: 1;
-  }
-
-  .photo-overlay span {
-    color: white;
+  .no-image {
+    color: var(--text-tertiary);
     font-size: 0.875rem;
-    font-weight: 500;
   }
 
-  .no-photos {
+  .artwork-info {
+    padding: 1rem;
+  }
+
+  .artwork-info h3 {
+    margin: 0 0 0.5rem 0;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+  }
+
+  .artwork-id {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.75rem;
+  }
+
+  .artwork-id code {
+    background: var(--bg-secondary);
+    color: var(--accent-color);
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-weight: bold;
+  }
+
+  .medium,
+  .storage {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin: 0 0 0.25rem 0;
+  }
+
+  .no-artworks {
     text-align: center;
     padding: 3rem;
     color: var(--text-secondary);
   }
 
-  .no-photos p {
-    margin: 0 0 1rem 0;
+  .no-artworks p {
+    margin: 0;
   }
 
   .no-image-placeholder {
@@ -493,20 +542,6 @@
     background: var(--bg-secondary);
     color: var(--text-tertiary);
     font-size: 0.875rem;
-  }
-
-  .artist-placeholder {
-    width: 100%;
-    height: 100%;
-    border: 2px dashed var(--border-color);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-tertiary);
-    font-size: 1rem;
-    text-align: center;
-    padding: 1rem;
   }
 
   .info-section {
@@ -701,10 +736,6 @@
       flex-direction: column;
       align-items: flex-start;
       gap: 1rem;
-    }
-
-    .photo-gallery {
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     }
 
     .photo-modal {

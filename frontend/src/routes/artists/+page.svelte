@@ -1,19 +1,30 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
 
+  // This line is how SvelteKit injects data from the load function in +page.server.js
   export let data;
 
-  const getThumbnailUrl = (thumbnail) => {
-    if (!thumbnail) return null;
-    if (thumbnail.startsWith('http')) return thumbnail;
-    return `${PUBLIC_API_BASE_URL}${thumbnail}`;
+  // Takes the artist photo url and generates a thumbnail URL for it
+  const getThumbnailUrl = (artist_photo_url) => {
+    if (!artist_photo_url) return null;
+    if (artist_photo_url.startsWith('http')) return artist_photo_url;
+    return `${PUBLIC_API_BASE_URL}${artist_photo_url}`;
   };
 
+  // Helpers to calculate page ranges based on /artists GET pagination results
+  const pageStart = data.pagination.total_filtered_artists > 0
+    ? (data.pagination.page - 1) * data.pagination.per_page + 1
+    : 0;
+
+  const pageEnd = Math.min(
+    data.pagination.page * data.pagination.per_page,
+    data.pagination.total_filtered_artists
+  );
+
+  // Keeps query filters in the URL when clicking next or back in pages
   const getPaginationUrl = (page) => {
     const params = new URLSearchParams();
     params.set('page', page.toString());
-    // TODO include per page? 
-    // TODO include owned_only ?
     if (data.filters.search) params.set('search', data.filters.search);
     if (data.filters.medium) params.set('medium', data.filters.medium);
     if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
@@ -21,6 +32,7 @@
     return `/artists?${params.toString()}`;
   };
 
+  // Helper to auto-submit the form automatically when dropdown is selected
   const handleSelectChange = (event) => {
     event.currentTarget.form?.submit();
   };
@@ -31,8 +43,10 @@
     <h1>Artists</h1>
   </header>
 
+  <!-- Search form for the Artists page -->
   <form method="GET" class="filters">
     <div class="filter-group">
+      <!-- Keyword search -->
       <label for="search">Search</label>
       <input
         id="search"
@@ -45,6 +59,7 @@
     </div>
 
     <div class="filter-group">
+      <!-- Drop-down to order artists alphabetically or reverse alphabetically -->
       <label for="ordering">Order</label>
       <select id="ordering" name="ordering" on:change={handleSelectChange}>
         <option value="name_asc" selected={data.filters.ordering === 'name_asc'}>
@@ -57,6 +72,7 @@
     </div>
 
     <div class="filter-group">
+      <!-- Drop-down to filter by storage location by calling /storage GET endpoint in +page.server.js -->
       <label for="storage_id">Location</label>
       <select id="storage_id" name="storage_id" on:change={handleSelectChange}>
         <option value="" selected={!data.filters.storageId}>
@@ -91,6 +107,7 @@
     <a href="/artists" class="btn-secondary">Clear</a>
   </form>
 
+  <!-- Render artist grid -->
   {#if data.error}
     <div class="error">{data.error}</div>
   {:else if data.artists.length === 0}
@@ -100,9 +117,9 @@
       {#each data.artists as artist}
         <a href="/artists/{artist.id}" class="artist-card">
           <div class="artist-thumbnail">
-            {#if artist.primary_photo?.thumbnail_url}
+            {#if artist.photo}
               <img
-                src={getThumbnailUrl(artist.primary_photo.thumbnail_url)}
+                src={getThumbnailUrl(artist.photo)}
                 alt={`${artist.first_name} ${artist.last_name}`}
               />
             {:else}
@@ -115,8 +132,8 @@
             <p class="artist-id">
               <code>{artist.id}</code>
             </p>
-            {#if artist.artist?.email}
-              <p class="artist-email">{artist.artist.email}</p>
+            {#if artist.email}
+              <p class="artist-email">{artist.email}</p>
             {/if}
             {#if artist.date_created}
               <p class="artist-created">
@@ -128,10 +145,13 @@
       {/each}
     </div>
 
+    <!-- Renders pagination at the bottom of the page -->
     {#if data.pagination}
       <div class="pagination">
         <div class="pagination-info">
-          Showing {data.pagination.total > 0 ? ((data.pagination.page - 1) * data.pagination.per_page) + 1 : 0}–{Math.min(data.pagination.page * data.pagination.per_page, data.pagination.total)} of {data.pagination.total}
+          <!-- Example: if total_filtered_artists = 54, page = 2, and per_page = 20,
+            bottom of the page would display "Showing 21–40 of 54" -->
+          Showing {pageStart}–{pageEnd} of {data.pagination.total_filtered_artists}
         </div>
 
         <div class="pagination-controls">

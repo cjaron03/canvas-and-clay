@@ -319,7 +319,7 @@ def enforce_session_token():
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
-from auth import auth_bp, admin_required, is_artwork_owner, is_photo_owner, log_rbac_denial, log_audit_event
+from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -823,7 +823,6 @@ def create_artist():
 
 @app.route('/api/artists/<artist_id>', methods=['PUT'])
 @login_required
-@admin_required
 def update_artist(artist_id):
     """Update an existing artist
 
@@ -852,14 +851,23 @@ def update_artist(artist_id):
         403: Permission denied
         404: Artist not found, or artist is deleted
     """
-    # Verify artists exists
+    # Verify artist exists
     artist = Artist.query.get(artist_id)
     if not artist:
         return jsonify({'error': 'Artist not found'}), 404
-    
+
     # Verify artist is not deleted
     if artist.is_deleted:
         return jsonify({'error': 'Artist is deleted.'}), 404
+
+    # Authorization: admin or owning artist
+    if not current_user.is_admin:
+        if current_user.normalized_role != 'artist':
+            log_rbac_denial('artist', artist_id, 'insufficient_role')
+            return jsonify({'error': 'Permission denied'}), 403
+        if not is_artist_owner(artist):
+            log_rbac_denial('artist', artist_id, 'not_owner')
+            return jsonify({'error': 'Permission denied'}), 403
 
     data = request.get_json()
     if not data:
@@ -900,21 +908,28 @@ def update_artist(artist_id):
     
     # Update artist phone
     if 'artist_phone' in data:
-        try:
-            import re
-            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
-            new_phone = str(data['artist_phone']).strip()
+        import re
+        phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
+        new_phone_raw = data['artist_phone']
+        new_phone = str(new_phone_raw).strip() if new_phone_raw is not None else ''
+
+        if new_phone == '':
+            if artist.artist_phone is not None:
+                changes['artist_phone'] = {
+                    'old': artist.artist_phone,
+                    'new': None
+                }
+                artist.artist_phone = None
+        else:
             if not phone_regex.match(new_phone):
                 return jsonify({'error': 'Invalid phone-number format. Expected (123)-456-7890'}), 400
-           
+
             if new_phone != artist.artist_phone:
                 changes['artist_phone'] = {
                     'old': artist.artist_phone,
                     'new': new_phone
                 }
                 artist.artist_phone = new_phone
-        except Exception as e:
-            return jsonify({'error': 'Failed to validate phone-number'}), 400
         
     # Update user id
     if 'user_id' in data and data['user_id'] != artist.user_id:
@@ -1633,7 +1648,7 @@ def list_artists_catalog():
         count_query = apply_filters(
             base_query(db.func.count(db.distinct(Artist.artist_id)))
         )
-        total_num_relevant_artists = count_query.scalar() or 0
+        total_filtered_artists = count_query.scalar() or 0
 
         # all() calls the results_query and assigns the results to rows
         # includes pagination so only the relevant artists for that page will show up
@@ -1665,11 +1680,11 @@ def list_artists_catalog():
             })
 
         # Tells the front end how many pages are needed for the entire query
-        total_pages = (total_num_relevant_artists + per_page - 1) // per_page if total_num_relevant_artists > 0 else 0
+        total_pages = (total_filtered_artists + per_page - 1) // per_page if total_filtered_artists > 0 else 0
         pagination = {
             'page': page,
             'per_page': per_page,
-            'total_num_relevant_artists': total_num_relevant_artists,
+            'total_filtered_artists': total_filtered_artists,
             'total_pages': total_pages,
             'has_next': page < total_pages,
             'has_prev': page > 1
@@ -1732,6 +1747,7 @@ def get_artist_details(artist_id):
         'artist_fname': artist.artist_fname,
         'artist_lname': artist.artist_lname,
         'artist_bio': artist.artist_bio,
+        'user_id': artist.user_id,
         'mediums': mediums,
         'storage_locations': storage_locations,
         'email': artist.artist_email,
