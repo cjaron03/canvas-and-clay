@@ -1684,6 +1684,63 @@ def list_artists_catalog():
         return jsonify({'error': 'Failed to load artists'}), 500
 
 
+@app.route('/api/artists/<artist_id>', methods=['GET'])
+@limiter.limit(get_rate_limit_by_identity)
+def get_artist_details(artist_id):
+    """Return detailed artist info plus related mediums and storage locations."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist or artist.is_deleted:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    medium_rows = (
+        db.session.query(db.func.distinct(Artwork.artwork_medium))
+        .filter(
+            Artwork.artist_id == artist_id,
+            Artwork.is_deleted == False,
+            Artwork.artwork_medium.isnot(None),
+            db.func.trim(Artwork.artwork_medium) != ''
+        )
+        .all()
+    )
+    mediums = sorted([row[0] for row in medium_rows if row[0]])
+
+    storage_rows = (
+        db.session.query(
+            Storage.storage_id,
+            Storage.storage_loc,
+            Storage.storage_type
+        )
+        .join(Artwork, Artwork.storage_id == Storage.storage_id)
+        .filter(
+            Artwork.artist_id == artist_id,
+            Artwork.is_deleted == False
+        )
+        .distinct()
+        .all()
+    )
+    storage_locations = [
+        {
+            'id': storage_id,
+            'location': storage_loc or '',
+            'type': storage_type or ''
+        }
+        for storage_id, storage_loc, storage_type in storage_rows
+    ]
+
+    return jsonify({
+        'artist_id': artist.artist_id,
+        'artist_fname': artist.artist_fname,
+        'artist_lname': artist.artist_lname,
+        'artist_bio': artist.artist_bio,
+        'mediums': mediums,
+        'storage_locations': storage_locations,
+        'email': artist.artist_email,
+        'artist_site': artist.artist_site,
+        'artist_phone': artist.artist_phone,
+        'photo_thumbnail': artist.profile_photo_url
+    }), 200
+
+
 @app.route('/api/storage', methods=['GET'])
 def list_storage():
     """List all storage locations for dropdown selection.
