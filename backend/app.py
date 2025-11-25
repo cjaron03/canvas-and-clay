@@ -702,6 +702,7 @@ def create_artist():
         artist_lname (str, required): Artist last name
         email        (str, optional): Artist email
         artist_site  (str, optional): Artist website or social media
+        profile_photo_url (str, optional): Public photo URL to display for the artist
         artist_bio   (str, optional): Artist biography/description
         artist_phone (str, optional): Artist phone number - must be formatted as 
                                                            (123)-456-7890
@@ -766,6 +767,7 @@ def create_artist():
             artist_email = data.get('email'),
             artist_site = data.get('artist_site'),
             artist_bio = data.get('artist_bio'),
+            profile_photo_url = data.get('profile_photo_url'),
             artist_phone = artist_phone,
             is_deleted = False,
             date_deleted = None,
@@ -804,6 +806,7 @@ def create_artist():
                 'artist_lname': artist.artist_lname,
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
+                'profile_photo_url': artist.profile_photo_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'is_deleted': artist.is_deleted,
@@ -837,6 +840,7 @@ def update_artist(artist_id):
         artist_lname (str, required): Artist last name
         email (str, optional): Artist email
         artist_site  (str, optional): Artist website or social media
+        profile_photo_url (str, optional): Public URL to display for the artist
         artist_bio   (str, optional): Artist biography/description
         artist_phone (str, optional): Artist phone number - must be formatted as 
                                                            (123)-456-7890
@@ -884,6 +888,11 @@ def update_artist(artist_id):
         changes['artist_site'] = {'old': artist.artist_site, 'new': data['artist_site']}
         artist.artist_site = data['artist_site']
     
+    # Update profile photo url
+    if 'profile_photo_url' in data and data['profile_photo_url'] != artist.profile_photo_url:
+        changes['profile_photo_url'] = {'old': artist.profile_photo_url, 'new': data['profile_photo_url']}
+        artist.profile_photo_url = data['profile_photo_url']
+
     # Update artist bio
     if 'artist_bio' in data and data['artist_bio'] != artist.artist_bio:
         changes['artist_bio'] = {'old': artist.artist_bio, 'new': data['artist_bio']}
@@ -947,6 +956,7 @@ def update_artist(artist_id):
                 'artist_lname': artist.artist_lname,
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
+                'profile_photo_url': artist.profile_photo_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'user_id': artist.user_id
@@ -1446,6 +1456,7 @@ def get_artwork(artwork_id):
             'email': artist.artist_email,
             'phone': artist.artist_phone,
             'website': artist.artist_site,
+            'profile_photo_url': artist.profile_photo_url,
             'bio': artist.artist_bio,
             'user_id': artist.user_id
         } if artist else None,
@@ -1650,7 +1661,7 @@ def list_artists_catalog():
                 'last_name': artist.artist_lname,
                 'email': artist.artist_email,
                 'user_id': artist.user_id,
-                'photo': None
+                'photo': artist.profile_photo_url
             })
 
         # Tells the front end how many pages are needed for the entire query
