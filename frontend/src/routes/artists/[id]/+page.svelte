@@ -17,50 +17,709 @@
     if (path.startsWith('http')) return path;
     return `${PUBLIC_API_BASE_URL}${path}`;
   };
- 
- 
 
+  const handleDelete = async () => {
+    if (!deleteConfirm) {
+      deleteConfirm = true;
+      return;
+    }
 
+    isDeleting = true;
+    deleteError = null;
 
+    try {
+      let csrfToken = $auth.csrfToken;
+      if (!csrfToken) {
+        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+          credentials: 'include'
+        });
+        if (csrfResponse.ok) {
+          const csrfData = await csrfResponse.json();
+          csrfToken = csrfData.csrf_token;
+        }
+      }
 
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/artists/${encodeURIComponent(data.artist.artist_id)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'X-CSRFToken': csrfToken || '',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include'
+        }
+      );
 
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        let errorMessage = 'Failed to delete artist';
 
+        if (contentType.includes('application/json')) {
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            // default handled below
+          }
+        } else {
+          if (response.status === 400) {
+            errorMessage =
+              'Bad request. The artist may still have artworks that must be removed before deletion.';
+          } else if (response.status === 403) {
+            errorMessage = 'Permission denied. You do not have permission to delete artists.';
+          } else if (response.status === 404) {
+            errorMessage = 'Artist not found. It may have already been deleted.';
+          } else {
+            errorMessage = `Failed to delete artist (HTTP ${response.status}). Please try again.`;
+          }
+        }
 
+        throw new Error(errorMessage);
+      }
 
+      goto('/artists');
+    } catch (err) {
+      deleteError = err.message || 'An unexpected error occurred while deleting the artist.';
+      isDeleting = false;
+      deleteConfirm = false;
+    }
+  };
 
- 
+  const cancelDelete = () => {
+    deleteConfirm = false;
+  };
+
+  const openPhotoModal = (photo) => {
+    selectedPhoto = photo;
+  };
+
+  const closePhotoModal = () => {
+    selectedPhoto = null;
+  };
+
+  const handleModalClick = (e) => {
+    if (e.target === modalElement) {
+      closePhotoModal();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && selectedPhoto) {
+      closePhotoModal();
+    }
+  };
+
+  $: artistOwnerId = data.artist?.user_id;
+  $: canUpload =
+    $auth.isAuthenticated &&
+    ($auth.user?.role === 'admin' ||
+      ($auth.user?.role === 'artist' &&
+        artistOwnerId &&
+        String(artistOwnerId) === String($auth.user?.id)));
+  $: canEditArtist = canUpload;
+  $: canDeleteArtist = $auth.isAuthenticated && $auth.user?.role === 'admin';
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  });
 </script>
 
 <div class="container">
-  <a href="/artists" class="back-link">← Back to Artists</a>
-  <h1>Artist {params.id}</h1>
-  <p>Artist details coming soon.</p>
+  <div class="header">
+    <a href="/artists" class="back-link">← Back to Artists</a>
+    {#if canEditArtist}
+      <div class="actions">
+        <a href="/artists/{data.artist.artist_id}/edit" class="btn-secondary">Edit</a>
+        {#if canDeleteArtist}
+          {#if !deleteConfirm}
+            <button on:click={handleDelete} class="btn-danger">Delete</button>
+          {:else}
+            <div class="delete-confirm">
+              <span>Are you sure?</span>
+              <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
+                {isDeleting ? 'Deleting...' : 'Confirm'}
+              </button>
+              <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
+            </div>
+          {/if}
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  {#if deleteError}
+    <div class="error">{deleteError}</div>
+  {/if}
+
+  <div class="artist-detail">
+    <div class="photos-section">
+      <div class="artist-placeholder">
+        <span>Artist media placeholder</span>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="artist-thumbnail">
+        {#if data.artist.photo_thumbnail}
+          <img
+            src={getThumbnailUrl(data.artist.photo_thumbnail)}
+            alt={`${data.artist.artist_fname || ''} ${data.artist.artist_lname || ''}`.trim() || 'Artist thumbnail'}
+          />
+        {:else}
+          <div class="no-image-placeholder">No Image</div>
+        {/if}
+      </div>
+
+      <h1>{[data.artist.artist_fname, data.artist.artist_lname].filter(Boolean).join(' ') || 'Unknown Artist'}</h1>
+
+      <div class="metadata">
+        <div class="meta-item">
+          <span class="meta-label">Artist ID</span>
+          <span class="meta-value"><code>{data.artist.artist_id}</code></span>
+        </div>
+
+        {#if data.artist.artist_bio}
+          <div class="meta-item">
+            <span class="meta-label">Artist Bio</span>
+            <p class="meta-value bio">{data.artist.artist_bio}</p>
+          </div>
+        {/if}
+
+        {#if data.artist.mediums && data.artist.mediums.length > 0}
+          <div class="meta-item">
+            <span class="meta-label">Mediums</span>
+            <div class="meta-value list">
+              <ul>
+                {#each data.artist.mediums as medium}
+                  <li>{medium}</li>
+                {/each}
+              </ul>
+            </div>
+          </div>
+        {/if}
+
+        {#if data.artist.storage_locations && data.artist.storage_locations.length > 0}
+          <div class="meta-item">
+            <span class="meta-label">Storage Locations</span>
+            <div class="meta-value list">
+              <ul>
+                {#each data.artist.storage_locations as location}
+                  <li>
+                    <span class="storage-location-name">{location.location || 'Unknown location'}</span>
+                    {#if location.type}
+                      <span class="storage-type">({location.type})</span>
+                    {/if}
+                    {#if location.id}
+                      <span class="storage-id"><code>{location.id}</code></span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          </div>
+        {/if}
+
+        {#if data.artist.email}
+          <div class="meta-item">
+            <span class="meta-label">Artist Email</span>
+            <span class="meta-value">{data.artist.email}</span>
+          </div>
+        {/if}
+
+        {#if data.artist.artist_site}
+          <div class="meta-item">
+            <span class="meta-label">Artist Site</span>
+            <span class="meta-value">
+              <a href={data.artist.artist_site} target="_blank" rel="noopener noreferrer">
+                {data.artist.artist_site}
+              </a>
+            </span>
+          </div>
+        {/if}
+
+        {#if data.artist.artist_phone}
+          <div class="meta-item">
+            <span class="meta-label">Artist Phone</span>
+            <span class="meta-value">{data.artist.artist_phone}</span>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
 </div>
+
+{#if selectedPhoto}
+  {@const fullPhotoUrl = selectedPhoto.url
+    ? getThumbnailUrl(selectedPhoto.url)
+    : selectedPhoto.thumbnail_url || selectedPhoto.thumbnail
+      ? getThumbnailUrl(selectedPhoto.thumbnail_url || selectedPhoto.thumbnail)
+      : null}
+  <div
+    class="photo-modal"
+    bind:this={modalElement}
+    on:click={handleModalClick}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Full size image view"
+    tabindex="-1"
+  >
+    <div class="photo-modal-content">
+      <button
+        class="photo-modal-close"
+        on:click={closePhotoModal}
+        aria-label="Close image view"
+      >
+        ×
+      </button>
+      {#if fullPhotoUrl}
+        <img
+          src={fullPhotoUrl}
+          alt={selectedPhoto.filename || 'Full size artist photo'}
+          class="photo-modal-image"
+        />
+      {:else}
+        <div class="photo-modal-placeholder">No image available</div>
+      {/if}
+      {#if selectedPhoto.filename}
+        <div class="photo-modal-caption">{selectedPhoto.filename}</div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <style>
   .container {
-    max-width: 800px;
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 2rem 1rem;
+    padding: 2rem;
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
   }
 
   .back-link {
-    display: inline-block;
-    margin-bottom: 1rem;
-    text-decoration: none;
     color: var(--accent-color);
+    text-decoration: none;
+    transition: color 0.2s;
   }
 
   .back-link:hover {
-    text-decoration: underline;
+    color: var(--accent-hover);
+  }
+
+  .actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .delete-confirm {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+  }
+
+  .delete-confirm span {
+    color: var(--error-color);
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .btn-primary {
+    padding: 0.5rem 1rem;
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    transition: background 0.2s;
+  }
+
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+
+  .btn-secondary {
+    padding: 0.5rem 1rem;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    transition: background 0.2s;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+  }
+
+  .btn-danger {
+    padding: 0.5rem 1rem;
+    background: var(--error-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    transition: background 0.2s;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: #b71c1c;
+  }
+
+  .btn-secondary:disabled,
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .error {
+    padding: 1rem;
+    background: var(--error-color);
+    color: white;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+
+  .artist-detail {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 2rem;
+  }
+
+  .photos-section {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+  }
+
+  .photo-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .photo-item {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    display: block;
+    width: 100%;
+    border: none;
+    padding: 0;
+    background: transparent;
+  }
+
+  .photo-item:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .photo-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.2s;
+  }
+
+  .photo-item:hover img {
+    transform: scale(1.05);
+  }
+
+  .photo-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .photo-item:hover .photo-overlay {
+    opacity: 1;
+  }
+
+  .photo-overlay span {
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .no-photos {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-secondary);
+  }
+
+  .no-photos p {
+    margin: 0 0 1rem 0;
+  }
+
+  .no-image-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+    color: var(--text-tertiary);
+    font-size: 0.875rem;
+  }
+
+  .artist-placeholder {
+    width: 100%;
+    height: 100%;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+    font-size: 1rem;
+    text-align: center;
+    padding: 1rem;
+  }
+
+  .info-section {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
 
   h1 {
-    margin-top: 0;
+    margin: 0 0 1.5rem 0;
     color: var(--text-primary);
+    font-size: 1.75rem;
   }
 
-  p {
+  .artist-thumbnail {
+    width: 100%;
+    aspect-ratio: 1.5 / 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .artist-thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .metadata {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .meta-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .meta-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
     color: var(--text-secondary);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.25rem;
+  }
+
+  .meta-value {
+    color: var(--text-primary);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .meta-value code {
+    background: var(--bg-secondary);
+    color: var(--accent-color);
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-weight: bold;
+    font-size: 0.875rem;
+  }
+
+  .meta-value.bio {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  .meta-value.list ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .storage-location-name {
+    font-weight: 600;
+  }
+
+  .storage-type {
+    color: var(--text-tertiary);
+    font-size: 0.875rem;
+    margin-left: 0.25rem;
+  }
+
+  .storage-id {
+    margin-left: 0.5rem;
+  }
+
+  .actions-bottom {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+  }
+
+  @media (max-width: 1024px) {
+    .artist-detail {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .photo-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 2rem;
+    cursor: pointer;
+  }
+
+  .photo-modal-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: default;
+  }
+
+  .photo-modal-close {
+    position: absolute;
+    top: -2.5rem;
+    right: 0;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    z-index: 1001;
+  }
+
+  .photo-modal-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  .photo-modal-image {
+    max-width: 100%;
+    max-height: 85vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .photo-modal-placeholder {
+    padding: 4rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 1.125rem;
+  }
+
+  .photo-modal-caption {
+    margin-top: 1rem;
+    color: white;
+    text-align: center;
+    font-size: 0.875rem;
+    opacity: 0.9;
+  }
+
+  @media (max-width: 768px) {
+    .header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .photo-gallery {
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+
+    .photo-modal {
+      padding: 1rem;
+    }
+
+    .photo-modal-close {
+      top: -3rem;
+      width: 2rem;
+      height: 2rem;
+      font-size: 1.25rem;
+    }
+
+    .photo-modal-image {
+      max-height: 80vh;
+    }
   }
 </style>
