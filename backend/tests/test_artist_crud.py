@@ -164,7 +164,7 @@ class TestListArtists:
         assert 'artists' in data
         assert 'pagination' in data
         assert len(data['artists']) == 2
-        assert data['pagination']['total'] == 2
+        assert data['pagination']['total_filtered_artists'] == 2
 
     def test_list_artists_pagination(self, client, test_data):
         """Test pagination works correctly."""
@@ -184,13 +184,14 @@ class TestListArtists:
         assert response.status_code == 200
         data = response.json
         assert len(data['artists']) == 1
-        assert data['artists'][0]['phone'] == '(123)-456-7890'
+        assert data['artists'][0]['first_name'] == 'Test'
+        assert data['artists'][0]['last_name'] == 'Testy'
    
     def test_list_artists_sort_by_last_name(self, client, test_data):
-        """Sort artists by last name ascending."""
-        response = client.get('/api/artists?sort_by=artist_lname&sort_order=asc')
+        """Sort artists alphabetically using ordering parameter."""
+        response = client.get('/api/artists?ordering=name_asc')
         data = response.json
-        names = [a['name'] for a in data['artists']]
+        names = [f"{a['first_name']} {a['last_name']}".strip() for a in data['artists']]
         assert names == ['Another Artist', 'Test Testy']
 
 

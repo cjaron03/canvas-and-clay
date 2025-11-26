@@ -1550,7 +1550,7 @@ def list_artists_catalog():
         {
             'page': page,
             'per_page': per_page,
-            'total_num_relevant_artists': total_num_relevant_artists,
+            'total_filtered_artists': total_filtered_artists,
             'total_pages': total_pages,
             'has_next': page < total_pages,
             'has_prev': page > 1
@@ -2067,7 +2067,6 @@ def update_artwork(artwork_id):
         return jsonify({'error': 'Failed to update artwork. Please try again.'}), 500
 
 
-# need to add directory in front end /api/artists/[id]/restore
 @app.route('/api/artworks/<artwork_id>/restore', methods=['PUT'])
 @login_required
 @admin_required
