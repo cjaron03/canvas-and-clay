@@ -129,6 +129,16 @@
     }
   };
 
+  const handleModalKeydown = (event) => {
+    if (event.key === 'Escape') {
+      closePhotoModal();
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && event.target === modalElement) {
+      event.preventDefault();
+      closePhotoModal();
+    }
+  };
+
   const handleKeyDown = (e) => {
     // Close modal on ESC key
     if (e.key === 'Escape' && selectedPhoto) {
@@ -326,10 +336,11 @@
     class="photo-modal"
     bind:this={modalElement}
     on:click={handleModalClick}
+    on:keydown={handleModalKeydown}
     role="dialog"
     aria-modal="true"
     aria-label="Full size image view"
-    tabindex="-1"
+    tabindex="0"
   >
     <div class="photo-modal-content">
       <button

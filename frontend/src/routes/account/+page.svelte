@@ -305,15 +305,15 @@
           <h1>Profile</h1>
           <div class="profile-info">
             <div class="info-row">
-              <label>Email</label>
+              <span class="info-label">Email</span>
               <span>{$auth.user?.email || '—'}</span>
             </div>
             <div class="info-row">
-              <label>Role</label>
+              <span class="info-label">Role</span>
               <span class="role-badge">{$auth.user?.role || '—'}</span>
             </div>
             <div class="info-row">
-              <label>Account Created</label>
+              <span class="info-label">Account Created</span>
               <span>
                 {#if $auth.user?.created_at}
                   {new Date($auth.user.created_at).toLocaleDateString()}
@@ -566,19 +566,19 @@
                 <h2>Account Details</h2>
                 <div class="info-card">
                   <div class="info-item">
-                    <label>Account Created</label>
+                    <span class="info-label">Account Created</span>
                     <span>{formatDate(adminInfo.account_info?.created_at)}</span>
                   </div>
                   <div class="info-item">
-                    <label>Last Login</label>
+                    <span class="info-label">Last Login</span>
                     <span>{formatDate(adminInfo.account_info?.last_login)}</span>
                   </div>
                   <div class="info-item">
-                    <label>Password Last Changed</label>
+                    <span class="info-label">Password Last Changed</span>
                     <span>{formatDate(adminInfo.account_info?.password_last_changed)}</span>
                   </div>
                   <div class="info-item">
-                    <label>Email Last Changed</label>
+                    <span class="info-label">Email Last Changed</span>
                     <span>{formatDate(adminInfo.account_info?.email_last_changed)}</span>
                   </div>
                 </div>
@@ -758,7 +758,7 @@
     gap: 0.5rem;
   }
 
-  .info-row label {
+  .info-label {
     font-size: 0.875rem;
     font-weight: 500;
     color: var(--text-secondary);
@@ -1025,7 +1025,7 @@
     gap: 0.25rem;
   }
 
-  .info-item label {
+  .info-item .info-label {
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--text-secondary);
@@ -1155,4 +1155,3 @@
     }
   }
 </style>
-
