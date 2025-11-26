@@ -914,22 +914,22 @@ def confirm_password_reset():
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at <= now:
-            reset_request.status = 'expired'
-            reset_request.reset_code_hash = None
-            reset_request.reset_code_hint = None
-            reset_request.expires_at = None
-            reset_request.resolved_at = now
-            try:
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-            log_audit_event(
-                'password_reset_expired',
-                user_id=reset_request.user_id,
-                email=reset_request.email,
-                details={'request_id': reset_request.id}
-            )
-            return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
+        reset_request.status = 'expired'
+        reset_request.reset_code_hash = None
+        reset_request.reset_code_hint = None
+        reset_request.expires_at = None
+        reset_request.resolved_at = now
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        log_audit_event(
+            'password_reset_expired',
+            user_id=reset_request.user_id,
+            email=reset_request.email,
+            details={'request_id': reset_request.id}
+        )
+        return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
 
     if not bcrypt.check_password_hash(reset_request.reset_code_hash, reset_code):
         log_audit_event(
