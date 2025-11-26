@@ -10,6 +10,7 @@ from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
 from dotenv import load_dotenv
+from sqlalchemy.pool import StaticPool
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_login import LoginManager, login_required, current_user, logout_user
@@ -55,6 +56,11 @@ def build_database_uri():
     """Construct database URI from environment variables."""
     # Prefer explicit test database when running under pytest/CI
     test_db_uri = os.getenv('TEST_DATABASE_URL') or os.getenv('PYTEST_DATABASE_URL')
+    if is_test_environment():
+        if test_db_uri:
+            return test_db_uri
+        # Always fall back to file-based sqlite in test runs even if DATABASE_URL is set
+        return 'sqlite:///app_test.db'
     if os.getenv('PYTEST_CURRENT_TEST'):
         if test_db_uri:
             return test_db_uri
@@ -90,9 +96,12 @@ def build_database_uri():
 
 def build_engine_options(database_uri):
     """Configure SQLAlchemy engine options such as pooling and SSL."""
-    # SQLite (default/testing) uses NullPool; skip pool configuration
+    # SQLite (default/testing) uses a shared connection pool to keep state across clients
     if database_uri.startswith('sqlite'):
-        return {}
+        return {
+            'connect_args': {'check_same_thread': False},
+            'poolclass': StaticPool
+        }
 
     engine_options = {
         'pool_size': get_env_int('DB_POOL_SIZE', 5),
@@ -306,16 +315,16 @@ def load_user(user_id):
 # Enforce per-session token to allow forced logouts
 @app.before_request
 def enforce_session_token():
-    try:
-        if not current_user.is_authenticated:
-            return
-        token = session.get('session_token')
-        if not token or token != current_user.remember_token:
-            logout_user()
-            session.clear()
-            return jsonify({'error': 'Session expired. Please log in again.'}), 401
-    except Exception:
-        # On any unexpected error, fail closed by clearing session
+    # Only enforce when authenticated; avoid masking errors for anonymous requests
+    if not current_user.is_authenticated:
+        return
+    
+    # Allow auth flows that establish or refresh the session token
+    if request.endpoint in {'auth.login', 'auth.register', 'auth.get_csrf_token'}:
+        return
+
+    token = session.get('session_token')
+    if not token or token != current_user.remember_token:
         logout_user()
         session.clear()
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
@@ -2772,12 +2781,20 @@ def public_overview_stats():
     """Public overview stats for homepage (no auth required).
 
     Returns total counts for artworks, artists, photos, and artist-role users.
+    Excludes soft-deleted records.
     """
     try:
-        total_artworks = Artwork.query.count()
-        total_artists = Artist.query.count()
+        # Count only non-deleted artworks
+        total_artworks = Artwork.query.filter(Artwork.is_deleted == False).count()
+        # Count only non-deleted artists
+        total_artists = Artist.query.filter(Artist.is_deleted == False).count()
+        # Count all photos (photos don't have soft delete)
         total_photos = ArtworkPhoto.query.count()
-        artist_role_count = User.query.filter(User.role.in_(['artist', 'artist-guest'])).count()
+        # Count artist-role users (excluding soft-deleted users)
+        artist_role_count = User.query.filter(
+            User.role.in_(['artist', 'artist-guest']),
+            User.deleted_at.is_(None)
+        ).count()
 
         return jsonify({
             'counts': {

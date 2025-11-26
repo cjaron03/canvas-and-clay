@@ -1,6 +1,7 @@
 """Tests for authentication endpoints and session security."""
 from datetime import datetime, timezone, timedelta
 import pytest
+from sqlalchemy.pool import StaticPool
 from app import app, db, User, PasswordResetRequest, bcrypt
 
 
@@ -9,7 +10,10 @@ def client():
     """Create a test client with a fresh database and CSRF disabled for convenience."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'connect_args': {'check_same_thread': False},
+        'poolclass': StaticPool
+    }
     app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
@@ -31,7 +35,10 @@ def csrf_client():
     """Create a test client with CSRF protection enabled."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'connect_args': {'check_same_thread': False},
+        'poolclass': StaticPool
+    }
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
@@ -253,12 +260,14 @@ class TestUserLogin:
 
         # Create a second independent client and log in with same user
         with app.test_client(use_cookies=True) as client2:
+            # Reuse existing test configuration and database state
             app.config['TESTING'] = True
-            app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-            # reuse same DB; no need to recreate tables here since fixture did
+            app.config['WTF_CSRF_ENABLED'] = False
+            app.config['RATELIMIT_ENABLED'] = False
 
             second_login = client2.post('/auth/login', json=login_data)
-            assert second_login.status_code == 200
+            second_login_data = second_login.get_json()
+            assert second_login.status_code == 200, second_login_data
 
             # Second client can access protected route
             r2 = client2.get('/auth/me')
