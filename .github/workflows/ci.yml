@@ -60,9 +60,14 @@ jobs:
         cd backend
         pip install -r requirements.txt
 
+    - name: Install psql client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+
     - name: Create test database
       run: |
-        psql -h localhost -U ${{ env.POSTGRES_USER }} -c "CREATE DATABASE ${{ env.POSTGRES_DB }}_test OWNER ${{ env.POSTGRES_USER }};"
+        psql -h localhost -U ${{ env.POSTGRES_USER }} -d postgres -c "CREATE DATABASE ${{ env.POSTGRES_DB }}_test OWNER ${{ env.POSTGRES_USER }};"
       env:
         PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
 
