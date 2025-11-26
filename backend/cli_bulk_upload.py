@@ -101,6 +101,18 @@ def list_storage_locations(session: requests.Session, base_url: str):
     return data
 
 
+def list_artworks_by_artist_storage(session: requests.Session, base_url: str, artist_id: str, storage_id: str):
+    """Fetch artworks for a specific artist/storage to detect duplicates."""
+    resp = session.get(
+        f"{base_url}/api/artworks",
+        params={'artist_id': artist_id, 'storage_id': storage_id, 'per_page': 200},
+        timeout=20
+    )
+    if resp.status_code != 200:
+        return []
+    return resp.json().get('artworks', [])
+
+
 def register_user(session, base_url, email, password):
     step(f"Registering user {email} ...")
     csrf_token = get_csrf_token(session, base_url)
@@ -252,10 +264,12 @@ def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=
         })
         art_key_map[art_key] = True
         for idx, f in enumerate(files, start=1):
+            original_name = f  # preserve path within zip so backend can find it
             base_name = Path(f).name
+
             if base_name in duplicate_counts:
                 duplicate_counts[base_name] += 1
-                # Prompt once on duplicates
+                # Prompt once on duplicates (affects titles only; filename stays original)
                 if duplicate_strategy == 'ask':
                     ans = prompt("Duplicate filenames detected. Override or suffix? [o/s]:", default="s").lower()
                     duplicate_strategy = 'override' if ans.startswith('o') else 'suffix'
@@ -266,14 +280,17 @@ def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=
                 # override keeps the same base_name
             else:
                 duplicate_counts[base_name] = 0
+
             manifest["photos"].append({
-                "filename": base_name,
+                "filename": original_name,
                 "artwork_key": art_key,
                 "is_primary": idx == 1
             })
     else:
         for idx, f in enumerate(files, start=1):
+            original_name = f  # preserve path within zip so backend can find it
             base_name = Path(f).name
+
             if base_name in duplicate_counts:
                 duplicate_counts[base_name] += 1
                 if duplicate_strategy == 'ask':
@@ -297,7 +314,7 @@ def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=
                 "storage_id": storage_id
             })
             manifest["photos"].append({
-                "filename": base_name,
+                "filename": original_name,
                 "artwork_key": art_key,
                 "is_primary": True
             })
@@ -488,6 +505,22 @@ def main():
             use_filenames=use_filenames
         )
 
+        # Detect duplicates before upload and ask for handling strategy
+        existing_artworks = list_artworks_by_artist_storage(session, base_url, chosen_artist_id, storage_id)
+        existing_titles = {a.get('title', '').strip().lower() for a in existing_artworks}
+        manifest_titles = {a.get('title', '').strip().lower() for a in manifest.get('artworks', [])}
+        duplicate_titles = sorted({t for t in manifest_titles if t and t in existing_titles})
+
+        duplicate_policy = 'suffix'
+        if duplicate_titles:
+            print("Duplicates detected for this artist/storage:")
+            for t in duplicate_titles:
+                print(f"  - {t}")
+            dup_choice = prompt("Duplicate handling? override (delete+replace) or suffix new? [o/s]:", default="s").lower()
+            duplicate_policy = 'override' if dup_choice.startswith('o') else 'suffix'
+
+        manifest['duplicate_policy'] = duplicate_policy
+
         zip_with_manifest = stitch_zip_with_manifest(args.zip, manifest)
         print(f"Uploading bulk zip ({zip_with_manifest}) ...")
         result = bulk_upload(session, base_url, zip_with_manifest)
@@ -502,8 +535,8 @@ def main():
         if summary.get('errors'):
             print(f"- Errors:           {summary.get('errors')}")
 
-        warnings = result.get('results', {}).get('warnings', [])
-        errors = result.get('results', {}).get('errors', [])
+        warnings = result.get('results', {}).get('warnings', []) or result.get('warnings', []) or []
+        errors = (result.get('errors') or []) + (result.get('results', {}).get('errors', []) or [])
 
         if warnings:
             print("Warnings:")
@@ -519,6 +552,9 @@ def main():
         if errors:
             print("Errors:")
             for err in errors:
+                if isinstance(err, str):
+                    print(f"  - {err}")
+                    continue
                 scope = err.get('scope')
                 message = err.get('message')
                 detail = err.get('detail')

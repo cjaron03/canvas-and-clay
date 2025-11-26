@@ -2224,8 +2224,10 @@ def bulk_upload():
                 'errors': 0
             }
             errors = []
+            warnings = []
             artist_key_map = {}
             artwork_key_map = {}
+            duplicate_policy = manifest.get('duplicate_policy', 'suffix').lower()
 
             def generate_artist_id():
                 max_attempts = 50
@@ -2242,6 +2244,23 @@ def bulk_upload():
                     if not db.session.get(Artwork, candidate):
                         return candidate
                 raise ValueError("Failed to generate unique artwork id")
+
+            def next_suffix_title(base_title, artist_id, storage_id):
+                existing_titles = {
+                    art.artwork_ttl for art in Artwork.query.filter_by(
+                        artist_id=artist_id,
+                        storage_id=storage_id,
+                        is_deleted=False
+                    ).all()
+                }
+                if base_title not in existing_titles:
+                    return base_title
+                suffix = 2
+                while True:
+                    candidate = f"{base_title} ({suffix})"
+                    if candidate not in existing_titles:
+                        return candidate
+                    suffix += 1
 
             # Create artists
             for artist_entry in manifest.get('artists', []):
@@ -2273,13 +2292,56 @@ def bulk_upload():
             for artwork_entry in manifest.get('artworks', []):
                 try:
                     artist_key = artwork_entry.get('artist_key')
-                    artist_id = artist_key_map.get(artist_key)
-                    if not artist_id:
-                        raise ValueError(f"Unknown artist_key {artist_key}")
+                    artist_id = None
+
+                    if artist_key:
+                        artist_id = artist_key_map.get(artist_key)
+                        if not artist_id:
+                            raise ValueError(f"Unknown artist_key {artist_key}")
+                    else:
+                        # Support existing artists by direct id or email (CLI sends artist_id)
+                        artist_id_field = artwork_entry.get('artist_id')
+                        artist_email_field = artwork_entry.get('artist_email')
+
+                        if artist_id_field:
+                            artist = db.session.get(Artist, artist_id_field)
+                            if not artist:
+                                raise ValueError(f"Artist not found: {artist_id_field}")
+                        elif artist_email_field:
+                            artist = Artist.query.filter_by(artist_email=artist_email_field).first()
+                            if not artist:
+                                raise ValueError(f"Artist not found for email: {artist_email_field}")
+                        else:
+                            raise ValueError("artist_key or artist_id is required for artwork entry")
+
+                        artist_id = artist.artist_id
 
                     storage_id = artwork_entry.get('storage_id') or default_storage_id
                     if not db.session.get(Storage, storage_id):
                         raise ValueError(f"Storage not found: {storage_id}")
+
+                    # Duplicate handling: override (delete existing) or suffix new title
+                    existing_artworks = Artwork.query.filter_by(
+                        artwork_ttl=artwork_entry.get('title'),
+                        artist_id=artist_id,
+                        storage_id=storage_id,
+                        is_deleted=False
+                    ).all()
+
+                    if existing_artworks:
+                        if duplicate_policy == 'override':
+                            for existing in existing_artworks:
+                                photos = ArtworkPhoto.query.filter_by(artwork_num=existing.artwork_num).all()
+                                for photo in photos:
+                                    delete_photo_files(photo.file_path, photo.thumbnail_path)
+                                    db.session.delete(photo)
+                                db.session.delete(existing)
+                            db.session.flush()
+                            warnings.append(f"Overrode existing artwork '{artwork_entry.get('title')}' for artist {artist_id}")
+                        else:
+                            new_title = next_suffix_title(artwork_entry.get('title'), artist_id, storage_id)
+                            warnings.append(f"Created with suffix title '{new_title}' to avoid duplicate for artist {artist_id}")
+                            artwork_entry['title'] = new_title
 
                     artwork_id = generate_artwork_id()
                     artwork = Artwork(
@@ -2343,7 +2405,8 @@ def bulk_upload():
             return jsonify({
                 'message': 'Bulk upload processed',
                 'summary': summary,
-                'errors': errors
+                'errors': errors,
+                'warnings': warnings
             }), 200
 
     except zipfile.BadZipFile:
