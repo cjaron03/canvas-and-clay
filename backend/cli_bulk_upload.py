@@ -193,12 +193,34 @@ def filter_zip_files(zip_path):
             # Only include valid image extensions
             if ext not in ALLOWED_EXT:
                 continue
-            # File passed all checks - add it
             files.append(name)
     if not files:
         raise RuntimeError("Zip contains no supported image files (JPG, JPEG, PNG, WebP, AVIF).")
     step_done(f"Found {len(files)} image(s)")
     return files
+
+
+def resolve_duplicates(files):
+    """Prompt for duplicate handling and return final file list (full paths)."""
+    counts = {}
+    for f in files:
+        base = Path(f).name
+        counts[base] = counts.get(base, 0) + 1
+    dup_basenames = [b for b, c in counts.items() if c > 1]
+    if not dup_basenames:
+        return files
+
+    ans = prompt("Duplicate filenames detected. Override (keep last) or suffix? [o/s]:", default="s").lower()
+    strategy = 'override' if ans.startswith('o') else 'suffix'
+
+    if strategy == 'override':
+        latest = {}
+        for f in files:
+            latest[Path(f).name] = f  # last occurrence wins
+        return list(latest.values())
+    else:
+        # Suffix strategy: keep full paths; backend disambiguates by exact path
+        return files
 
 
 def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=None, use_filenames=True):
@@ -216,6 +238,9 @@ def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=
         cleaned = stem.replace('_', ' ').replace('-', ' ').strip() or stem or "Untitled"
         return cleaned[:50]
 
+    duplicate_strategy = 'ask'
+    duplicate_counts = {}
+
     if mode == 'single':
         art_key = "art-1"
         manifest["artworks"].append({
@@ -227,15 +252,43 @@ def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=
         })
         art_key_map[art_key] = True
         for idx, f in enumerate(files, start=1):
+            base_name = Path(f).name
+            if base_name in duplicate_counts:
+                duplicate_counts[base_name] += 1
+                # Prompt once on duplicates
+                if duplicate_strategy == 'ask':
+                    ans = prompt("Duplicate filenames detected. Override or suffix? [o/s]:", default="s").lower()
+                    duplicate_strategy = 'override' if ans.startswith('o') else 'suffix'
+                if duplicate_strategy == 'suffix':
+                    stem = Path(base_name).stem
+                    ext = Path(base_name).suffix
+                    base_name = f"{stem} ({duplicate_counts[base_name]}){ext}"
+                # override keeps the same base_name
+            else:
+                duplicate_counts[base_name] = 0
             manifest["photos"].append({
-                "filename": f,
+                "filename": base_name,
                 "artwork_key": art_key,
                 "is_primary": idx == 1
             })
     else:
         for idx, f in enumerate(files, start=1):
+            base_name = Path(f).name
+            if base_name in duplicate_counts:
+                duplicate_counts[base_name] += 1
+                if duplicate_strategy == 'ask':
+                    ans = prompt("Duplicate filenames detected. Override or suffix? [o/s]:", default="s").lower()
+                    duplicate_strategy = 'override' if ans.startswith('o') else 'suffix'
+                if duplicate_strategy == 'suffix':
+                    stem = Path(base_name).stem
+                    ext = Path(base_name).suffix
+                    base_name = f"{stem} ({duplicate_counts[base_name]}){ext}"
+                # override keeps base_name
+            else:
+                duplicate_counts[base_name] = 0
+
             art_key = f"art-{idx}"
-            title = safe_title(f) if use_filenames else f"{title_base or 'Artwork'} {idx}"
+            title = safe_title(base_name) if use_filenames else f"{title_base or 'Artwork'} {idx}"
             manifest["artworks"].append({
                 "key": art_key,
                 "title": title[:50],
@@ -244,7 +297,7 @@ def build_manifest(files, artist_id, artist_email, storage_id, mode, title_base=
                 "storage_id": storage_id
             })
             manifest["photos"].append({
-                "filename": f,
+                "filename": base_name,
                 "artwork_key": art_key,
                 "is_primary": True
             })
@@ -354,6 +407,9 @@ def main():
         # Choose artist
         chosen_artist_id = None
         chosen_artist_email = None
+
+        # Resolve duplicate filenames if any
+        files = resolve_duplicates(files)
 
         use_existing = prompt("Use existing artist? [y/n]:", default="y").lower().startswith('y')
         if use_existing:

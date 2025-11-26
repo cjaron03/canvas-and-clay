@@ -4,9 +4,6 @@ import json
 import secrets
 import string
 import sys
-import zipfile
-import tempfile
-from pathlib import Path
 from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
@@ -735,7 +732,17 @@ def create_artist():
             return jsonify({'error': f'User not found: {data["user_id"]}'}), 404
         
     # Generate new artist ID using cryptographically secure random generation
-    new_artistid = generate_random_artist_id(db)
+    def generate_random_artist_id():
+        """Generate a random artist ID in format A#######"""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))
+            artist_id = f"A{random_part}"
+            if not Artist.query.get(artist_id):
+                return artist_id
+        raise ValueError("Failed to generate unique artwork ID after max attempts")
+    
+    new_artistid = generate_random_artist_id()
 
     # Handling phone number if provided, as it is a CHAR(8)
     # Format as (123)-456-7890
@@ -1305,25 +1312,6 @@ def list_artworks():
                     artwork_num=artwork.artwork_num
                 ).first()
 
-            # Helper function to check if file exists and return URL, or None if missing
-            def get_photo_url_if_exists(photo, is_thumbnail=False):
-                """Return photo URL only if file exists on disk."""
-                if is_thumbnail:
-                    stored_path = photo.thumbnail_path
-                    filename = os.path.basename(stored_path)
-                    url_path = f"/uploads/thumbnails/{filename}"
-                    full_path = os.path.join(os.path.dirname(__file__), stored_path)
-                else:
-                    stored_path = photo.file_path
-                    filename = os.path.basename(stored_path)
-                    url_path = f"/uploads/artworks/{filename}"
-                    full_path = os.path.join(os.path.dirname(__file__), stored_path)
-                
-                if os.path.exists(full_path):
-                    return url_path
-                app.logger.warning(f"photo file not found: {full_path} (stored_path: {stored_path})")
-                return None
-
             # Get photo count
             photo_count = ArtworkPhoto.query.filter_by(
                 artwork_num=artwork.artwork_num
@@ -1357,16 +1345,6 @@ def list_artworks():
                     'user_id': None
                 }
 
-            # Only include primary_photo if thumbnail file exists
-            primary_photo_data = None
-            if primary_photo:
-                thumbnail_url = get_photo_url_if_exists(primary_photo, is_thumbnail=True)
-                if thumbnail_url:
-                    primary_photo_data = {
-                        'id': primary_photo.photo_id,
-                        'thumbnail_url': thumbnail_url
-                    }
-
             artwork_data = {
                 'id': artwork.artwork_num,
                 'title': artwork.artwork_ttl,
@@ -1379,7 +1357,10 @@ def list_artworks():
                     'location': storage.storage_loc or '',
                     'type': storage.storage_type or ''
                 } if storage else None,
-                'primary_photo': primary_photo_data,
+                'primary_photo': {
+                    'id': primary_photo.photo_id,
+                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+                } if primary_photo else None,
                 'photo_count': photo_count
             }
             
@@ -1454,27 +1435,6 @@ def get_artwork(artwork_id):
         ArtworkPhoto.uploaded_at.desc()
     ).all()
 
-    # Helper function to check if file exists and return URL, or None if missing
-    def get_photo_url_if_exists(photo, is_thumbnail=False):
-        """Return photo URL only if file exists on disk."""
-        if is_thumbnail:
-            stored_path = photo.thumbnail_path
-            filename = os.path.basename(stored_path)
-            url_path = f"/uploads/thumbnails/{filename}"
-            # Check if file exists - stored_path is like "uploads/thumbnails/thumb_..."
-            full_path = os.path.join(os.path.dirname(__file__), stored_path)
-        else:
-            stored_path = photo.file_path
-            filename = os.path.basename(stored_path)
-            url_path = f"/uploads/artworks/{filename}"
-            # Check if file exists - stored_path is like "uploads/artworks/..."
-            full_path = os.path.join(os.path.dirname(__file__), stored_path)
-        
-        if os.path.exists(full_path):
-            return url_path
-        app.logger.warning(f"photo file not found: {full_path} (stored_path: {stored_path})")
-        return None
-
     return jsonify({
         'id': artwork.artwork_num,
         'title': artwork.artwork_ttl,
@@ -1498,8 +1458,8 @@ def get_artwork(artwork_id):
         'photos': [{
             'id': photo.photo_id,
             'filename': photo.filename,
-            'url': get_photo_url_if_exists(photo, is_thumbnail=False),
-            'thumbnail_url': get_photo_url_if_exists(photo, is_thumbnail=True),
+            'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
+            'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
             'width': photo.width,
             'height': photo.height,
             'file_size': photo.file_size,
@@ -1618,7 +1578,17 @@ def create_artwork():
         return jsonify({'error': f'Storage location not found: {data["storage_id"]}'}), 404
 
     # Generate new artwork ID using cryptographically secure random generation
-    new_artwork_id = generate_random_artwork_id(db)
+    def generate_random_artwork_id():
+        """Generate a random artwork ID in format AW######"""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+            artwork_id = f"AW{random_part}"
+            if not db.session.get(Artwork, artwork_id):
+                return artwork_id
+        raise ValueError("Failed to generate unique artwork ID after max attempts")
+    
+    new_artwork_id = generate_random_artwork_id()
 
     # Handle date_created if provided
     date_created = None
@@ -2012,526 +1982,8 @@ def delete_artwork(artwork_id):
 
 
 # Photo Upload Endpoints
-from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename, MAX_FILE_SIZE
+from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
 from auth import admin_required
-
-
-@app.route('/api/admin/bulk-upload', methods=['POST'])
-@login_required
-@admin_required
-@limiter.limit("10 per minute")
-def bulk_upload_artists_artworks_photos():
-    """Admin-only bulk upload of artists, artworks, and photos via zip + manifest.json.
-
-    Expected multipart/form-data:
-        - file: zip archive containing manifest.json and image files
-
-    Manifest schema (JSON inside the zip):
-    {
-      "default_storage_id": "STOR001",      # optional; used when artwork.storage_id missing
-      "artists": [
-        {
-          "key": "artist-alias",            # optional lookup key within the manifest
-          "artist_id": "A1234567",          # optional; generated if omitted
-          "first_name": "Ada",              # required
-          "last_name": "Lovelace",          # required
-          "email": "ada@example.com",       # optional; links to user if exists
-          "site": "https://...",            # optional
-          "bio": "...",                     # optional
-          "phone": "(123)-456-7890"         # optional, validated if provided
-        }
-      ],
-      "artworks": [
-        {
-          "key": "art-1",                   # optional lookup key within manifest
-          "artwork_id": "AWABC123",         # optional; generated if omitted
-          "title": "Sunset",                # required
-          "artist_key": "artist-alias",     # or artist_id / artist_email
-          "artist_id": "A1234567",
-          "artist_email": "ada@example.com",
-          "storage_id": "STOR001",          # required unless default_storage_id present
-          "medium": "Oil",
-          "artwork_size": "24x36in",
-          "date_created": "2024-01-01"      # ISO date, optional
-        }
-      ],
-      "photos": [
-        {
-          "filename": "images/sunset.jpg",  # must exist in zip
-          "artwork_id": "AWABC123",         # or artwork_key
-          "artwork_key": "art-1",
-          "is_primary": true                # optional
-        }
-      ]
-    }
-    """
-    MAX_ZIP_SIZE = 200 * 1024 * 1024  # 200MB guardrail
-
-    if 'file' not in request.files:
-        return jsonify({'error': 'Zip file is required (field name "file")'}), 400
-
-    zip_file = request.files['file']
-    if zip_file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-
-    results = {'artists': [], 'artworks': [], 'photos': [], 'errors': [], 'warnings': []}
-    created_photo_paths = []
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = os.path.join(tmpdir, 'bulk_upload.zip')
-        zip_file.save(zip_path)
-
-        # Guardrail on archive size
-        if os.path.getsize(zip_path) > MAX_ZIP_SIZE:
-            return jsonify({'error': f'Zip file exceeds {MAX_ZIP_SIZE // (1024 * 1024)}MB limit'}), 400
-
-        if not zipfile.is_zipfile(zip_path):
-            return jsonify({'error': 'Uploaded file is not a valid zip archive'}), 400
-
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as archive:
-                namelist = archive.namelist()
-                if 'manifest.json' not in namelist:
-                    return jsonify({'error': 'manifest.json is required inside the zip'}), 400
-
-                try:
-                    manifest = json.loads(archive.read('manifest.json'))
-                except json.JSONDecodeError:
-                    return jsonify({'error': 'manifest.json is not valid JSON'}), 400
-
-                if not isinstance(manifest, dict):
-                    return jsonify({'error': 'manifest.json must be a JSON object'}), 400
-
-                default_storage_id = manifest.get('default_storage_id')
-
-                artists_payload = manifest.get('artists', []) or []
-                artworks_payload = manifest.get('artworks', []) or []
-                photos_payload = manifest.get('photos', []) or []
-
-                if not isinstance(artists_payload, list) or not isinstance(artworks_payload, list) or not isinstance(photos_payload, list):
-                    return jsonify({'error': 'artists, artworks, and photos must be arrays in manifest.json'}), 400
-
-                # Validate default storage if provided
-                if default_storage_id:
-                    storage_obj = db.session.get(Storage, default_storage_id)
-                    if not storage_obj:
-                        return jsonify({'error': f'default_storage_id not found: {default_storage_id}'}), 400
-
-                # Build quick lookup for zip contents to allow basename matches (single match only)
-                zip_lookup = {name: name for name in namelist if not name.endswith('/')}
-                basename_lookup = {}
-                for name in namelist:
-                    if name.endswith('/'):
-                        continue
-                    basename = Path(name).name
-                    basename_lookup.setdefault(basename, []).append(name)
-
-                artist_key_map = {}
-                artist_email_map = {}
-
-                def add_error(scope, message, detail=None):
-                    results['errors'].append({
-                        'scope': scope,
-                        'message': message,
-                        'detail': detail
-                    })
-
-                def add_warning(scope, message, detail=None):
-                    results['warnings'].append({
-                        'scope': scope,
-                        'message': message,
-                        'detail': detail
-                    })
-
-                def cleanup_created_photos():
-                    nonlocal created_photo_paths
-                    if not created_photo_paths:
-                        return
-                    for file_path, thumb_path in created_photo_paths:
-                        try:
-                            delete_photo_files(file_path, thumb_path)
-                        except Exception:
-                            app.logger.warning("Failed to delete photo files after rollback", exc_info=True)
-                    created_photo_paths = []
-
-                # Create or fetch artists
-                for entry in artists_payload:
-                    try:
-                        first_name = entry.get('artist_fname') or entry.get('first_name')
-                        last_name = entry.get('artist_lname') or entry.get('last_name')
-                        if not first_name or not last_name:
-                            add_error('artist', 'first_name and last_name are required', entry)
-                            continue
-
-                        email = entry.get('email')
-                        if email:
-                            email = str(email).strip().lower()
-
-                        artist_id = entry.get('artist_id') or entry.get('id')
-                        key = entry.get('key') or entry.get('ref')
-                        site = entry.get('artist_site') or entry.get('site')
-                        bio = entry.get('artist_bio') or entry.get('bio')
-                        phone = entry.get('artist_phone') or entry.get('phone')
-
-                        if phone:
-                            import re
-                            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
-                            phone = str(phone).strip()
-                            if not phone_regex.match(phone):
-                                add_error('artist', 'Invalid phone-number format. Expected (123)-456-7890', entry)
-                                continue
-
-                        existing = None
-                        if artist_id:
-                            existing = db.session.get(Artist, artist_id)
-                        if not existing and email:
-                            existing = Artist.query.filter_by(artist_email=email).first()
-
-                        # Auto-link to existing user by email if available
-                        user_id = None
-                        if email:
-                            matched_user = User.query.filter(User.email == email).first()
-                            if matched_user:
-                                user_id = matched_user.id
-
-                        if existing:
-                            # Update user_id if we found a match and artist not linked yet
-                            if user_id and not existing.user_id:
-                                existing.user_id = user_id
-                            if key:
-                                artist_key_map[key] = existing.artist_id
-                            if email:
-                                artist_email_map[email] = existing.artist_id
-                            # Don't commit here - wait for atomic transaction at end
-                            results['artists'].append({
-                                'id': existing.artist_id,
-                                'email': existing.artist_email,
-                                'status': 'existing'
-                            })
-                            continue
-
-                        new_id = artist_id or generate_random_artist_id(db)
-                        artist = Artist(
-                            artist_id=new_id,
-                            artist_fname=str(first_name).strip(),
-                            artist_lname=str(last_name).strip(),
-                            artist_email=email,
-                            artist_site=site,
-                            artist_bio=bio,
-                            artist_phone=phone,
-                            is_deleted=False,
-                            date_deleted=None,
-                            user_id=user_id
-                        )
-                        db.session.add(artist)
-                        # Don't commit here - wait for atomic transaction at end
-
-                        if key:
-                            artist_key_map[key] = new_id
-                        if email:
-                            artist_email_map[email] = new_id
-
-                        results['artists'].append({
-                            'id': new_id,
-                            'email': email,
-                            'status': 'created'
-                        })
-                    except Exception as e:
-                        db.session.rollback()
-                        add_error('artist', 'Failed to create artist', {'entry': entry, 'error': str(e)})
-
-                # Create artworks
-                artwork_key_map = {}
-                for entry in artworks_payload:
-                    try:
-                        title = entry.get('title') or entry.get('artwork_ttl')
-                        if not title:
-                            add_error('artwork', 'title is required', entry)
-                            continue
-
-                        artist_ref = entry.get('artist_id') or entry.get('artist_key') or entry.get('artist_email')
-                        artist_id = None
-                        if entry.get('artist_id'):
-                            artist_id = entry['artist_id']
-                        elif entry.get('artist_key'):
-                            artist_id = artist_key_map.get(entry['artist_key'])
-                        elif entry.get('artist_email'):
-                            artist_id = artist_email_map.get(str(entry['artist_email']).strip().lower())
-
-                        if not artist_id:
-                            add_error('artwork', 'artist reference is required and must resolve to an artist', entry)
-                            continue
-
-                        # Verify artist exists
-                        artist_obj = db.session.get(Artist, artist_id)
-                        if not artist_obj:
-                            add_error('artwork', f'artist not found: {artist_id}', entry)
-                            continue
-
-                        storage_id = entry.get('storage_id') or default_storage_id
-                        if not storage_id:
-                            add_error('artwork', 'storage_id is required (or provide default_storage_id in manifest)', entry)
-                            continue
-
-                        storage_obj = db.session.get(Storage, storage_id)
-                        if not storage_obj:
-                            add_error('artwork', f'storage not found: {storage_id}', entry)
-                            continue
-
-                        artwork_id = entry.get('artwork_id') or entry.get('id') or generate_random_artwork_id(db)
-                        existing_artwork = db.session.get(Artwork, artwork_id)
-                        if existing_artwork:
-                            if entry.get('key'):
-                                artwork_key_map[entry['key']] = existing_artwork.artwork_num
-                            # Don't commit here - wait for atomic transaction at end
-                            results['artworks'].append({
-                                'id': existing_artwork.artwork_num,
-                                'title': existing_artwork.artwork_ttl,
-                                'status': 'existing'
-                            })
-                            continue
-
-                        date_created = None
-                        if entry.get('date_created'):
-                            try:
-                                date_created = datetime.fromisoformat(str(entry['date_created']).replace('Z', '+00:00')).date()
-                            except ValueError:
-                                add_error('artwork', 'Invalid date_created format (expected ISO date)', entry)
-                                continue
-
-                        artwork = Artwork(
-                            artwork_num=artwork_id,
-                            artwork_ttl=title,
-                            artwork_medium=entry.get('medium'),
-                            date_created=date_created,
-                            artwork_size=entry.get('artwork_size'),
-                            is_viewable=True,
-                            is_deleted=False,
-                            date_deleted=None,
-                            artist_id=artist_id,
-                            storage_id=storage_id
-                        )
-                        db.session.add(artwork)
-                        # Don't commit here - wait for atomic transaction at end
-
-                        if entry.get('key'):
-                            artwork_key_map[entry['key']] = artwork_id
-
-                        results['artworks'].append({
-                            'id': artwork_id,
-                            'title': title,
-                            'status': 'created'
-                        })
-                    except Exception as e:
-                        db.session.rollback()
-                        add_error('artwork', 'Failed to create artwork', {'entry': entry, 'error': str(e)})
-
-                # Process photos
-                for entry in photos_payload:
-                    created_paths = None
-                    try:
-                        filename = entry.get('filename')
-                        if not filename:
-                            add_error('photo', 'filename is required', entry)
-                            continue
-
-                        # Skip macOS resource fork/metadata files (they start with ._)
-                        # These are hidden system files created by macOS and not actual images
-                        base_name = Path(filename).name
-                        if base_name.startswith('._') or filename.startswith('._'):
-                            app.logger.warning(f"Skipping macOS metadata file: {filename}")
-                            add_warning('photo', f"Skipping macOS metadata file: {base_name}", entry)
-                            continue  # Skip this entry, don't treat as error
-
-                        ext = Path(base_name).suffix.lower()
-                        hidden_prefix = base_name.startswith('.') and not base_name.startswith('._')
-                        allowed_exts = {'.jpg', '.jpeg', '.png', '.webp', '.avif'}
-                        if hidden_prefix or ext not in allowed_exts:
-                            try:
-                                app.logger.info("Skipping hidden/unsupported file during bulk upload", extra={'filename': base_name})
-                            except Exception:
-                                pass
-                            add_warning('photo', f"Skipping unsupported or hidden file: {base_name}", entry)
-                            continue
-
-                        artwork_ref = entry.get('artwork_id') or entry.get('artwork_key')
-                        artwork_id = None
-                        if entry.get('artwork_id'):
-                            artwork_id = entry['artwork_id']
-                        elif entry.get('artwork_key'):
-                            artwork_id = artwork_key_map.get(entry['artwork_key'])
-
-                        if not artwork_id:
-                            add_error('photo', 'artwork reference is required and must resolve to an artwork', entry)
-                            continue
-
-                        artwork_obj = db.session.get(Artwork, artwork_id)
-                        if not artwork_obj:
-                            add_error('photo', f'artwork not found: {artwork_id}', entry)
-                            continue
-
-                        # Locate file in zip
-                        zip_member = None
-                        if filename in zip_lookup:
-                            zip_member = filename
-                        else:
-                            matches = basename_lookup.get(Path(filename).name, [])
-                            if len(matches) == 1:
-                                zip_member = matches[0]
-                            elif len(matches) > 1:
-                                add_error('photo', f'Ambiguous filename {filename} found multiple times in zip', entry)
-                                continue
-
-                        if not zip_member:
-                            add_error('photo', f'File not found in zip: {filename}', entry)
-                            continue
-
-                        # Guard against zip bombs by checking uncompressed size before reading
-                        try:
-                            info = archive.getinfo(zip_member)
-                            if info.file_size > MAX_FILE_SIZE:
-                                add_error(
-                                    'photo',
-                                    f'File too large after decompression ({info.file_size} bytes), max {MAX_FILE_SIZE} bytes',
-                                    entry
-                                )
-                                continue
-                        except KeyError:
-                            add_error('photo', f'Could not read zip metadata for {filename}', entry)
-                            continue
-
-                        file_data = archive.read(zip_member)
-
-                        photo_metadata = process_upload(file_data, Path(filename).name)
-                        created_paths = (photo_metadata['file_path'], photo_metadata['thumbnail_path'])
-
-                        is_primary = False
-                        if isinstance(entry.get('is_primary'), str):
-                            is_primary = entry['is_primary'].lower() == 'true'
-                        elif isinstance(entry.get('is_primary'), bool):
-                            is_primary = entry['is_primary']
-
-                        if is_primary:
-                            # Use session-based update instead of query.update() to keep it in transaction
-                            existing_primary_photos = db.session.query(ArtworkPhoto).filter_by(
-                                artwork_num=artwork_id,
-                                is_primary=True
-                            ).all()
-                            for existing_photo in existing_primary_photos:
-                                existing_photo.is_primary = False
-
-                        photo = ArtworkPhoto(
-                            photo_id=photo_metadata['photo_id'],
-                            artwork_num=artwork_id,
-                            filename=photo_metadata['filename'],
-                            file_path=photo_metadata['file_path'],
-                            thumbnail_path=photo_metadata['thumbnail_path'],
-                            file_size=photo_metadata['file_size'],
-                            mime_type=photo_metadata['mime_type'],
-                            width=photo_metadata['width'],
-                            height=photo_metadata['height'],
-                            uploaded_at=datetime.now(timezone.utc),
-                            uploaded_by=current_user.id,
-                            is_primary=is_primary
-                        )
-                        db.session.add(photo)
-                        # Don't commit here - wait for atomic transaction at end
-
-                        results['photos'].append({
-                            'id': photo.photo_id,
-                            'filename': photo.filename,
-                            'artwork_id': artwork_id,
-                            'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
-                            'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
-                            'status': 'created',
-                            'is_primary': is_primary
-                        })
-                        created_photo_paths.append((photo.file_path, photo.thumbnail_path))
-                    except FileValidationError as e:
-                        db.session.rollback()
-                        # Clean up files that were created before validation failed
-                        if created_paths:
-                            try:
-                                delete_photo_files(created_paths[0], created_paths[1])
-                            except Exception:
-                                app.logger.warning("Failed to delete photo files after validation error", exc_info=True)
-                        # Mark error but don't rollback - failed object was not added to session
-                        # Final atomic transaction will handle rollback if needed
-                        add_error('photo', f"File validation failed for {entry.get('filename')}: {str(e)}", entry)
-                    except Exception as e:
-                        db.session.rollback()
-                        # Clean up files that were created before error occurred
-                        if created_paths:
-                            try:
-                                delete_photo_files(created_paths[0], created_paths[1])
-                            except Exception:
-                                app.logger.warning("Failed to delete photo files after error", exc_info=True)
-                        # Mark error but don't rollback - failed object may not have been added to session
-                        # If it was added, it will be rolled back with the final atomic transaction
-                        add_error('photo', 'Failed to process photo', {'entry': entry, 'error': str(e)})
-
-                # Final atomic commit or rollback based on errors
-                if results['errors']:
-                    db.session.rollback()
-                    db.session.expunge_all()
-                    cleanup_created_photos()
-                    app.logger.warning(f"Bulk upload completed with {len(results['errors'])} errors. All changes rolled back.")
-                    results['artists'] = [a for a in results['artists'] if a.get('status') != 'created']
-                    results['artworks'] = [a for a in results['artworks'] if a.get('status') != 'created']
-                    results['photos'] = [p for p in results['photos'] if p.get('status') != 'created']
-                else:
-                    try:
-                        db.session.commit()
-                        app.logger.info("Bulk upload successful. All changes committed.")
-                    except Exception as e:
-                        db.session.rollback()
-                        db.session.expunge_all()
-                        cleanup_created_photos()
-                        app.logger.exception("Failed to commit bulk upload transaction")
-                        add_error('system', 'Failed to commit transaction', {'error': str(e)})
-                        db.session.rollback()
-                        db.session.expunge_all()
-                        results['artists'] = [a for a in results['artists'] if a.get('status') != 'created']
-                        results['artworks'] = [a for a in results['artworks'] if a.get('status') != 'created']
-                        results['photos'] = [p for p in results['photos'] if p.get('status') != 'created']
-
-        except zipfile.BadZipFile:
-            db.session.rollback()
-            db.session.expunge_all()
-            return jsonify({'error': 'Failed to read zip archive'}), 400
-        except Exception as e:
-            db.session.rollback()
-            db.session.expunge_all()
-            app.logger.exception("Bulk upload failed")
-            return jsonify({
-                'error': 'Bulk upload failed',
-                'message': str(e)
-            }), 500
-
-    # Final safety check: if there are ANY errors, ensure nothing was committed
-    if results['errors']:
-        # If we somehow got here with errors, ensure rollback happened
-        try:
-            db.session.rollback()
-            db.session.expunge_all()
-        except Exception:
-            pass  # Session might already be rolled back
-        app.logger.warning(f"Bulk upload response with {len(results['errors'])} errors - ensuring no data was committed")
-
-    status_code = 200 if not results['errors'] else 207  # Multi-Status when partial failures
-    return jsonify({
-        'message': 'Bulk upload processed',
-        'summary': {
-            'artists_created': sum(1 for a in results['artists'] if a['status'] == 'created'),
-            'artists_existing': sum(1 for a in results['artists'] if a['status'] == 'existing'),
-            'artworks_created': sum(1 for a in results['artworks'] if a['status'] == 'created'),
-            'artworks_existing': sum(1 for a in results['artworks'] if a['status'] == 'existing'),
-            'photos_created': len(results['photos']),
-            'errors': len(results['errors']),
-            'warnings': len(results['warnings'])
-        },
-        'results': results
-    }), status_code
 
 
 @app.route('/api/artworks/<artwork_id>/photos', methods=['POST'])
@@ -3631,32 +3083,6 @@ def _maybe_alert_role_change_spike(event_type):
         pass
 
 
-def generate_random_artist_id(db):
-    """Generate a random artist ID in format A#######."""
-    from create_tbls import init_tables  # imported lazily to avoid circular refs
-    Artist, *_ = init_tables(db)  # Import once outside loop
-    max_attempts = 100
-    for _ in range(max_attempts):
-        random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))
-        artist_id = f"A{random_part}"
-        if not db.session.get(Artist, artist_id):
-            return artist_id
-    raise ValueError("Failed to generate unique artist ID after max attempts")
-
-
-def generate_random_artwork_id(db):
-    """Generate a random artwork ID in format AW######."""
-    from create_tbls import init_tables  # imported lazily to avoid circular refs
-    _, Artwork, *_ = init_tables(db)  # Import once outside loop
-    max_attempts = 100
-    for _ in range(max_attempts):
-        random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
-        artwork_id = f"AW{random_part}"
-        if not db.session.get(Artwork, artwork_id):
-            return artwork_id
-    raise ValueError("Failed to generate unique artwork ID after max attempts")
-
-
 @app.route('/api/admin/console/users/<int:user_id>/promote', methods=['POST'])
 @login_required
 @admin_required
@@ -4635,7 +4061,6 @@ def admin_console_cli():
 
 
 @app.route('/uploads/<path:filename>')
-@limiter.limit("1000 per minute")  # High limit for static file serving
 def serve_upload(filename):
     """Serve uploaded files securely.
 
@@ -4643,7 +4068,6 @@ def serve_upload(filename):
         - Prevents directory traversal (send_from_directory handles this)
         - Only serves files from uploads directory
         - Sets proper Content-Type headers
-        - Exempt from rate limiting (static file serving)
 
     Args:
         filename: Path to the file (e.g., "artworks/photo.jpg" or "thumbnails/thumb.jpg")

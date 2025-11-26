@@ -235,6 +235,38 @@ class TestUserLogin:
         assert response.status_code == 200
         data = response.get_json()
         assert data['message'] == 'Login successful'
+
+    def test_multiple_sessions_share_remember_token(self, client, sample_user):
+        """Logging in from a second client should not invalidate the first session."""
+        # Register and login from first client
+        client.post('/auth/register', json=sample_user)
+        login_data = {
+            'email': sample_user['email'],
+            'password': sample_user['password']
+        }
+        first_login = client.post('/auth/login', json=login_data)
+        assert first_login.status_code == 200
+
+        # Verify first client can access a protected route
+        r1 = client.get('/auth/me')
+        assert r1.status_code == 200
+
+        # Create a second independent client and log in with same user
+        with app.test_client(use_cookies=True) as client2:
+            app.config['TESTING'] = True
+            app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+            # reuse same DB; no need to recreate tables here since fixture did
+
+            second_login = client2.post('/auth/login', json=login_data)
+            assert second_login.status_code == 200
+
+            # Second client can access protected route
+            r2 = client2.get('/auth/me')
+            assert r2.status_code == 200
+
+        # First client's session should still be valid after second login
+        r1_again = client.get('/auth/me')
+        assert r1_again.status_code == 200
     
     def test_login_invalid_password(self, client, sample_user):
         """Test login with incorrect password."""
