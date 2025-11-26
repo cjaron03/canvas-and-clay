@@ -593,7 +593,7 @@ def login():
     })
     
     # Issue a fresh session token so admins can forcibly revoke active sessions
-    session_token = secrets.token_urlsafe(32)
+    session_token = user.remember_token or secrets.token_urlsafe(32)
 
     # Login user with remember me option (must be called before session modification)
     login_user(user, remember=remember)
