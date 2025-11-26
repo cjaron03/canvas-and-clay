@@ -98,7 +98,17 @@ import { page } from '$app/stores';
 						{userInitial}
 					</button>
 					{#if showUserMenu}
-						<div class="user-menu-dropdown" on:click|stopPropagation>
+						<div
+							class="user-menu-dropdown"
+							role="menu"
+							on:click|stopPropagation
+							on:keydown={(e) => {
+								if (e.key === 'Escape') {
+									closeUserMenu();
+								}
+							}}
+							tabindex="-1"
+						>
 							<div class="user-menu-header">
 								<div class="user-menu-email">{$auth.user?.email || '—'}</div>
 								<div class="user-menu-role">{$auth.user?.role || '—'}</div>
@@ -327,22 +337,6 @@ import { page } from '$app/stores';
 		background: rgba(234, 67, 53, 0.1);
 	}
 
-	.logout-btn {
-		padding: 0.5rem 1rem;
-		background: var(--accent-color);
-		color: white;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 0.875rem;
-		font-weight: 500;
-		transition: background 0.2s;
-		text-transform: capitalize;
-	}
-
-	.logout-btn:hover {
-		background: var(--accent-hover);
-	}
 
 	.sign-in-link {
 		display: flex;

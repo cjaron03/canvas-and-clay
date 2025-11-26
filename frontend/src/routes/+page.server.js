@@ -1,16 +1,16 @@
-import { API_BASE_URL } from '$env/static/private';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
 
 export const load = async ({ fetch }) => {
   try {
     // Fetch recent artworks and public stats in parallel
     const [artworksResponse, statsResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/artworks?per_page=6&page=1`, {
+      fetch(`${PUBLIC_API_BASE_URL}/api/artworks?per_page=6&page=1`, {
         headers: {
           accept: 'application/json'
         }
       }),
-      fetch(`${API_BASE_URL}/api/stats/overview`, {
+      fetch(`${PUBLIC_API_BASE_URL}/api/stats/overview`, {
         headers: {
           accept: 'application/json'
         }
