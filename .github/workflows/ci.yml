@@ -67,9 +67,8 @@ jobs:
 
     - name: Create test database
       run: |
-        psql -h localhost -U ${{ env.POSTGRES_USER }} -d postgres -c "CREATE DATABASE ${{ env.POSTGRES_DB }}_test OWNER ${{ env.POSTGRES_USER }};"
-      env:
-        PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        psql "postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres" -v ON_ERROR_STOP=1 \
+          -c "CREATE DATABASE ${{ env.POSTGRES_DB }}_test OWNER ${{ env.POSTGRES_USER }};"
 
     - name: Lint backend code
       run: |
