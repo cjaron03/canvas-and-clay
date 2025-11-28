@@ -292,7 +292,7 @@ def test_bulk_upload_duplicate_override(client, admin_user, storage, cleanup_upl
     db.session.commit()
 
     existing_photo = ArtworkPhoto(
-        photo_id='PHOTO_EXISTING',
+        photo_id='PHOTO001',
         artwork_num=existing_artwork.artwork_num,
         filename='old_moon.jpg',
         file_path='uploads/artworks/old_moon.jpg',
