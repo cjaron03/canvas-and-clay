@@ -719,143 +719,143 @@
 			</div>
 		{:else}
 			<div class="auth-forms-container">
-				<div class="tabs">
-					<button
-						class="tab"
-						class:active={!isRegisterMode}
-						on:click={toggleMode}
+		<div class="tabs">
+			<button
+				class="tab"
+				class:active={!isRegisterMode}
+				on:click={toggleMode}
+				disabled={loading}
+			>
+				Sign in
+			</button>
+			<button
+				class="tab"
+				class:active={isRegisterMode}
+				on:click={toggleMode}
+				disabled={loading}
+			>
+				Create account
+			</button>
+		</div>
+
+		{#if isRegisterMode}
+			<form on:submit|preventDefault={handleRegister} class="auth-form">
+				<div class="form-group">
+					<input
+						id="register-email"
+						type="email"
+						bind:value={email}
+						placeholder="Email"
+						required
 						disabled={loading}
-					>
-						Sign in
-					</button>
-					<button
-						class="tab"
-						class:active={isRegisterMode}
-						on:click={toggleMode}
-						disabled={loading}
-					>
-						Create account
-					</button>
+						autocomplete="email"
+					/>
 				</div>
 
-				{#if isRegisterMode}
-				<form on:submit|preventDefault={handleRegister} class="auth-form">
-					<div class="form-group">
-						<input
-							id="register-email"
-							type="email"
-							bind:value={email}
-							placeholder="Email"
-							required
-							disabled={loading}
-							autocomplete="email"
-						/>
-					</div>
-
-					<div class="form-group">
-						<div class="password-input-group">
-							{#if showRegisterPasswords}
-								<input
-									id="register-password"
-									type="text"
-									bind:value={password}
-									placeholder="Password"
-									required
-									disabled={loading}
-									autocomplete="new-password"
-								/>
-							{:else}
-								<input
-									id="register-password"
-									type="password"
-									bind:value={password}
-									placeholder="Password"
-									required
-									disabled={loading}
-									autocomplete="new-password"
-								/>
-							{/if}
-							<button
-								type="button"
-								class="password-toggle"
-								on:click={() => (showRegisterPasswords = !showRegisterPasswords)}
-								aria-label={showRegisterPasswords ? 'Hide password' : 'Show password'}
-							>
-								<span class="toggle-icon">{showRegisterPasswords ? 'Hide' : 'Show'}</span>
-							</button>
-						</div>
-						<div class="password-hint">Use 8 or more characters with a mix of letters, numbers & symbols</div>
-						<div class="password-strength">
-							<div class="strength-label">Password strength: <span class={`pill pill-${strengthLabel.toLowerCase()}`}>{strengthLabel}</span></div>
-							<div class="strength-bars">
-								{#each [0, 1, 2, 3] as index}
-									<div class:active={index < strengthLevel}></div>
-								{/each}
-							</div>
-						</div>
-						<div class="password-requirements">
-							{#each passwordRequirements as req}
-								<div class={`requirement ${req.met ? 'met' : 'missing'} ${req.required ? '' : 'optional'}`}>
-									<span class="icon">{req.met ? '✓' : '✕'}</span>
-									<span>{req.label}{!req.required ? ' (optional)' : ''}</span>
-								</div>
+		<div class="form-group">
+			<div class="password-input-group">
+				{#if showRegisterPasswords}
+					<input
+						id="register-password"
+						type="text"
+						bind:value={password}
+						placeholder="Password"
+						required
+						disabled={loading}
+						autocomplete="new-password"
+					/>
+				{:else}
+					<input
+						id="register-password"
+						type="password"
+						bind:value={password}
+						placeholder="Password"
+						required
+						disabled={loading}
+						autocomplete="new-password"
+					/>
+				{/if}
+				<button
+					type="button"
+					class="password-toggle"
+					on:click={() => (showRegisterPasswords = !showRegisterPasswords)}
+					aria-label={showRegisterPasswords ? 'Hide password' : 'Show password'}
+				>
+					<span class="toggle-icon">{showRegisterPasswords ? 'Hide' : 'Show'}</span>
+				</button>
+			</div>
+				<div class="password-hint">Use 8 or more characters with a mix of letters, numbers & symbols</div>
+					<div class="password-strength">
+						<div class="strength-label">Password strength: <span class={`pill pill-${strengthLabel.toLowerCase()}`}>{strengthLabel}</span></div>
+						<div class="strength-bars">
+						{#each [0, 1, 2, 3] as index}
+							<div class:active={index < strengthLevel}></div>
 							{/each}
 						</div>
 					</div>
-
-					<div class="form-group">
-						<div class="password-input-group">
-							{#if showRegisterPasswords}
-								<input
-									id="confirm-password"
-									type="text"
-									bind:value={confirmPassword}
-									placeholder="Confirm password"
-									required
-									disabled={loading}
-									autocomplete="new-password"
-								/>
-							{:else}
-								<input
-									id="confirm-password"
-									type="password"
-									bind:value={confirmPassword}
-									placeholder="Confirm password"
-									required
-									disabled={loading}
-									autocomplete="new-password"
-								/>
-							{/if}
-							<button
-								type="button"
-								class="password-toggle"
-								on:click={() => (showRegisterPasswords = !showRegisterPasswords)}
-								aria-label={showRegisterPasswords ? 'Hide password' : 'Show password'}
-							>
-								<span class="toggle-icon">{showRegisterPasswords ? 'Hide' : 'Show'}</span>
-							</button>
-						</div>
+					<div class="password-requirements">
+						{#each passwordRequirements as req}
+							<div class={`requirement ${req.met ? 'met' : 'missing'} ${req.required ? '' : 'optional'}`}>
+								<span class="icon">{req.met ? '✓' : '✕'}</span>
+								<span>{req.label}{!req.required ? ' (optional)' : ''}</span>
+							</div>
+						{/each}
 					</div>
+				</div>
 
-					{#if success}
-						<div class="message success">
-							{success}
-						</div>
-					{/if}
-
-					{#if error}
-						<div class="message error">
-							{error}
-						</div>
-					{/if}
-
-					<div class="form-actions">
-						<button type="submit" class="primary-button" disabled={loading}>
-							{loading ? 'Creating account...' : 'Create account'}
+				<div class="form-group">
+					<div class="password-input-group">
+						{#if showRegisterPasswords}
+							<input
+								id="confirm-password"
+								type="text"
+								bind:value={confirmPassword}
+								placeholder="Confirm password"
+								required
+								disabled={loading}
+								autocomplete="new-password"
+							/>
+						{:else}
+							<input
+								id="confirm-password"
+								type="password"
+								bind:value={confirmPassword}
+								placeholder="Confirm password"
+								required
+								disabled={loading}
+								autocomplete="new-password"
+							/>
+						{/if}
+						<button
+							type="button"
+							class="password-toggle"
+							on:click={() => (showRegisterPasswords = !showRegisterPasswords)}
+							aria-label={showRegisterPasswords ? 'Hide password' : 'Show password'}
+						>
+							<span class="toggle-icon">{showRegisterPasswords ? 'Hide' : 'Show'}</span>
 						</button>
 					</div>
-				</form>
-			{:else}
+				</div>
+
+				{#if success}
+					<div class="message success">
+						{success}
+					</div>
+				{/if}
+
+				{#if error}
+					<div class="message error">
+						{error}
+					</div>
+				{/if}
+
+				<div class="form-actions">
+					<button type="submit" class="primary-button" disabled={loading}>
+						{loading ? 'Creating account...' : 'Create account'}
+					</button>
+				</div>
+			</form>
+		{:else}
 	<form on:submit|preventDefault={handleLogin} class="auth-form">
 		<div class="form-group">
 			<input
@@ -928,15 +928,15 @@
 					</button>
 				</div>
 				</form>
-				{/if}
-				<div class="reset-help">
-					<button type="button" class="link-button" on:click={toggleResetForm}>
+			{/if}
+			<div class="reset-help">
+				<button type="button" class="link-button" on:click={toggleResetForm}>
 						Need help resetting your password?
-					</button>
-				</div>
-			</div>
-		{/if}
-	</div>
+				</button>
+							</div>
+							</div>
+							{/if}
+		</div>
 	</div>
 
 <style>

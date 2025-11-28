@@ -4,10 +4,13 @@ import json
 import secrets
 import string
 import sys
+import io
+import zipfile
 from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
 from dotenv import load_dotenv
+from sqlalchemy.pool import StaticPool
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_login import LoginManager, login_required, current_user, logout_user
@@ -53,10 +56,15 @@ def build_database_uri():
     """Construct database URI from environment variables."""
     # Prefer explicit test database when running under pytest/CI
     test_db_uri = os.getenv('TEST_DATABASE_URL') or os.getenv('PYTEST_DATABASE_URL')
-    if os.getenv('PYTEST_CURRENT_TEST') and test_db_uri:
-        return test_db_uri
-    if os.getenv('PYTEST_CURRENT_TEST') and not os.getenv('DATABASE_URL') and not test_db_uri:
-        # Safe default for tests when no DB is configured
+    if is_test_environment():
+        if test_db_uri:
+            return test_db_uri
+        # Always fall back to file-based sqlite in test runs even if DATABASE_URL is set
+        return 'sqlite:///app_test.db'
+    if os.getenv('PYTEST_CURRENT_TEST'):
+        if test_db_uri:
+            return test_db_uri
+        # Always fall back to sqlite in test runs even if DATABASE_URL is set
         return 'sqlite:///app_test.db'
 
     existing_uri = os.getenv('DATABASE_URL')
@@ -88,9 +96,12 @@ def build_database_uri():
 
 def build_engine_options(database_uri):
     """Configure SQLAlchemy engine options such as pooling and SSL."""
-    # SQLite (default/testing) uses NullPool; skip pool configuration
+    # SQLite (default/testing) uses a shared connection pool to keep state across clients
     if database_uri.startswith('sqlite'):
-        return {}
+        return {
+            'connect_args': {'check_same_thread': False},
+            'poolclass': StaticPool
+        }
 
     engine_options = {
         'pool_size': get_env_int('DB_POOL_SIZE', 5),
@@ -304,16 +315,16 @@ def load_user(user_id):
 # Enforce per-session token to allow forced logouts
 @app.before_request
 def enforce_session_token():
-    try:
-        if not current_user.is_authenticated:
-            return
-        token = session.get('session_token')
-        if not token or token != current_user.remember_token:
-            logout_user()
-            session.clear()
-            return jsonify({'error': 'Session expired. Please log in again.'}), 401
-    except Exception:
-        # On any unexpected error, fail closed by clearing session
+    # Only enforce when authenticated; avoid masking errors for anonymous requests
+    if not current_user.is_authenticated:
+        return
+    
+    # Allow auth flows that establish or refresh the session token
+    if request.endpoint in {'auth.login', 'auth.register', 'auth.get_csrf_token'}:
+        return
+
+    token = session.get('session_token')
+    if not token or token != current_user.remember_token:
         logout_user()
         session.clear()
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
@@ -2179,6 +2190,233 @@ def upload_orphaned_photo():
         return jsonify({'error': 'Upload failed. Please try again.'}), 500
 
 
+@app.route('/api/admin/bulk-upload', methods=['POST'])
+@login_required
+@admin_required
+def bulk_upload():
+    """Process an admin bulk upload ZIP containing manifest.json and images."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No bulk upload file provided'}), 400
+
+    upload_file = request.files['file']
+    if upload_file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    try:
+        zip_bytes = upload_file.read()
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            if 'manifest.json' not in zf.namelist():
+                return jsonify({'error': 'manifest.json is required in the zip'}), 400
+
+            manifest = json.loads(zf.read('manifest.json'))
+            default_storage_id = manifest.get('default_storage_id')
+            if not default_storage_id:
+                return jsonify({'error': 'default_storage_id is required in manifest'}), 400
+
+            storage = db.session.get(Storage, default_storage_id)
+            if not storage:
+                return jsonify({'error': f'Storage location not found: {default_storage_id}'}), 404
+
+            summary = {
+                'artists_created': 0,
+                'artworks_created': 0,
+                'photos_created': 0,
+                'errors': 0
+            }
+            errors = []
+            warnings = []
+            artist_key_map = {}
+            artwork_key_map = {}
+            duplicate_policy = manifest.get('duplicate_policy', 'suffix').lower()
+
+            def generate_artist_id():
+                max_attempts = 50
+                for _ in range(max_attempts):
+                    candidate = f"A{''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))}"
+                    if not db.session.get(Artist, candidate):
+                        return candidate
+                raise ValueError("Failed to generate unique artist id")
+
+            def generate_artwork_id():
+                max_attempts = 50
+                for _ in range(max_attempts):
+                    candidate = f"AW{''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))}"
+                    if not db.session.get(Artwork, candidate):
+                        return candidate
+                raise ValueError("Failed to generate unique artwork id")
+
+            def next_suffix_title(base_title, artist_id, storage_id):
+                existing_titles = {
+                    art.artwork_ttl for art in Artwork.query.filter_by(
+                        artist_id=artist_id,
+                        storage_id=storage_id,
+                        is_deleted=False
+                    ).all()
+                }
+                if base_title not in existing_titles:
+                    return base_title
+                suffix = 2
+                while True:
+                    candidate = f"{base_title} ({suffix})"
+                    if candidate not in existing_titles:
+                        return candidate
+                    suffix += 1
+
+            # Create artists
+            for artist_entry in manifest.get('artists', []):
+                try:
+                    artist_id = generate_artist_id()
+                    artist = Artist(
+                        artist_id=artist_id,
+                        artist_fname=artist_entry.get('first_name') or artist_entry.get('artist_fname') or '',
+                        artist_lname=artist_entry.get('last_name') or artist_entry.get('artist_lname') or '',
+                        artist_email=artist_entry.get('email'),
+                        artist_site=artist_entry.get('artist_site'),
+                        artist_bio=artist_entry.get('artist_bio'),
+                        artist_phone=None,
+                        is_deleted=False,
+                        date_deleted=None,
+                        user_id=None
+                    )
+                    db.session.add(artist)
+                    artist_key_map[artist_entry.get('key', artist_id)] = artist_id
+                    summary['artists_created'] += 1
+                except Exception as exc:
+                    db.session.rollback()
+                    errors.append(f"Artist error ({artist_entry.get('key')}): {exc}")
+                    summary['errors'] += 1
+
+            db.session.commit()
+
+            # Create artworks
+            for artwork_entry in manifest.get('artworks', []):
+                try:
+                    artist_key = artwork_entry.get('artist_key')
+                    artist_id = None
+
+                    if artist_key:
+                        artist_id = artist_key_map.get(artist_key)
+                        if not artist_id:
+                            raise ValueError(f"Unknown artist_key {artist_key}")
+                    else:
+                        # Support existing artists by direct id or email (CLI sends artist_id)
+                        artist_id_field = artwork_entry.get('artist_id')
+                        artist_email_field = artwork_entry.get('artist_email')
+
+                        if artist_id_field:
+                            artist = db.session.get(Artist, artist_id_field)
+                            if not artist:
+                                raise ValueError(f"Artist not found: {artist_id_field}")
+                        elif artist_email_field:
+                            artist = Artist.query.filter_by(artist_email=artist_email_field).first()
+                            if not artist:
+                                raise ValueError(f"Artist not found for email: {artist_email_field}")
+                        else:
+                            raise ValueError("artist_key or artist_id is required for artwork entry")
+
+                        artist_id = artist.artist_id
+
+                    storage_id = artwork_entry.get('storage_id') or default_storage_id
+                    if not db.session.get(Storage, storage_id):
+                        raise ValueError(f"Storage not found: {storage_id}")
+
+                    # Duplicate handling: override (delete existing) or suffix new title
+                    existing_artworks = Artwork.query.filter_by(
+                        artwork_ttl=artwork_entry.get('title'),
+                        artist_id=artist_id,
+                        storage_id=storage_id,
+                        is_deleted=False
+                    ).all()
+
+                    if existing_artworks:
+                        if duplicate_policy == 'override':
+                            for existing in existing_artworks:
+                                photos = ArtworkPhoto.query.filter_by(artwork_num=existing.artwork_num).all()
+                                for photo in photos:
+                                    delete_photo_files(photo.file_path, photo.thumbnail_path)
+                                    db.session.delete(photo)
+                                db.session.delete(existing)
+                            db.session.flush()
+                            warnings.append(f"Overrode existing artwork '{artwork_entry.get('title')}' for artist {artist_id}")
+                        else:
+                            new_title = next_suffix_title(artwork_entry.get('title'), artist_id, storage_id)
+                            warnings.append(f"Created with suffix title '{new_title}' to avoid duplicate for artist {artist_id}")
+                            artwork_entry['title'] = new_title
+
+                    artwork_id = generate_artwork_id()
+                    artwork = Artwork(
+                        artwork_num=artwork_id,
+                        artwork_ttl=artwork_entry.get('title'),
+                        artwork_medium=artwork_entry.get('medium'),
+                        date_created=None,
+                        artwork_size=artwork_entry.get('artwork_size'),
+                        is_viewable=True,
+                        is_deleted=False,
+                        date_deleted=None,
+                        artist_id=artist_id,
+                        storage_id=storage_id
+                    )
+                    db.session.add(artwork)
+                    artwork_key_map[artwork_entry.get('key', artwork_id)] = artwork_id
+                    summary['artworks_created'] += 1
+                except Exception as exc:
+                    db.session.rollback()
+                    errors.append(f"Artwork error ({artwork_entry.get('key')}): {exc}")
+                    summary['errors'] += 1
+
+            db.session.commit()
+
+            # Create photos
+            for photo_entry in manifest.get('photos', []):
+                try:
+                    filename = photo_entry.get('filename')
+                    artwork_key = photo_entry.get('artwork_key')
+                    artwork_id = artwork_key_map.get(artwork_key)
+                    if not artwork_id:
+                        raise ValueError(f"Unknown artwork_key {artwork_key}")
+                    if filename not in zf.namelist():
+                        raise ValueError(f"File not found in zip: {filename}")
+
+                    file_data = zf.read(filename)
+                    photo_metadata = process_upload(file_data, filename)
+                    photo = ArtworkPhoto(
+                        photo_id=photo_metadata['photo_id'],
+                        artwork_num=artwork_id,
+                        filename=photo_metadata['filename'],
+                        file_path=photo_metadata['file_path'],
+                        thumbnail_path=photo_metadata['thumbnail_path'],
+                        file_size=photo_metadata['file_size'],
+                        mime_type=photo_metadata['mime_type'],
+                        width=photo_metadata['width'],
+                        height=photo_metadata['height'],
+                        uploaded_at=datetime.now(timezone.utc),
+                        uploaded_by=current_user.id,
+                        is_primary=bool(photo_entry.get('is_primary'))
+                    )
+                    db.session.add(photo)
+                    summary['photos_created'] += 1
+                except Exception as exc:
+                    db.session.rollback()
+                    errors.append(f"Photo error ({photo_entry.get('filename')}): {exc}")
+                    summary['errors'] += 1
+
+            db.session.commit()
+
+            return jsonify({
+                'message': 'Bulk upload processed',
+                'summary': summary,
+                'errors': errors,
+                'warnings': warnings
+            }), 200
+
+    except zipfile.BadZipFile:
+        return jsonify({'error': 'Invalid zip file'}), 400
+    except Exception as exc:
+        app.logger.exception("Bulk upload failed")
+        db.session.rollback()
+        return jsonify({'error': f'Bulk upload failed: {exc}'}), 500
+
+
 @app.route('/api/photos/<photo_id>/associate', methods=['PATCH'])
 @login_required
 @admin_required
@@ -2606,12 +2844,20 @@ def public_overview_stats():
     """Public overview stats for homepage (no auth required).
 
     Returns total counts for artworks, artists, photos, and artist-role users.
+    Excludes soft-deleted records.
     """
     try:
-        total_artworks = Artwork.query.count()
-        total_artists = Artist.query.count()
+        # Count only non-deleted artworks
+        total_artworks = Artwork.query.filter(Artwork.is_deleted == False).count()
+        # Count only non-deleted artists
+        total_artists = Artist.query.filter(Artist.is_deleted == False).count()
+        # Count all photos (photos don't have soft delete)
         total_photos = ArtworkPhoto.query.count()
-        artist_role_count = User.query.filter(User.role.in_(['artist', 'artist-guest'])).count()
+        # Count artist-role users (excluding soft-deleted users)
+        artist_role_count = User.query.filter(
+            User.role.in_(['artist', 'artist-guest']),
+            User.deleted_at.is_(None)
+        ).count()
 
         return jsonify({
             'counts': {

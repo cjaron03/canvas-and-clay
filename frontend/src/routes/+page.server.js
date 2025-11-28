@@ -1,5 +1,8 @@
-import { API_BASE_URL } from '$env/static/private';
+import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
+
+const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5000';
 
 export const load = async ({ fetch }) => {
   try {
@@ -28,13 +31,17 @@ export const load = async ({ fetch }) => {
     if (artworksResponse.ok) {
       const artworksData = await artworksResponse.json();
       recentArtworks = artworksData.artworks || [];
-      stats.totalArtworks = artworksData.pagination?.total || 0;
-      stats.totalPhotos = artworksData.total_photos || 0;
+      // Use artworks pagination total as fallback, but prefer stats endpoint
+      if (!statsResponse.ok) {
+        stats.totalArtworks = artworksData.pagination?.total || 0;
+      }
     }
 
     if (statsResponse.ok) {
       const statsData = await statsResponse.json();
       const counts = statsData?.counts || {};
+      // Prioritize stats from stats endpoint (excludes deleted records)
+      stats.totalArtworks = counts.artworks || stats.totalArtworks || 0;
       stats.totalArtists = counts.artists || 0;
       stats.artistUsers = counts.artist_users || 0;
       if (counts.photos !== undefined) {
