@@ -4190,7 +4190,6 @@ def _ensure_bootstrap_on_first_request():
 
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
 
 scheduler = None
 # scheduler for deletion of soft-deleted items over 30 days
@@ -4201,7 +4200,16 @@ def start_deletion_scheduler():
         of there being no existing scheduler to prevent
         multiple instances of a scheduler.
     """
+    from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
+
     global scheduler
+
+    if app.config.get("TESTING", False):
+        app.logger.info("Skipping Deletion Scheduler start in TESTING mode")
+        if scheduler:
+            app.logger.info("Deletion Scheduler already running, skipping start.")
+        return
+    
     if scheduler is None:
         scheduler = BackgroundScheduler(daemon=True)
         scheduler.add_job(
@@ -4234,6 +4242,11 @@ def stop_deletion_scheduler():
         deletions. 
     """
     global scheduler
+
+    if app.config.get("TESTING", False):
+        app.logger.info("Skipping Deletion Scheduler Stop in TESTING mode")
+        return 
+    
     if scheduler:
         scheduler.shutdown(wait=False)
         scheduler = None
