@@ -304,11 +304,6 @@ class TestAdminOnlyEndpoints:
 class TestPublicReadEndpoints:
     """Test that public read endpoints remain accessible."""
 
-    def test_anonymous_can_search(self, client):
-        """Anonymous users can search."""
-        response = client.get('/api/search?q=test')
-        assert response.status_code == 200
-
     def test_anonymous_can_list_artworks(self, client):
         """Anonymous users can list artworks."""
         response = client.get('/api/artworks')
@@ -317,12 +312,6 @@ class TestPublicReadEndpoints:
     def test_anonymous_can_view_artwork(self, client, owned_artwork):
         """Anonymous users can view artwork details."""
         response = client.get(f'/api/artworks/{owned_artwork["id"]}')
-        assert response.status_code == 200
-
-    def test_guest_can_search(self, client, guest_user):
-        """Logged-in guests can search."""
-        login_user(client, guest_user['email'], guest_user['password'])
-        response = client.get('/api/search?q=test')
         assert response.status_code == 200
 
 

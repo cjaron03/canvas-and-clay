@@ -20,10 +20,10 @@
         <h3>Browse Artworks</h3>
         <p>View and manage your art collection</p>
       </a>
-      <a href="/search" class="action-card">
-        <div class="action-icon">Search</div>
-        <h3>Search</h3>
-        <p>Find artworks, artists, and locations</p>
+      <a href="/artists" class="action-card">
+        <div class="action-icon">Artists</div>
+        <h3>Artists</h3>
+        <p>Find and manage artists.</p>
       </a>
       {#if $auth.isAuthenticated}
         {#if $auth.user?.role === 'admin'}
@@ -56,7 +56,7 @@
     </p>
     <div class="hero-actions">
       <a href="/artworks" class="btn-primary">Browse Artworks</a>
-      <a href="/search" class="btn-secondary">Search Collection</a>
+      <a href="/artists" class="btn-secondary">Browse Artists</a>
     </div>
   </section>
 

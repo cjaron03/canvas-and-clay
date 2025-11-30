@@ -111,6 +111,48 @@ def regular_user(client):
     return User.query.filter_by(email='user@test.com').first()
 
 
+@pytest.fixture
+def artist_user(client, test_data):
+    """Create, assign, and log in as an artist user owning ARTIST01."""
+    client.post('/auth/register', json={
+        'email': 'artist-owner@test.com',
+        'password': 'ArtistOwnerPass123!'
+    })
+
+    user = User.query.filter_by(email='artist-owner@test.com').first()
+    user.role = 'artist'
+    test_data['artist1'].user_id = user.id
+    db.session.commit()
+
+    client.post('/auth/login', json={
+        'email': 'artist-owner@test.com',
+        'password': 'ArtistOwnerPass123!'
+    })
+
+    return user
+
+
+@pytest.fixture
+def artist_user_unassigned(client, test_data):
+    """Create an artist user assigned to a different artist."""
+    client.post('/auth/register', json={
+        'email': 'artist-other@test.com',
+        'password': 'ArtistOtherPass123!'
+    })
+
+    user = User.query.filter_by(email='artist-other@test.com').first()
+    user.role = 'artist'
+    test_data['artist2'].user_id = user.id
+    db.session.commit()
+
+    client.post('/auth/login', json={
+        'email': 'artist-other@test.com',
+        'password': 'ArtistOtherPass123!'
+    })
+
+    return user
+
+
 class TestListArtists:
     """ Test GET /api/artists endpoint."""
 
@@ -122,12 +164,11 @@ class TestListArtists:
         assert 'artists' in data
         assert 'pagination' in data
         assert len(data['artists']) == 2
-        assert data['pagination']['total'] == 2
+        assert data['pagination']['total_filtered_artists'] == 2
 
     def test_list_artists_pagination(self, client, test_data):
         """Test pagination works correctly."""
         response = client.get('/api/artists?page=1&per_page=1')
-
         assert response.status_code == 200
         data = response.json
         assert len(data['artists']) == 1
@@ -142,13 +183,14 @@ class TestListArtists:
         assert response.status_code == 200
         data = response.json
         assert len(data['artists']) == 1
-        assert data['artists'][0]['phone'] == '(123)-456-7890'
+        assert data['artists'][0]['first_name'] == 'Test'
+        assert data['artists'][0]['last_name'] == 'Testy'
    
     def test_list_artists_sort_by_last_name(self, client, test_data):
-        """Sort artists by last name ascending."""
-        response = client.get('/api/artists?sort_by=artist_lname&sort_order=asc')
+        """Sort artists alphabetically using ordering parameter."""
+        response = client.get('/api/artists?ordering=name_asc')
         data = response.json
-        names = [a['name'] for a in data['artists']]
+        names = [f"{a['first_name']} {a['last_name']}".strip() for a in data['artists']]
         assert names == ['Another Artist', 'Test Testy']
 
 
@@ -248,6 +290,23 @@ class TestUpdateArtist:
         """Test that regular users cannot update artists."""
         response = client.put('/api/artists/ARTIST01', json={
             'artist_lname': 'Unauthorized Update'
+        })
+
+        assert response.status_code == 403
+
+    def test_update_artist_owner_success(self, client, artist_user, test_data):
+        """Assigned artist users can update their own records."""
+        response = client.put('/api/artists/ARTIST01', json={
+            'artist_bio': 'Owner updated bio'
+        })
+
+        assert response.status_code == 200
+        assert response.json['artist']['artist_bio'] == 'Owner updated bio'
+
+    def test_update_artist_unassigned_artist_forbidden(self, client, artist_user_unassigned, test_data):
+        """Artist users cannot update records they do not own."""
+        response = client.put('/api/artists/ARTIST01', json={
+            'artist_bio': 'Should fail'
         })
 
         assert response.status_code == 403
