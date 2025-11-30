@@ -1352,7 +1352,7 @@ def list_artists_catalog():
                 'last_name': artist.artist_lname,
                 'email': artist.artist_email,
                 'user_id': artist.user_id,
-                'photo': TODO
+                'photo': artist.profile_photo_url
             }
             // more artists
         ],

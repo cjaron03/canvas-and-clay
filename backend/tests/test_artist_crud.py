@@ -169,7 +169,6 @@ class TestListArtists:
     def test_list_artists_pagination(self, client, test_data):
         """Test pagination works correctly."""
         response = client.get('/api/artists?page=1&per_page=1')
-
         assert response.status_code == 200
         data = response.json
         assert len(data['artists']) == 1

@@ -56,7 +56,6 @@ import { page } from '$app/stores';
 	<div class="nav-container">
 		<div class="nav-links">
 			<a href="/" class:active={$page.url.pathname === '/'}>Home</a>
-			<a href="/search" class:active={$page.url.pathname === '/search'}>Search</a>
 			<a href="/artworks" class:active={$page.url.pathname.startsWith('/artworks')}>Artworks</a>
 			<a href="/artists" class:active={$page.url.pathname.startsWith('/artists')}>Artists</a>
 			{#if $auth.isAuthenticated && $auth.user?.role === 'artist'}
