@@ -1,6 +1,7 @@
 """Tests for authentication endpoints and session security."""
 from datetime import datetime, timezone, timedelta
 import pytest
+from sqlalchemy.pool import StaticPool
 from app import app, db, User, PasswordResetRequest, bcrypt
 
 
@@ -9,7 +10,10 @@ def client():
     """Create a test client with a fresh database and CSRF disabled for convenience."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'connect_args': {'check_same_thread': False},
+        'poolclass': StaticPool
+    }
     app.config['WTF_CSRF_ENABLED'] = False  # disable csrf for most tests
     app.config['SESSION_COOKIE_SECURE'] = False  # allow testing without https
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
@@ -31,7 +35,10 @@ def csrf_client():
     """Create a test client with CSRF protection enabled."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'connect_args': {'check_same_thread': False},
+        'poolclass': StaticPool
+    }
     app.config['WTF_CSRF_ENABLED'] = True  # enable csrf for security tests
     app.config['SESSION_COOKIE_SECURE'] = False
     app.config['RATELIMIT_ENABLED'] = False  # disable rate limiting for tests
@@ -235,6 +242,40 @@ class TestUserLogin:
         assert response.status_code == 200
         data = response.get_json()
         assert data['message'] == 'Login successful'
+
+    def test_multiple_sessions_share_remember_token(self, client, sample_user):
+        """Logging in from a second client should not invalidate the first session."""
+        # Register and login from first client
+        client.post('/auth/register', json=sample_user)
+        login_data = {
+            'email': sample_user['email'],
+            'password': sample_user['password']
+        }
+        first_login = client.post('/auth/login', json=login_data)
+        assert first_login.status_code == 200
+
+        # Verify first client can access a protected route
+        r1 = client.get('/auth/me')
+        assert r1.status_code == 200
+
+        # Create a second independent client and log in with same user
+        with app.test_client(use_cookies=True) as client2:
+            # Reuse existing test configuration and database state
+            app.config['TESTING'] = True
+            app.config['WTF_CSRF_ENABLED'] = False
+            app.config['RATELIMIT_ENABLED'] = False
+
+            second_login = client2.post('/auth/login', json=login_data)
+            second_login_data = second_login.get_json()
+            assert second_login.status_code == 200, second_login_data
+
+            # Second client can access protected route
+            r2 = client2.get('/auth/me')
+            assert r2.status_code == 200
+
+        # First client's session should still be valid after second login
+        r1_again = client.get('/auth/me')
+        assert r1_again.status_code == 200
     
     def test_login_invalid_password(self, client, sample_user):
         """Test login with incorrect password."""

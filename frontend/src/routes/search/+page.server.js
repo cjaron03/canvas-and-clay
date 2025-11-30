@@ -1,5 +1,8 @@
-import { API_BASE_URL } from '$env/static/private';
+import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
+
+const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5000';
 
 export const load = async ({ url, fetch }) => {
   const rawQuery = url.searchParams.get('q') ?? '';
