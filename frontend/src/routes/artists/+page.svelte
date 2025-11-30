@@ -12,11 +12,11 @@
   };
 
   // Helpers to calculate page ranges based on /artists GET pagination results
-  const pageStart = data.pagination.total_filtered_artists > 0
+  $: pageStart = data.pagination.total_filtered_artists > 0
     ? (data.pagination.page - 1) * data.pagination.per_page + 1
     : 0;
 
-  const pageEnd = Math.min(
+  $: pageEnd = Math.min(
     data.pagination.page * data.pagination.per_page,
     data.pagination.total_filtered_artists
   );
