@@ -4,11 +4,26 @@
 
   export let data;
 
+  let imageErrors = new Set();
+
   // Helper to get full thumbnail URL
   const getThumbnailUrl = (thumbnail) => {
     if (!thumbnail) return null;
     if (thumbnail.startsWith('http')) return thumbnail;
+    if (!PUBLIC_API_BASE_URL) {
+      console.warn('PUBLIC_API_BASE_URL is not set, image may not load');
+      return null;
+    }
     return `${PUBLIC_API_BASE_URL}${thumbnail}`;
+  };
+
+  const handleImageError = (artworkId, event) => {
+    console.error('Image failed to load for artwork:', artworkId, event.target.src);
+    imageErrors = new Set(imageErrors).add(artworkId);
+  };
+
+  const isImageError = (artworkId) => {
+    return imageErrors.has(artworkId);
   };
 
   // Pagination helper
@@ -125,11 +140,22 @@
       {#each data.artworks as artwork}
         <a href="/artworks/{artwork.id}" class="artwork-card">
           <div class="artwork-thumbnail">
-            {#if artwork.primary_photo?.thumbnail_url}
-              <img
-                src={getThumbnailUrl(artwork.primary_photo.thumbnail_url)}
-                alt={artwork.title}
-              />
+            {#if artwork.primary_photo?.thumbnail_url && !isImageError(artwork.id)}
+              {@const thumbnailUrl = getThumbnailUrl(artwork.primary_photo.thumbnail_url)}
+              {#if thumbnailUrl}
+                <img
+                  src={thumbnailUrl}
+                  alt={artwork.title}
+                  on:error={(e) => handleImageError(artwork.id, e)}
+                  on:load={() => {
+                    const newErrors = new Set(imageErrors);
+                    newErrors.delete(artwork.id);
+                    imageErrors = newErrors;
+                  }}
+                />
+              {:else}
+                <div class="no-image">No Image</div>
+              {/if}
             {:else}
               <div class="no-image">No Image</div>
             {/if}

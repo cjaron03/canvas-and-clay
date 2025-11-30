@@ -9,6 +9,7 @@ services:
       - ../backend/.env
     volumes:
       - ../backend:/app
+      - uploads_data:/app/uploads
     depends_on:
       - db
     networks:
@@ -56,4 +57,6 @@ networks:
 
 volumes:
   postgres_data:
+    driver: local
+  uploads_data:
     driver: local
