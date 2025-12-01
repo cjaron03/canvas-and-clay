@@ -9,6 +9,7 @@ This module provides comprehensive file upload validation including:
 """
 import os
 import re
+import io
 import secrets
 from datetime import datetime, timezone
 from PIL import Image
@@ -420,5 +421,3 @@ def delete_photo_files(file_path, thumbnail_path):
     return photo_deleted, thumbnail_deleted
 
 
-# Add missing import
-import io

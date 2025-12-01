@@ -588,7 +588,11 @@ def create_artist():
             artist_email = data.get('email'),
             artist_site = data.get('artist_site'),
             artist_bio = data.get('artist_bio'),
-            profile_photo_url = data.get('profile_photo_url'),
+            profile_photo_url = None,
+            profile_photo_thumb_url = None,
+            profile_photo_object_key = None,
+            profile_photo_thumb_object_key = None,
+            profile_photo_uploaded_at = None,
             artist_phone = artist_phone,
             is_deleted = False,
             date_deleted = None,
@@ -628,6 +632,7 @@ def create_artist():
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
                 'profile_photo_url': artist.profile_photo_url,
+                'profile_photo_thumb_url': artist.profile_photo_thumb_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'is_deleted': artist.is_deleted,
@@ -717,11 +722,6 @@ def update_artist(artist_id):
         changes['artist_site'] = {'old': artist.artist_site, 'new': data['artist_site']}
         artist.artist_site = data['artist_site']
     
-    # Update profile photo url
-    if 'profile_photo_url' in data and data['profile_photo_url'] != artist.profile_photo_url:
-        changes['profile_photo_url'] = {'old': artist.profile_photo_url, 'new': data['profile_photo_url']}
-        artist.profile_photo_url = data['profile_photo_url']
-
     # Update artist bio
     if 'artist_bio' in data and data['artist_bio'] != artist.artist_bio:
         changes['artist_bio'] = {'old': artist.artist_bio, 'new': data['artist_bio']}
@@ -793,6 +793,7 @@ def update_artist(artist_id):
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
                 'profile_photo_url': artist.profile_photo_url,
+                'profile_photo_thumb_url': artist.profile_photo_thumb_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'user_id': artist.user_id
@@ -1292,7 +1293,7 @@ def get_artwork(artwork_id):
             'email': artist.artist_email,
             'phone': artist.artist_phone,
             'website': artist.artist_site,
-            'profile_photo_url': artist.profile_photo_url,
+            'profile_photo_url': artist.profile_photo_thumb_url or artist.profile_photo_url,
             'bio': artist.artist_bio,
             'user_id': artist.user_id
         } if artist else None,
@@ -1363,7 +1364,7 @@ def list_artists_catalog():
                 'last_name': artist.artist_lname,
                 'email': artist.artist_email,
                 'user_id': artist.user_id,
-                'photo': artist.profile_photo_url
+                'photo': artist.profile_photo_thumb_url or artist.profile_photo_url
             }
             // more artists
         ],
@@ -1395,8 +1396,7 @@ def list_artists_catalog():
                         f"search={search}, medium={medium}, storage_id={storage_id}"
                         f"ordering={ordering}, owned_only={owned_only}")
         app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'auth N/A'}")
-       
-    #   TODO check that this works when I'm signed in as an artist-user profile 
+
         current_user_id = None
         if owned_only:
             if not current_user.is_authenticated:
@@ -1497,7 +1497,7 @@ def list_artists_catalog():
                 'last_name': artist.artist_lname,
                 'email': artist.artist_email,
                 'user_id': artist.user_id,
-                'photo': artist.profile_photo_url
+                'photo': artist.profile_photo_thumb_url or artist.profile_photo_url
             })
 
         # Tells the front end how many pages are needed for the entire query
