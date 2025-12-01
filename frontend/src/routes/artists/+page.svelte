@@ -1,43 +1,38 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { auth } from '$lib/stores/auth';
 
+  // This line is how SvelteKit injects data from the load function in +page.server.js
   export let data;
 
-  let imageErrors = new Set();
-
-  // Helper to get full thumbnail URL
-  const getThumbnailUrl = (thumbnail) => {
-    if (!thumbnail) return null;
-    if (thumbnail.startsWith('http')) return thumbnail;
-    if (!PUBLIC_API_BASE_URL) {
-      console.warn('PUBLIC_API_BASE_URL is not set, image may not load');
-      return null;
-    }
-    return `${PUBLIC_API_BASE_URL}${thumbnail}`;
+  // Takes the artist photo url and generates a thumbnail URL for it
+  const getThumbnailUrl = (artist_photo_url) => {
+    if (!artist_photo_url) return null;
+    if (artist_photo_url.startsWith('http')) return artist_photo_url;
+    return `${PUBLIC_API_BASE_URL}${artist_photo_url}`;
   };
 
-  const handleImageError = (artworkId, event) => {
-    console.error('Image failed to load for artwork:', artworkId, event.target.src);
-    imageErrors = new Set(imageErrors).add(artworkId);
-  };
+  // Helpers to calculate page ranges based on /artists GET pagination results
+  $: pageStart = data.pagination.total_filtered_artists > 0
+    ? (data.pagination.page - 1) * data.pagination.per_page + 1
+    : 0;
 
-  const isImageError = (artworkId) => {
-    return imageErrors.has(artworkId);
-  };
+  $: pageEnd = Math.min(
+    data.pagination.page * data.pagination.per_page,
+    data.pagination.total_filtered_artists
+  );
 
-  // Pagination helper
+  // Keeps query filters in the URL when clicking next or back in pages
   const getPaginationUrl = (page) => {
     const params = new URLSearchParams();
     params.set('page', page.toString());
     if (data.filters.search) params.set('search', data.filters.search);
-    if (data.filters.artistId) params.set('artist_id', data.filters.artistId);
     if (data.filters.medium) params.set('medium', data.filters.medium);
     if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
     if (data.filters.ordering) params.set('ordering', data.filters.ordering);
-    return `/artworks?${params.toString()}`;
+    return `/artists?${params.toString()}`;
   };
 
+  // Helper to auto-submit the form automatically when dropdown is selected
   const handleSelectChange = (event) => {
     event.currentTarget.form?.submit();
   };
@@ -45,58 +40,39 @@
 
 <div class="container">
   <header>
-    <h1>Artworks</h1>
-    {#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
-      <a href="/artworks/new" class="btn-primary">Add New Artwork</a>
-    {/if}
+    <h1>Artists</h1>
   </header>
 
+  <!-- Search form for the Artists page -->
   <form method="GET" class="filters">
     <div class="filter-group">
+      <!-- Keyword search -->
       <label for="search">Search</label>
       <input
         id="search"
         name="search"
         type="search"
         value={data.filters.search}
-        placeholder="Search by title, artist, or medium..."
+        placeholder="Search by name, ID, medium, bio, or location..."
         autocomplete="off"
       />
     </div>
 
     <div class="filter-group">
+      <!-- Drop-down to order artists alphabetically or reverse alphabetically -->
       <label for="ordering">Order</label>
       <select id="ordering" name="ordering" on:change={handleSelectChange}>
-        <option value="title_asc" selected={data.filters.ordering === 'title_asc'}>
+        <option value="name_asc" selected={data.filters.ordering === 'name_asc'}>
           A-Z
         </option>
-        <option value="title_desc" selected={data.filters.ordering === 'title_desc'}>
+        <option value="name_desc" selected={data.filters.ordering === 'name_desc'}>
           Z-A
         </option>
       </select>
     </div>
 
     <div class="filter-group">
-      <label for="artist_id">Artist</label>
-      <select id="artist_id" name="artist_id" on:change={handleSelectChange}>
-        <option value="" selected={!data.filters.artistId}>
-          All artists
-        </option>
-        {#each data.artists as artist}
-          <option
-            value={artist.id}
-            selected={data.filters.artistId === artist.id}
-          >
-            {artist.name} ({artist.id})
-          </option>
-        {/each}
-      </select>
-      {#if data.artistsError}
-        <p class="filter-hint">Unable to load artists: {data.artistsError}</p>
-      {/if}
-    </div>
-
-    <div class="filter-group">
+      <!-- Drop-down to filter by storage location by calling /storage GET endpoint in +page.server.js -->
       <label for="storage_id">Location</label>
       <select id="storage_id" name="storage_id" on:change={handleSelectChange}>
         <option value="" selected={!data.filters.storageId}>
@@ -128,53 +104,40 @@
     </div>
 
     <button type="submit" class="btn-primary">Filter</button>
-    <a href="/artworks" class="btn-secondary">Clear</a>
+    <a href="/artists" class="btn-secondary">Clear</a>
   </form>
 
+  <!-- Render artist grid -->
   {#if data.error}
     <div class="error">{data.error}</div>
-  {:else if data.artworks.length === 0}
-    <p class="no-results">No artworks found.</p>
+  {:else if data.artists.length === 0}
+    <p class="no-results">No artists found.</p>
   {:else}
-    <div class="artwork-grid">
-      {#each data.artworks as artwork}
-        <a href="/artworks/{artwork.id}" class="artwork-card">
-          <div class="artwork-thumbnail">
-            {#if artwork.primary_photo?.thumbnail_url && !isImageError(artwork.id)}
-              {@const thumbnailUrl = getThumbnailUrl(artwork.primary_photo.thumbnail_url)}
-              {#if thumbnailUrl}
-                <img
-                  src={thumbnailUrl}
-                  alt={artwork.title}
-                  on:error={(e) => handleImageError(artwork.id, e)}
-                  on:load={() => {
-                    const newErrors = new Set(imageErrors);
-                    newErrors.delete(artwork.id);
-                    imageErrors = newErrors;
-                  }}
-                />
-              {:else}
-                <div class="no-image">No Image</div>
-              {/if}
+    <div class="artist-grid">
+      {#each data.artists as artist}
+        <a href="/artists/{artist.id}" class="artist-card">
+          <div class="artist-thumbnail">
+            {#if artist.photo}
+              <img
+                src={getThumbnailUrl(artist.photo)}
+                alt={`${artist.first_name} ${artist.last_name}`}
+              />
             {:else}
               <div class="no-image">No Image</div>
             {/if}
           </div>
 
-          <div class="artwork-info">
-            <h3>{artwork.title}</h3>
-            <p class="artwork-id">
-              <code>{artwork.id}</code>
+          <div class="artist-info">
+            <h3>{artist.first_name} {artist.last_name}</h3>
+            <p class="artist-id">
+              <code>{artist.id}</code>
             </p>
-            <p class="artist-name">
-              {artwork.artist?.name || 'Unknown Artist'}
-            </p>
-            {#if artwork.medium}
-              <p class="medium">{artwork.medium}</p>
+            {#if artist.email}
+              <p class="artist-email">{artist.email}</p>
             {/if}
-            {#if artwork.storage?.location}
-              <p class="storage">
-                Storage: {artwork.storage.location}
+            {#if artist.date_created}
+              <p class="artist-created">
+                First recorded artwork: {artist.date_created}
               </p>
             {/if}
           </div>
@@ -182,10 +145,13 @@
       {/each}
     </div>
 
+    <!-- Renders pagination at the bottom of the page -->
     {#if data.pagination}
       <div class="pagination">
         <div class="pagination-info">
-          Showing {data.pagination.total > 0 ? ((data.pagination.page - 1) * data.pagination.per_page) + 1 : 0}–{Math.min(data.pagination.page * data.pagination.per_page, data.pagination.total)} of {data.pagination.total}
+          <!-- Example: if total_filtered_artists = 54, page = 2, and per_page = 20,
+            bottom of the page would display "Showing 21–40 of 54" -->
+          Showing {pageStart}–{pageEnd} of {data.pagination.total_filtered_artists}
         </div>
 
         <div class="pagination-controls">
@@ -324,7 +290,7 @@
     padding: 3rem;
   }
 
-  .artwork-grid {
+  .artist-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 350px));
     gap: 1.5rem;
@@ -332,7 +298,7 @@
     justify-content: center;
   }
 
-  .artwork-card {
+  .artist-card {
     background: var(--bg-tertiary);
     border-radius: 8px;
     overflow: hidden;
@@ -345,12 +311,12 @@
     height: 100%;
   }
 
-  .artwork-card:hover {
+  .artist-card:hover {
     transform: translateY(-4px);
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
   }
 
-  .artwork-thumbnail {
+  .artist-thumbnail {
     width: 100%;
     height: 200px;
     background: var(--bg-secondary);
@@ -360,7 +326,7 @@
     overflow: hidden;
   }
 
-  .artwork-thumbnail img {
+  .artist-thumbnail img {
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -371,22 +337,22 @@
     font-size: 0.875rem;
   }
 
-  .artwork-info {
+  .artist-info {
     padding: 1rem;
   }
 
-  .artwork-info h3 {
+  .artist-info h3 {
     margin: 0 0 0.5rem 0;
     color: var(--text-primary);
     font-size: 1.1rem;
   }
 
-  .artwork-id {
+  .artist-id {
     margin: 0 0 0.5rem 0;
     font-size: 0.75rem;
   }
 
-  .artwork-id code {
+  .artist-id code {
     background: var(--bg-secondary);
     color: var(--accent-color);
     padding: 0.25rem 0.5rem;
@@ -395,19 +361,13 @@
     font-weight: bold;
   }
 
-  .artist-name {
-    color: var(--accent-color);
-    font-weight: 500;
-    margin: 0 0 0.25rem 0;
-  }
-
-  .medium {
+  .artist-email {
     color: var(--text-secondary);
     font-size: 0.875rem;
     margin: 0 0 0.25rem 0;
   }
 
-  .storage {
+  .artist-created {
     color: var(--text-tertiary);
     font-size: 0.75rem;
     margin: 0;
@@ -453,7 +413,7 @@
       gap: 1rem;
     }
 
-    .artwork-grid {
+    .artist-grid {
       grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     }
   }

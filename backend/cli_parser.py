@@ -20,7 +20,7 @@ class CLIParser:
         'artist': {
             'id_field': 'artist_id',
             'id_type': 'CHAR(8)',
-            'fields': ['artist_id', 'artist_fname', 'artist_lname', 'artist_email', 'artist_site', 'artist_bio', 'artist_phone', 'user_id']
+            'fields': ['artist_id', 'artist_fname', 'artist_lname', 'artist_email', 'artist_site', 'profile_photo_url', 'artist_bio', 'artist_phone', 'user_id']
         },
         'artwork': {
             'id_field': 'artwork_num',
@@ -400,4 +400,3 @@ class CLIParser:
         help_info['entity_fields'] = {entity: cls.ENTITIES[entity]['fields'] for entity in cls.ENTITIES}
         
         return help_info
-

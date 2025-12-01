@@ -60,3 +60,6 @@ htmlcov/
 # Ignore assistant guidance documents
 CLAUDE.md
 AGENTS.md
+
+.gemini/
+gha-creds-*.json
