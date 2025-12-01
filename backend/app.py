@@ -20,6 +20,9 @@ from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from utils import sanitize_html
+from upload_utils import process_upload, process_artist_profile_upload
+from upload_utils import FileValidationError, delete_photo_files, sanitize_filename
+from auth import admin_required
 
 load_dotenv()
 
@@ -951,6 +954,12 @@ def delete_artist(artist_id):
 
                 # Delete artwork
                 db.session.delete(artwork)
+
+            if artist.profile_photo_object_key or artist.profile_photo_thumb_object_key:
+                try:
+                    delete_photo_files(artist.profile_photo_object_key, artist.profile_photo_thumb_object_key)
+                except Exception as e:
+                    app.logger.warning(f"Failed to delete artist profile photo files for {artist.artist_id}: {e}")
             
             # Delete artist
             db.session.delete(artist)
@@ -1578,6 +1587,50 @@ def get_artist_details(artist_id):
     }), 200
 
 
+@app.route('/api/artists/<artist_id>/photos', methods=['DELETE'])
+@login_required
+@limiter.limit("10 per minute")
+def delete_artist_profile_photo(artist_id):
+    """Delete an artist's profile photo."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist or artist.is_deleted:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    if not artist.profile_photo_url:
+        return jsonify({'error': 'Photo not found'}), 404
+
+    if not current_user.is_admin and not is_artist_owner(artist):
+        log_rbac_denial('artist_photo', artist_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
+
+    if artist.profile_photo_object_key or artist.profile_photo_thumb_object_key:
+        try:
+            delete_photo_files(artist.profile_photo_object_key, artist.profile_photo_thumb_object_key)
+        except Exception as cleanup_error:
+            app.logger.warning(
+                f"Failed to delete profile photo files for artist {artist_id}: {cleanup_error}"
+            )
+
+    artist.profile_photo_object_key = None
+    artist.profile_photo_thumb_object_key = None
+    artist.profile_photo_url = None
+    artist.profile_photo_thumb_url = None
+    artist.profile_photo_uploaded_at = None
+
+    db.session.commit()
+
+    log_audit_event(
+        'artist_profile_photo_deleted',
+        user_id=current_user.id,
+        email=current_user.email,
+        details={
+            'artist_id': artist_id
+        }
+    )
+
+    return jsonify({'message': 'Profile photo deleted successfully'}), 200
+
+
 @app.route('/api/storage', methods=['GET'])
 def list_storage():
     """List all storage locations for dropdown selection.
@@ -2066,10 +2119,6 @@ def delete_artwork(artwork_id):
 
 
 # Photo Upload Endpoints
-from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
-from auth import admin_required
-
-
 @app.route('/api/artworks/<artwork_id>/photos', methods=['POST'])
 @login_required
 @limiter.limit("20 per minute")
