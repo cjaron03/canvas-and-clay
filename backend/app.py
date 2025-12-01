@@ -11,6 +11,11 @@ from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
 from dotenv import load_dotenv
+
+# IMPORTANT: load_dotenv() MUST be called before importing encryption module
+# because encryption derives the key at module import time from env vars
+load_dotenv()
+
 from sqlalchemy.pool import StaticPool
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -22,8 +27,6 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from utils import sanitize_html
 from encryption import KEY_SOURCE
-
-load_dotenv()
 
 # Check if we're running in a test environment
 def is_test_environment():

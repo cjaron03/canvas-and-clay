@@ -8,7 +8,7 @@ Flask-WTF==1.2.1
 Werkzeug==3.0.6
 psycopg2-binary==2.9.7
 python-dotenv==1.0.0
-cryptography==43.0.3
+cryptography==44.0.1
 pytest==7.4.2
 pytest-cov==4.1.0
 flake8==6.0.0

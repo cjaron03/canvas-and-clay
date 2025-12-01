@@ -36,7 +36,7 @@ def init_tables(db):
         artist_email =  db.Column(EncryptedString(255, normalizer=normalize_email), nullable=True)
         artist_site = db.Column(db.String(100), nullable=True)
         artist_bio = db.Column(db.String(800), nullable=True)
-        artist_phone = db.Column(EncryptedString(32), nullable=True)
+        artist_phone = db.Column(EncryptedString(100), nullable=True)
         is_deleted = db.Column(db.Boolean, default=False, server_default='FALSE', nullable=False)
         date_deleted = db.Column(db.Date, nullable=True)
         user_id = db.Column(db.Integer, db.ForeignKey('users.id',
