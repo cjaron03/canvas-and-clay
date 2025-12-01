@@ -22,6 +22,46 @@ def get_dependencies():
     return db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter
 
 
+def find_user_by_email(email):
+    """Find user by email, handling both encrypted and plaintext storage.
+    
+    This function works around encryption key changes by:
+    1. First trying the standard encrypted query
+    2. If that fails, manually checking all users after decryption
+    
+    Args:
+        email: Normalized email address to search for
+        
+    Returns:
+        User object if found, None otherwise
+    """
+    db, _, User, _, _, _, _ = get_dependencies()
+    
+    # Normalize email for comparison
+    normalized_email = email.strip().lower()
+    
+    # First try the standard query (works if encryption key is consistent)
+    user = User.query.filter_by(email=normalized_email).first()
+    if user:
+        return user
+    
+    # If that fails, manually check all users (handles key changes/plaintext)
+    # This is less efficient but necessary for backward compatibility
+    all_users = User.query.all()
+    for u in all_users:
+        try:
+            # The email field will be automatically decrypted by EncryptedString
+            # If decryption fails, it returns the value as-is (plaintext)
+            user_email = u.email
+            if user_email and user_email.strip().lower() == normalized_email:
+                return u
+        except Exception:
+            # Skip users with invalid email data
+            continue
+    
+    return None
+
+
 def rate_limit(limit):
     """Return a limiter decorator that is disabled when TESTING is enabled."""
     def decorator(func):
@@ -296,7 +336,7 @@ def register():
         return jsonify({'error': error_msg}), 400
     
     # Check for duplicate email
-    existing_user = User.query.filter_by(email=email).first()
+    existing_user = find_user_by_email(email)
     if existing_user:
         return jsonify({'error': 'Email already registered'}), 400
     
@@ -554,8 +594,8 @@ def login():
             'error': 'Account temporarily locked due to too many failed login attempts. Please try again later.'
         }), 403
     
-    # Find user by email
-    user = User.query.filter_by(email=email).first()
+    # Find user by email (handles encryption key changes)
+    user = find_user_by_email(email)
     
     # verify password (or return generic error if user doesn't exist)
     password_valid = False
@@ -754,7 +794,7 @@ def request_password_reset():
             max_len = current_app.config.get('PASSWORD_RESET_MESSAGE_MAX_LENGTH', 500)
             cleaned_message = cleaned_message[:max_len]
 
-    user = User.query.filter_by(email=email).first()
+    user = find_user_by_email(email)
 
     existing_request = PasswordResetRequest.query.filter(
         PasswordResetRequest.email == email,
@@ -815,7 +855,7 @@ def verify_reset_code():
     if len(reset_code) < 4 or len(reset_code) > 64:
         return jsonify({'error': 'Reset code length is invalid'}), 400
 
-    user = User.query.filter_by(email=email).first()
+    user = find_user_by_email(email)
     if not user:
         return jsonify({'error': 'Invalid email or reset code'}), 400
 
@@ -893,7 +933,7 @@ def confirm_password_reset():
     if not is_valid_password:
         return jsonify({'error': password_error}), 400
 
-    user = User.query.filter_by(email=email).first()
+    user = find_user_by_email(email)
     if not user:
         return jsonify({'error': 'Invalid email or reset code'}), 400
 
@@ -1065,7 +1105,7 @@ def change_email():
         return jsonify({'error': 'Password is incorrect'}), 400
     
     # check if email is already in use
-    existing_user = User.query.filter_by(email=new_email).first()
+    existing_user = find_user_by_email(new_email)
     if existing_user and existing_user.id != current_user.id:
         return jsonify({'error': 'Email address is already in use'}), 400
     
