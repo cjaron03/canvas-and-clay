@@ -4265,7 +4265,7 @@ def admin_console_cli():
                 }), 200
         
         # Handle scheduler confirmation flow
-        if parsed_command['action'] in ['start_scheduled_deletion', 'stop_scheduled_deletion']:
+        if parsed_command['action'] in ['start_deletion_scheduler', 'stop_deletion_scheduler']:
             if confirmation_token:
                 # Second confirmation - verify token
                 token_data = _cli_confirmation_tokens.get(confirmation_token)
@@ -4283,14 +4283,6 @@ def admin_console_cli():
                         'output': 'Confirmation token was issued to a different user. Please start over.'
                     }), 403
                 
-                # Verify token matches this delete operation
-                if token_data['entity'] != entity or token_data['entity_id'] != entity_id:
-                    return jsonify({
-                        'success': False,
-                        'error': 'Confirmation token does not match this operation',
-                        'output': 'Confirmation token does not match. Please start over.'
-                    }), 400
-                
                 try: 
                     # Execute start command
                     if parsed_command['action'] == 'start_deletion_scheduler':
@@ -4300,8 +4292,8 @@ def admin_console_cli():
                         result = executor._execute_stop_deletion_scheduler()
 
                     # Remove used token
-                    _cli_confirmation_tokens.pop(confirmation_token, None)
-                    return jsonify(result, 200)
+                   # _cli_confirmation_tokens.pop(confirmation_token, None)
+                    return jsonify(result), 200
                 except CLIExecutionError as e:
                     return jsonify({
                         'success': False,

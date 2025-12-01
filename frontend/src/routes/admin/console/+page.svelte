@@ -1737,6 +1737,7 @@
       const delay = testEasterEgg ? 100 : (500 + Math.random() * 2000); // Faster in test mode
       setTimeout(() => {
         addCLIOutput('greetings, J here', 'info');
+        // McKenna was here 
       }, delay);
     }
   };
