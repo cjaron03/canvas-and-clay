@@ -25,10 +25,12 @@ def get_dependencies():
 def find_user_by_email(email):
     """Find user by email, handling both encrypted and plaintext storage.
 
-    This function works around encryption key changes and plaintext emails by:
+    This function works around encryption key changes by:
     1. First trying the standard encrypted query (O(1) with index)
-    2. If that fails, manually checking all users after decryption
-       (handles cases where emails are stored as plaintext or with different keys)
+    2. If no match, returns None (does NOT scan all users)
+
+    IMPORTANT: If encryption keys have changed, run rotate_encryption_key.py
+    to re-encrypt all user emails with the new key before users can log in.
 
     Args:
         email: Email address to search for
@@ -41,28 +43,11 @@ def find_user_by_email(email):
     # Normalize email for comparison (encryption normalizes too)
     normalized_email = email.strip().lower()
 
-    # First try the standard query - works if encryption key is consistent
+    # Standard query - works if encryption key is consistent
     # The EncryptedString TypeDecorator encrypts the search value too,
     # so this is an index-friendly equality check on ciphertext
     user = User.query.filter_by(email=normalized_email).first()
-    if user:
-        return user
-
-    # If that fails, manually check all users (handles key changes/plaintext)
-    # This is less efficient but necessary for backward compatibility
-    all_users = User.query.all()
-    for u in all_users:
-        try:
-            # The email field will be automatically decrypted by EncryptedString
-            # If decryption fails, it returns the value as-is (plaintext)
-            user_email = u.email
-            if user_email and user_email.strip().lower() == normalized_email:
-                return u
-        except Exception:
-            # Skip users with invalid email data
-            continue
-
-    return None
+    return user
 
 
 def rate_limit(limit):

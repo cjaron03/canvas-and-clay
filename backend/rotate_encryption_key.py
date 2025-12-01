@@ -120,9 +120,17 @@ def _rotate_table(db, table_name, id_column, columns, old_key, new_key,
     Returns:
         tuple: (processed, updated, skipped, errors)
     """
-    total = db.session.execute(
-        db.text(f"SELECT COUNT(*) FROM {table_name}")
-    ).scalar()
+    # Check if table exists
+    try:
+        total = db.session.execute(
+            db.text(f"SELECT COUNT(*) FROM {table_name}")
+        ).scalar()
+    except Exception as e:
+        if 'does not exist' in str(e) or 'UndefinedTable' in str(type(e).__name__):
+            print(f"\n{table_name}: TABLE DOES NOT EXIST (skipping)")
+            db.session.rollback()
+            return 0, 0, 0, 0
+        raise
 
     print(f"\n{table_name}: {total} records")
 
