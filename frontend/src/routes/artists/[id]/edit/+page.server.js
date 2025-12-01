@@ -29,7 +29,27 @@ export const load = async ({ params, fetch }) => {
 
     const artist = await response.json();
 
-    return { artist };
+    let photo = null;
+    try {
+      const photoResponse = await fetch(
+        `${API_BASE_URL}/api/artists/${encodeURIComponent(id)}/photos`,
+        {
+          method: 'GET',
+          headers: { accept: 'application/json' }
+        }
+      );
+
+      if (photoResponse.ok) {
+        const payload = await photoResponse.json();
+        photo = payload.photo ?? null;
+      } else if (photoResponse.status !== 404) {
+        console.warn('Failed to load artist photo metadata:', await photoResponse.text());
+      }
+    } catch (photoErr) {
+      console.warn('Error loading artist photo metadata:', photoErr);
+    }
+
+    return { artist, photo };
   } catch (err) {
     console.error('Failed to load artist edit data:', err);
     if (err.status) {
