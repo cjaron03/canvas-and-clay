@@ -317,7 +317,7 @@
         <label for="artist-site">Website or Social Link</label>
         <input
           id="artist-site"
-          type="url"
+          type="text"
           bind:value={artistSite}
           placeholder="https://example.com"
           disabled={isSubmitting}

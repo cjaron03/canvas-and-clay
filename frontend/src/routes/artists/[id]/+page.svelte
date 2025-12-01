@@ -189,8 +189,8 @@
 
     <div class="info-section">
       <div class="artist-thumbnail">
-        {@const artistPhoto = data.artist.photo_thumbnail || data.artist.photo_url}
-        {#if artistPhoto}
+        {#if data.artist.photo_thumbnail || data.artist.photo_url}
+          {@const artistPhoto = data.artist.photo_thumbnail || data.artist.photo_url}
           <img
             src={getThumbnailUrl(artistPhoto)}
             alt={`${data.artist.artist_fname || ''} ${data.artist.artist_lname || ''}`.trim() || 'Artist thumbnail'}

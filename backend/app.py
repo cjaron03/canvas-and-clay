@@ -22,7 +22,6 @@ from flask_limiter.util import get_remote_address
 from utils import sanitize_html
 from upload_utils import process_upload, process_artist_profile_upload
 from upload_utils import FileValidationError, delete_photo_files, sanitize_filename
-from auth import admin_required
 
 load_dotenv()
 
@@ -594,7 +593,6 @@ def create_artist():
             profile_photo_thumb_url = None,
             profile_photo_object_key = None,
             profile_photo_thumb_object_key = None,
-            profile_photo_uploaded_at = None,
             artist_phone = artist_phone,
             is_deleted = False,
             date_deleted = None,
@@ -2213,6 +2211,7 @@ def delete_artwork(artwork_id):
         app.logger.exception("Artwork deletion failed")
         return jsonify({'error': 'Failed to delete artwork. Please try again.'}), 500
 
+from auth import admin_required
 
 # Photo Upload Endpoints
 @app.route('/api/artworks/<artwork_id>/photos', methods=['POST'])
