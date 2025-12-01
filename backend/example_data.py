@@ -5,25 +5,27 @@
 """
 from app import db
 
+# NOTE: Using synthetic placeholder data - .test TLD is reserved for testing
+# and (555) prefix is reserved for fictional use in North America
 artist_data = [
-    ("A0000001", "Alice", "Astro", "abc123@gmail.com", "aliceastro_23", "I am a painter", "(123)-456-7890"),
-    ("A0000002", "Bob", "Benson", "def456@gmail.com", "bobmakesthings", "Follow my insta", "(098)-765-4321"),
-    ("A0000003", "Cath", "Caine", "cece12@yahoo.com", "cecedraws.com", "I make so much ", "(843)-416-7010"),
-    ("A0000004", "Darla", "Duke", "dduke90@yahoo.com", "darlingdars_22", "I stream all the time! I make sculptures",
-     "(707)-775-4921"),
-    ("A0000005", "Edna", "Eelse", "incredible@yahoo.com", "ednaeelse.net", "Go to my site for more", "(223)-676-7870"),
-    ("A0000006", "Frank", "Frankford", "frank11@gmail.com", "frank890", "I post things on insta", "(998)-554-4321"),
-    ("A0000007", "Gary", "Garrenson", "artist12@gmail.com", "garrenson.gary", "Here is my instagram",
-      "(298)-265-4321"),
-    ("A0000008", "Hary", "Howelle", "hhowelle@comcast.net", "aliceastro_23", "I am a sculpter", "(123)-456-7890"),
-    ("A0000009", "Iris", "Irene", "fluffypuppy@hotmail.com", "aliceastro_23",
-      "I am from LA and am excited to paint!", "(333)-422-7890"),
-    ("A0000010", "Joseph", "Jenkins", "joejenks@gmail.com", "jenkinspaints.com", "I use watercolor", "(707)-706-4121"),
-    ("A0000011", "Karen", "Kain", "karenkaren@gmail.com", "karensmugs_44", "Follow my insta and see my pottery",
-      "(328)-543-4321"),
-    ("A0000012", "Larry", "Lamenson", "llarry@gmail.com", "laryiscool", 
+    ("A0000001", "Alice", "Astro", "alice.astro@example.test", "aliceastro_23", "I am a painter", "(555)-000-0001"),
+    ("A0000002", "Bob", "Benson", "bob.benson@example.test", "bobmakesthings", "Follow my insta", "(555)-000-0002"),
+    ("A0000003", "Cath", "Caine", "cath.caine@example.test", "cecedraws.com", "I make so much ", "(555)-000-0003"),
+    ("A0000004", "Darla", "Duke", "darla.duke@example.test", "darlingdars_22", "I stream all the time! I make sculptures",
+     "(555)-000-0004"),
+    ("A0000005", "Edna", "Eelse", "edna.eelse@example.test", "ednaeelse.net", "Go to my site for more", "(555)-000-0005"),
+    ("A0000006", "Frank", "Frankford", "frank.frankford@example.test", "frank890", "I post things on insta", "(555)-000-0006"),
+    ("A0000007", "Gary", "Garrenson", "gary.garrenson@example.test", "garrenson.gary", "Here is my instagram",
+      "(555)-000-0007"),
+    ("A0000008", "Hary", "Howelle", "hary.howelle@example.test", "aliceastro_23", "I am a sculpter", "(555)-000-0008"),
+    ("A0000009", "Iris", "Irene", "iris.irene@example.test", "aliceastro_23",
+      "I am from LA and am excited to paint!", "(555)-000-0009"),
+    ("A0000010", "Joseph", "Jenkins", "joseph.jenkins@example.test", "jenkinspaints.com", "I use watercolor", "(555)-000-0010"),
+    ("A0000011", "Karen", "Kain", "karen.kain@example.test", "karensmugs_44", "Follow my insta and see my pottery",
+      "(555)-000-0011"),
+    ("A0000012", "Larry", "Lamenson", "larry.lamenson@example.test", "laryiscool",
      "I am a painter on instagram. I am Originally from Texas.",
-      "(723)-021-5987")
+      "(555)-000-0012")
 ]
 artwork_data = [
     #"A0000001"

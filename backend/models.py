@@ -181,7 +181,7 @@ def init_models(database):
 
         id = database.Column(database.Integer, primary_key=True)
         user_id = database.Column(database.Integer, database.ForeignKey('users.id'), nullable=True, index=True)
-        email = database.Column(database.String(254), nullable=False, index=True)
+        email = database.Column(EncryptedString(255, normalizer=normalize_email), nullable=False, index=True)
         status = database.Column(database.String(20), nullable=False, default='pending', index=True)
         user_message = database.Column(database.Text, nullable=True)
         admin_message = database.Column(database.Text, nullable=True)
