@@ -133,11 +133,14 @@ MAX_PASSWORD_RESET_MESSAGE_LENGTH = get_env_int('PASSWORD_RESET_MESSAGE_MAX_LENG
 app = Flask(__name__)
 
 # Log encryption-key status (without exposing key material)
-GREEN = "\033[92m"
-RED = "\033[91m"
-YELLOW = "\033[93m"
-CYAN = "\033[96m"
-RESET = "\033[0m"
+# Disable ANSI colors when NO_COLOR env var is set or output is not a TTY
+# (common in log aggregators like CloudWatch, Datadog, etc.)
+_use_colors = sys.stdout.isatty() and not os.getenv('NO_COLOR')
+GREEN = "\033[92m" if _use_colors else ""
+RED = "\033[91m" if _use_colors else ""
+YELLOW = "\033[93m" if _use_colors else ""
+CYAN = "\033[96m" if _use_colors else ""
+RESET = "\033[0m" if _use_colors else ""
 
 ASCII_LOGO = r"""
  ####   ###   #   #  #   #   ###    ####
@@ -4544,10 +4547,14 @@ def ensure_bootstrap_admin():
                     db.session.add(admin_user)
                     db.session.commit()
                     print(f"created bootstrap admin: {bootstrap_email}")
-                except Exception:
+                except Exception as create_err:
                     db.session.rollback()
-                    # likely unique constraint hit in concurrent startup; ignore
-                    print("bootstrap admin already exists, skipping create")
+                    # Check if it's a unique constraint violation (concurrent startup)
+                    err_str = str(create_err).lower()
+                    if 'unique' in err_str or 'duplicate' in err_str:
+                        print("bootstrap admin already exists, skipping create")
+                    else:
+                        print(f"failed to create bootstrap admin: {create_err}")
     except Exception as e:
         # silently fail if database isn't ready yet (e.g., during migrations)
         # this is expected during initial setup

@@ -1,8 +1,15 @@
 #!/usr/bin/env python
 """Re-encrypt all PII data with a new encryption key.
 
-This script migrates encrypted User.email values from an old encryption key
+This script migrates all encrypted PII fields from an old encryption key
 to a new one. Use this when rotating keys due to compromise or policy.
+
+ENCRYPTED TABLES/COLUMNS
+========================
+    - users.email
+    - artists.artist_email
+    - artists.artist_phone
+    - password_reset_requests.email
 
 USAGE
 =====
@@ -45,7 +52,7 @@ from hashlib import sha256
 # Ensure we can import from parent directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
@@ -95,15 +102,101 @@ def normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
+def _rotate_table(db, table_name, id_column, columns, old_key, new_key,
+                  dry_run, batch_size, verbose):
+    """Rotate encryption for columns in a single table.
+
+    Args:
+        db: SQLAlchemy database instance
+        table_name: Name of the table to process
+        id_column: Name of the primary key column
+        columns: List of (column_name, normalizer_or_none) tuples
+        old_key: Old encryption key bytes
+        new_key: New encryption key bytes
+        dry_run: If True, don't commit changes
+        batch_size: Records per transaction
+        verbose: Print per-record details
+
+    Returns:
+        tuple: (processed, updated, skipped, errors)
+    """
+    total = db.session.execute(
+        db.text(f"SELECT COUNT(*) FROM {table_name}")
+    ).scalar()
+
+    print(f"\n{table_name}: {total} records")
+
+    processed = 0
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    offset = 0
+    while offset < total:
+        rows = db.session.execute(
+            db.text(f"SELECT {id_column} FROM {table_name} ORDER BY {id_column} LIMIT :limit OFFSET :offset"),
+            {"limit": batch_size, "offset": offset}
+        ).fetchall()
+
+        if not rows:
+            break
+
+        for (record_id,) in rows:
+            processed += 1
+            record_updated = False
+            try:
+                for col_name, normalizer in columns:
+                    raw_value = db.session.execute(
+                        db.text(f"SELECT {col_name} FROM {table_name} WHERE {id_column} = :id"),
+                        {"id": record_id}
+                    ).scalar()
+
+                    if raw_value is None:
+                        continue
+
+                    plaintext = decrypt_with_key(raw_value, old_key)
+                    new_ciphertext = encrypt_with_key(plaintext, new_key, normalizer)
+
+                    if raw_value == new_ciphertext:
+                        continue
+
+                    if verbose:
+                        masked = plaintext[:3] + "***" + plaintext[-10:] if len(plaintext) > 13 else "***"
+                        print(f"  [UPDATE] {table_name}.{col_name} id={record_id}: {masked}")
+
+                    if not dry_run:
+                        db.session.execute(
+                            db.text(f"UPDATE {table_name} SET {col_name} = :val WHERE {id_column} = :id"),
+                            {"val": new_ciphertext, "id": record_id}
+                        )
+                    record_updated = True
+
+                if record_updated:
+                    updated += 1
+                else:
+                    skipped += 1
+
+            except Exception as e:
+                errors += 1
+                print(f"  [ERROR] {table_name} id={record_id}: {e}")
+
+        if not dry_run:
+            db.session.commit()
+            print(f"  Committed {table_name} batch: {offset + 1}-{min(offset + batch_size, total)}")
+
+        offset += batch_size
+
+    return processed, updated, skipped, errors
+
+
 def rotate_keys(dry_run: bool = True, batch_size: int = 100, verbose: bool = False):
-    """Rotate encryption keys for all User.email values.
+    """Rotate encryption keys for all encrypted PII columns.
 
     Args:
         dry_run: If True, preview changes without committing
-        batch_size: Number of users to process per transaction
-        verbose: If True, print details for each user
+        batch_size: Number of records to process per transaction
+        verbose: If True, print details for each record
     """
-    # Validate environment
     old_key = derive_key_from_env("OLD_PII_ENCRYPTION_KEY")
     new_key = derive_key_from_env("PII_ENCRYPTION_KEY")
 
@@ -116,91 +209,44 @@ def rotate_keys(dry_run: bool = True, batch_size: int = 100, verbose: bool = Fal
     print("=" * 60)
     print(f"Mode: {'DRY RUN (no changes will be saved)' if dry_run else 'LIVE'}")
     print(f"Batch size: {batch_size}")
-    print()
 
-    # Import Flask app and models
     from app import app, db
-    from models import init_models
 
-    User, _, _ = init_models(db)
+    # Define all tables with encrypted columns
+    # Format: (table_name, id_column, [(column_name, normalizer_or_none), ...])
+    tables_to_rotate = [
+        ("users", "id", [("email", normalize_email)]),
+        ("artists", "artist_id", [
+            ("artist_email", normalize_email),
+            ("artist_phone", None),
+        ]),
+        ("password_reset_requests", "id", [("email", normalize_email)]),
+    ]
 
     with app.app_context():
-        total_users = User.query.count()
-        print(f"Total users to process: {total_users}")
-        print()
+        total_processed = 0
+        total_updated = 0
+        total_skipped = 0
+        total_errors = 0
 
-        processed = 0
-        updated = 0
-        skipped = 0
-        errors = 0
-
-        # Process in batches
-        offset = 0
-        while offset < total_users:
-            users = User.query.order_by(User.id).offset(offset).limit(batch_size).all()
-            if not users:
-                break
-
-            for user in users:
-                processed += 1
-                try:
-                    # Get the raw encrypted value from the database
-                    # We need to bypass the TypeDecorator to get raw ciphertext
-                    raw_email = db.session.execute(
-                        db.text("SELECT email FROM users WHERE id = :id"),
-                        {"id": user.id}
-                    ).scalar()
-
-                    if raw_email is None:
-                        skipped += 1
-                        if verbose:
-                            print(f"  [SKIP] User {user.id}: No email")
-                        continue
-
-                    # Decrypt with old key
-                    plaintext = decrypt_with_key(raw_email, old_key)
-
-                    # Re-encrypt with new key
-                    new_ciphertext = encrypt_with_key(plaintext, new_key, normalize_email)
-
-                    # Check if already using new key (idempotent)
-                    if raw_email == new_ciphertext:
-                        skipped += 1
-                        if verbose:
-                            print(f"  [SKIP] User {user.id}: Already using new key")
-                        continue
-
-                    if verbose:
-                        # Mask email for privacy
-                        masked = plaintext[:3] + "***" + plaintext[-10:] if len(plaintext) > 13 else "***"
-                        print(f"  [UPDATE] User {user.id}: {masked}")
-
-                    if not dry_run:
-                        db.session.execute(
-                            db.text("UPDATE users SET email = :email WHERE id = :id"),
-                            {"email": new_ciphertext, "id": user.id}
-                        )
-
-                    updated += 1
-
-                except Exception as e:
-                    errors += 1
-                    print(f"  [ERROR] User {user.id}: {e}")
-
-            if not dry_run:
-                db.session.commit()
-                print(f"  Committed batch: {offset + 1}-{min(offset + batch_size, total_users)}")
-
-            offset += batch_size
+        for table_name, id_col, columns in tables_to_rotate:
+            p, u, s, e = _rotate_table(
+                db, table_name, id_col, columns,
+                old_key, new_key, dry_run, batch_size, verbose
+            )
+            total_processed += p
+            total_updated += u
+            total_skipped += s
+            total_errors += e
 
         print()
         print("=" * 60)
         print("SUMMARY")
         print("=" * 60)
-        print(f"Total processed: {processed}")
-        print(f"Updated: {updated}")
-        print(f"Skipped: {skipped}")
-        print(f"Errors: {errors}")
+        print(f"Total processed: {total_processed}")
+        print(f"Updated: {total_updated}")
+        print(f"Skipped: {total_skipped}")
+        print(f"Errors: {total_errors}")
 
         if dry_run:
             print()
