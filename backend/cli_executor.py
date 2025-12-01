@@ -378,8 +378,8 @@ class CLIExecutor:
             start_result = start_deletion_scheduler()  # your existing function
             return {
                 "success": True,
-                "output": start_result if isinstance(result, str) else "Deletion Scheduler started/skipped",
-                "data": {"scheduler": str(scheduler)} if scheduler else None,
+                "output": start_result["message"],
+                "data": None,
                 "requires_confirmation": False
             }
         except Exception as e:
@@ -397,7 +397,7 @@ class CLIExecutor:
             stop_result = stop_deletion_scheduler()  # your existing function
             return {
                 "success": True,
-                "output": stop_result if isinstance(result, str) else "Deletion Scheduler stopped/skipped",
+                "output": stop_result["message"],
                 "data": None,
                 "requires_confirmation": False
             }

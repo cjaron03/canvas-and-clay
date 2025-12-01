@@ -327,7 +327,7 @@ class TestScheduler:
         with caplog.at_level("INFO"):
             start_deletion_scheduler()
 
-        assert any("skipping start" in record.message for record in caplog.records)
+        assert any("Skipping" in r.message for r in caplog.records)
        
 
     def test_scheduler_stop(self, caplog):

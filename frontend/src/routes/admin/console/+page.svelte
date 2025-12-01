@@ -777,6 +777,7 @@
         const data = await resp.json();
         csrf = data.csrf_token;
         // Update store token without touching user state
+        //auth.update({ csrfToken: csrf });
         auth.init(); // keep auth refreshed; token will be preserved now
       }
     } catch (err) {
@@ -1467,18 +1468,15 @@
 
     try {
       // Ensure CSRF token is loaded
-      if (!$auth.csrfToken) {
-        await auth.init();
-      }
-      
+      const csrfToken = await ensureCsrfToken();
+
       const headers = {
         'Content-Type': 'application/json',
         accept: 'application/json'
       };
-      
-      // Add CSRF token if available
-      if ($auth.csrfToken) {
-        headers['X-CSRFToken'] = $auth.csrfToken;
+
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
       }
       
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/cli`, {
