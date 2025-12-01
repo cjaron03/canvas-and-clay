@@ -23,6 +23,9 @@ THUMBNAIL_SIZE = (200, 200)  # Thumbnail dimensions
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), 'uploads')
 ARTWORKS_DIR = os.path.join(UPLOAD_DIR, 'artworks')
 THUMBNAILS_DIR = os.path.join(UPLOAD_DIR, 'thumbnails')
+ARTIST_PROFILE_DIR = os.path.join(UPLOAD_DIR, 'artist_profiles')
+ARTIST_PROFILE_THUMBNAILS_DIR = os.path.join(UPLOAD_DIR, 'artist_profile_thumbnails')
+ARTIST_PROFILE_THUMBNAIL_SIZE = (200, 200)
 
 # Allowed MIME types and their magic byte signatures
 ALLOWED_MIME_TYPES = {
@@ -237,7 +240,7 @@ def get_save_options(mime_type, is_thumbnail=False):
         return {'optimize': True}
 
 
-def generate_thumbnail(image, thumbnail_path, mime_type):
+def generate_thumbnail(image, thumbnail_path, mime_type, size=THUMBNAIL_SIZE):
     """Generate a thumbnail from an image.
 
     Args:
@@ -252,7 +255,7 @@ def generate_thumbnail(image, thumbnail_path, mime_type):
     thumbnail = image.copy()
 
     # Use LANCZOS resampling for high-quality thumbnails
-    thumbnail.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+    thumbnail.thumbnail(size, Image.Resampling.LANCZOS)
 
     # Convert RGBA to RGB if saving as JPEG (JPEG doesn't support transparency)
     if thumbnail.mode == 'RGBA' and mime_type == 'image/jpeg':
@@ -270,7 +273,14 @@ def generate_thumbnail(image, thumbnail_path, mime_type):
     return thumbnail.size
 
 
-def process_upload(file_data, original_filename):
+def process_upload(
+    file_data,
+    original_filename,
+    output_dir=None,
+    thumbnail_dir=None,
+    thumbnail_size=None,
+    filename_prefix=''
+):
     """Process an uploaded file with full security validation.
 
     This function:
@@ -323,27 +333,37 @@ def process_upload(file_data, original_filename):
     # Validate dimensions
     validate_image_dimensions(image)
 
+    output_dir = output_dir or ARTWORKS_DIR
+    thumbnail_dir = thumbnail_dir or THUMBNAILS_DIR
+    thumbnail_size = thumbnail_size or THUMBNAIL_SIZE
+
     # Generate unique photo ID
     photo_id = generate_unique_id()
 
     # Get file extension from MIME type
     extension = MIME_TO_EXTENSION.get(mime_type, '.jpg')
 
+    # Apply optional filename prefix before unique suffix for easier tracing
+    base_filename = safe_filename
+    if filename_prefix:
+        name, ext = os.path.splitext(safe_filename)
+        base_filename = f"{filename_prefix}_{name}{ext}"
+
     # Generate unique filenames
-    unique_filename = f"{photo_id}_{safe_filename}"
+    unique_filename = f"{photo_id}_{base_filename}"
     if not unique_filename.endswith(extension):
         # Ensure correct extension
         base_name = os.path.splitext(unique_filename)[0]
         unique_filename = f"{base_name}{extension}"
 
     # Create full paths
-    artwork_path = os.path.join(ARTWORKS_DIR, unique_filename)
+    artwork_path = os.path.join(output_dir, unique_filename)
     thumbnail_filename = f"thumb_{unique_filename}"
-    thumbnail_path = os.path.join(THUMBNAILS_DIR, thumbnail_filename)
+    thumbnail_path = os.path.join(thumbnail_dir, thumbnail_filename)
 
     # Ensure upload directories exist
-    os.makedirs(ARTWORKS_DIR, exist_ok=True)
-    os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(thumbnail_dir, exist_ok=True)
 
     # Re-encode the image (strips EXIF and other metadata, prevents exploits)
     try:
@@ -360,7 +380,7 @@ def process_upload(file_data, original_filename):
         image.save(artwork_path, **save_options)
 
         # Generate thumbnail
-        thumbnail_size = generate_thumbnail(image, thumbnail_path, mime_type)
+        generate_thumbnail(image, thumbnail_path, mime_type, size=thumbnail_size)
 
         # Get actual file size after re-encoding
         actual_file_size = os.path.getsize(artwork_path)
@@ -374,11 +394,15 @@ def process_upload(file_data, original_filename):
         raise FileValidationError(f"Failed to process image: {str(e)}")
 
     # Return metadata
+    base_dir = os.path.dirname(__file__)
+    file_path_relative = os.path.relpath(artwork_path, base_dir)
+    thumbnail_path_relative = os.path.relpath(thumbnail_path, base_dir)
+
     return {
         'photo_id': photo_id,
         'filename': safe_filename,
-        'file_path': f"uploads/artworks/{unique_filename}",
-        'thumbnail_path': f"uploads/thumbnails/{thumbnail_filename}",
+        'file_path': file_path_relative.replace('\\', '/'),
+        'thumbnail_path': thumbnail_path_relative.replace('\\', '/'),
         'file_size': actual_file_size,
         'mime_type': mime_type,
         'width': image.width,
@@ -421,3 +445,14 @@ def delete_photo_files(file_path, thumbnail_path):
     return photo_deleted, thumbnail_deleted
 
 
+def process_artist_profile_upload(file_data, original_filename, artist_id):
+    """Process an artist profile photo upload and store it in dedicated directories."""
+    prefix = f"{artist_id}_profile"
+    return process_upload(
+        file_data,
+        original_filename,
+        output_dir=ARTIST_PROFILE_DIR,
+        thumbnail_dir=ARTIST_PROFILE_THUMBNAILS_DIR,
+        thumbnail_size=ARTIST_PROFILE_THUMBNAIL_SIZE,
+        filename_prefix=prefix
+    )
