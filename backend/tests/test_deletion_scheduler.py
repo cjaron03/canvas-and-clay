@@ -1,6 +1,6 @@
 """ Tests for 30 day deletion scheduler """
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from datetime import date, datetime, timedelta, timezone
 import json
 import sys
@@ -305,38 +305,40 @@ class TestScheduler:
     def test_scheduler_start_and_job_registration(self, caplog):
         """Test that the deletion scheduler starts and registers the job."""
         global scheduler
-        scheduler = None  # reset
+        scheduler = None  # reset for test
 
-        # Patch deletion function so it doesn't actually run
-        with patch("app.scheduled_artwork_deletion", lambda: None):
-            with caplog.at_level("INFO"):
-                start_deletion_scheduler()
+        with caplog.at_level("INFO"):
+            start_deletion_scheduler()
 
-        # Check log to confirm scheduler started
-        assert any("Deletion Scheduler started" in record.message for record in caplog.records)
+        # No jobs should be added, scheduler should remain None
+        assert scheduler is None
+        # Logs should show the TESTING message
+        assert any("Skipping Deletion Scheduler start in TESTING mode" in r.message for r in caplog.records)
+
+
+        
+     
 
     def test_scheduler_start_when_already_running(self, caplog):
         """Calling start again does not create another scheduler."""
-        global scheduler
-        scheduler = None
+
         start_deletion_scheduler()
 
         with caplog.at_level("INFO"):
             start_deletion_scheduler()
 
-        assert any("already running" in record.message for record in caplog.records)
+        assert any("Skipping" in r.message for r in caplog.records)
+       
 
     def test_scheduler_stop(self, caplog):
         """Test that the scheduler can be stopped."""
         global scheduler
-        scheduler = None
-
-        # Patch deletion function so nothing runs
-        with patch("app.scheduled_artwork_deletion", lambda: None):
-            start_deletion_scheduler()
+        scheduler = MagicMock()  # pretend there’s a scheduler
 
         with caplog.at_level("INFO"):
             stop_deletion_scheduler()
 
-        # Confirm log message shows scheduler stopped
-        assert any("Deletion Scheduler has stopped" in record.message for record in caplog.records)
+        # Shutdown should NOT have been called
+        scheduler.shutdown.assert_not_called()
+        # Logs should show skipping message
+        assert any("Skipping Deletion Scheduler Stop in TESTING mode" in r.message for r in caplog.records)

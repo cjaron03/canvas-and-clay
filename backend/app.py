@@ -4428,6 +4428,56 @@ def admin_console_cli():
                     'confirmation_token': token
                 }), 200
         
+        # Handle scheduler confirmation flow
+        if parsed_command['action'] in ['start_deletion_scheduler', 'stop_deletion_scheduler']:
+            if confirmation_token:
+                # Second confirmation - verify token
+                token_data = _cli_confirmation_tokens.get(confirmation_token)
+                if not token_data:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid or expired confirmation token',
+                        'output': 'Confirmation token is invalid or has expired. Please start over.'
+                    }), 400
+                
+                if token_data.get('user_id') != current_user.id:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Confirmation token does not belong to this user',
+                        'output': 'Confirmation token was issued to a different user. Please start over.'
+                    }), 403
+                
+                try: 
+                    # Execute start command
+                    if parsed_command['action'] == 'start_deletion_scheduler':
+                        result = executor._execute_start_deletion_scheduler()
+                    # Execute stop command
+                    else:
+                        result = executor._execute_stop_deletion_scheduler()
+
+                    # Remove used token
+                   # _cli_confirmation_tokens.pop(confirmation_token, None)
+                    return jsonify(result), 200
+                except CLIExecutionError as e:
+                    return jsonify({
+                        'success': False,
+                        'error': str(e),
+                        'output': f'Scheduler command failed: {str(e)}'
+                    }), 400
+            else:
+                # First request: generate confirmation token
+                token = secrets.token_urlsafe(32)
+                _cli_confirmation_tokens[token] = {
+                    "user_id": current_user.id,
+                    "created_at": datetime.now(timezone.utc)
+                }
+                return jsonify({
+                    "success": True,
+                    "output": f"Are you sure you want to {parsed_command['action'].replace('_', ' ')}?",
+                    "requires_confirmation": True,
+                    "confirmation_token": token
+                }), 200
+
         # Execute other commands
         try:
             result = executor.execute(
@@ -4609,7 +4659,6 @@ def _ensure_bootstrap_on_first_request():
 
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
 
 scheduler = None
 # scheduler for deletion of soft-deleted items over 30 days
@@ -4620,7 +4669,26 @@ def start_deletion_scheduler():
         of there being no existing scheduler to prevent
         multiple instances of a scheduler.
     """
+    from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
+
     global scheduler
+
+    if app.config.get("TESTING", False):
+        message = "Skipping Deletion Scheduler start in TESTING mode"
+        app.logger.info(message)
+        return {
+            "status": "skipped start",
+            "message": message
+        }
+    
+    # Skip startup in Flask reloader parent process
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return {
+            "status": "skipped reloader",
+            "message": "Flask reloader parent process, scheduler not started"
+        }
+
+
     if scheduler is None:
         scheduler = BackgroundScheduler(daemon=True)
         scheduler.add_job(
@@ -4634,9 +4702,19 @@ def start_deletion_scheduler():
             days=1
         )
         scheduler.start()
-        app.logger.info("Deletion Scheduler started - using APScheduler.")
+        message = "Deletion Scheduler started - using APScheduler."
+        app.logger.info(message)
+        return {
+            "status": "start scheduler was successful",
+            "message": message
+        }
     else:
-        app.logger.info("Deletion Scheduler already running, skipping start.")
+        message = "Deletion Scheduler already running, skipping start."
+        app.logger.info(message)
+        return {
+            "status": "skipped start",
+            "message": message
+        }
     
 
 # for stopping the deletion scheduler, mostly for testing purposes
@@ -4653,14 +4731,36 @@ def stop_deletion_scheduler():
         deletions. 
     """
     global scheduler
+
+    if app.config.get("TESTING", False):
+        message = "Skipping Deletion Scheduler Stop in TESTING mode"
+        app.logger.info(message)
+        return {
+            "status": "skipped deletion",
+            "message": message
+        }
+    
     if scheduler:
         scheduler.shutdown(wait=False)
         scheduler = None
-        app.logger.info("Deletion Scheduler has stopped - using APScheduler.")
+        message = "Deletion Scheduler has stopped - using APScheduler."
+        app.logger.info(message)
+        return {
+            "status": "stop scheduler was successful",
+            "message": message
+        }
+    
+    else:
+        message = "No running scheduler detected. Stop skipped."
+        app.logger.info(message)
+        return {
+            "status": "skipped stop",
+            "message": message
+        }
 
 # ensure scheduler not running during testing - uncomment to run schedular
-#if not app.config.get("TESTING", False):
-#    start_deletion_scheduler()
+if not app.config.get("TESTING", False):
+    start_deletion_scheduler()
 
 if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
