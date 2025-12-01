@@ -333,6 +333,7 @@ def enforce_session_token():
 
 # Register blueprints
 from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event
+from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -525,6 +526,7 @@ def create_artist():
         artist_lname (str, required): Artist last name
         email        (str, optional): Artist email
         artist_site  (str, optional): Artist website or social media
+        profile_photo_url (str, optional): Public photo URL to display for the artist
         artist_bio   (str, optional): Artist biography/description
         artist_phone (str, optional): Artist phone number - must be formatted as 
                                                            (123)-456-7890
@@ -722,6 +724,11 @@ def update_artist(artist_id):
         changes['artist_site'] = {'old': artist.artist_site, 'new': data['artist_site']}
         artist.artist_site = data['artist_site']
     
+    # Update profile photo url
+    if 'profile_photo_url' in data and data['profile_photo_url'] != artist.profile_photo_url:
+        changes['profile_photo_url'] = {'old': artist.profile_photo_url, 'new': data['profile_photo_url']}
+        artist.profile_photo_url = data['profile_photo_url']
+
     # Update artist bio
     if 'artist_bio' in data and data['artist_bio'] != artist.artist_bio:
         changes['artist_bio'] = {'old': artist.artist_bio, 'new': data['artist_bio']}
@@ -1322,6 +1329,8 @@ def get_artwork(artwork_id):
     }), 200
 
 
+@app.route('/api/artists_dropdown', methods=['GET'])
+def list_artists_dropdown():
 @app.route('/api/artists_dropdown', methods=['GET'])
 def list_artists_dropdown():
     """List all artists for dropdown selection.
