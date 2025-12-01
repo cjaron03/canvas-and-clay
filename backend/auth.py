@@ -102,30 +102,29 @@ def get_current_role():
 
 
 def is_artwork_owner(artwork):
-    """Check if the current user owns the given artwork via Artist.user_id.
-
-    Args:
-        artwork: Artwork object to check ownership of
-
-    Returns:
-        bool: True if current user owns the artwork, False otherwise
-    """
+    """Check if the current user owns the given artwork via Artist.user_id."""
     if not current_user.is_authenticated:
         return False
 
     try:
-        # Get the artist associated with this artwork
         from app import db, Artist
         artist = db.session.get(Artist, artwork.artist_id)
 
         if not artist:
             return False
 
-        # Check if artist is linked to current user
-        if artist.user_id and artist.user_id == current_user.id:
-            return True
-
+        return artist.user_id and str(artist.user_id) == str(current_user.id)
+    except Exception:
         return False
+
+
+def is_artist_owner(artist):
+    """Check if the current user owns the given artist record."""
+    if not current_user.is_authenticated or artist is None:
+        return False
+
+    try:
+        return artist.user_id and str(artist.user_id) == str(current_user.id)
     except Exception:
         return False
 
