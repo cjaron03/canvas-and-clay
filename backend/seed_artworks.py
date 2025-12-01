@@ -2,6 +2,8 @@
 from datetime import date
 from app import app, db, Artist, Artwork, Storage
 
+# NOTE: Using synthetic placeholder data - .test TLD is reserved for testing (RFC 2606)
+
 
 def upsert_storage(storage_id, loc, storage_type):
     storage = db.session.get(Storage, storage_id)
@@ -49,9 +51,9 @@ def seed():
     ]
 
     artists = [
-        ("ARTS0001", "Alicia", "Nguyen", "alicia@example.com", None, "Mixed media painter focused on texture."),
-        ("ARTS0002", "David", "Morales", "david@example.com", None, "Photographer exploring urban light."),
-        ("ARTS0003", "Priya", "Kumar", "priya@example.com", None, "Watercolor studies of coastal life."),
+        ("ARTS0001", "Alicia", "Nguyen", "alicia.nguyen@example.test", None, "Mixed media painter focused on texture."),
+        ("ARTS0002", "David", "Morales", "david.morales@example.test", None, "Photographer exploring urban light."),
+        ("ARTS0003", "Priya", "Kumar", "priya.kumar@example.test", None, "Watercolor studies of coastal life."),
     ]
 
     artworks = [
