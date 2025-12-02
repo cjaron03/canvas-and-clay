@@ -201,10 +201,7 @@
       emailSuccess = data.message || 'Email updated successfully';
       // update auth store with new email
       if (data.user) {
-        auth.update((state) => ({
-          ...state,
-          user: { ...state.user, email: data.user.email }
-        }));
+        auth.updateUser({ email: data.user.email });
       }
       newEmail = '';
       emailPassword = '';
