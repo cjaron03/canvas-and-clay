@@ -49,7 +49,7 @@
         {/if}
     {/if}  
 {:else}
-    <p>No artworks available for display</p>
+    <p>No artworks available for display: {data.error}</p>
 {/if}
 
 <style>
