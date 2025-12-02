@@ -12,10 +12,10 @@
     };
 
     function nextArtwork(){
-        currArtIndex = (currArtIndex - 1 + data.artworks.length) % data.artworks.length;
+        currArtIndex = (currArtIndex + 1) % data.artworks.length;
     }
     function prevArtwork(){
-        currArtIndex = (currArtIndex + 1) % data.artworks.length;
+        currArtIndex = (currArtIndex - 1 + data.artworks.length) % data.artworks.length;
     }
     
 </script>
@@ -49,7 +49,7 @@
         {/if}
     {/if}  
 {:else}
-    <p>fetch did not work</p>
+    <p>No artworks available for display</p>
 {/if}
 
 <style>
