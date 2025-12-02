@@ -7,7 +7,7 @@ set -e
 echo "waiting for database to be ready..."
 
 # wait for postgres to be ready
-while ! flask db current 2>&1; do
+while ! flask db current >/dev/null 2>&1; do
   echo "database not ready, waiting..."
   sleep 2
 done
