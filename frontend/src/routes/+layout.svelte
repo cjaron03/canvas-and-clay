@@ -62,7 +62,7 @@ import { page } from '$app/stores';
 			{#if $auth.isAuthenticated && $auth.user?.role === 'artist'}
 				<a href="/my-artworks" class:active={$page.url.pathname.startsWith('/my-artworks')}>My Artworks</a>
 			{/if}
-			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
+			{#if $auth.isAuthenticated && ($auth.user?.role === 'admin' || $auth.user?.role === 'artist')}
 				<a href="/uploads" class:active={$page.url.pathname === '/uploads'}>Uploads</a>
 			{/if}
 			{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
