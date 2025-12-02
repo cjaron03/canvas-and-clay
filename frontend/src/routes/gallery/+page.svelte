@@ -82,6 +82,7 @@
 
     .artwork_image {
         display: flex;
+        width: 95%;
         justify-content: center;
         align-items: center;
     }
@@ -97,6 +98,8 @@
         width: 8rem;
         border: 0.15rem solid var(--border-color);
         border-radius: 1rem;
+        color: white;
+        text-decoration: none;
         background-color: var(--accent-color);
         cursor: pointer;
     }

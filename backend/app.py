@@ -1559,6 +1559,20 @@ def create_artwork():
     if not artist:
         return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
 
+   
+    # Authorization: admins can create any; artists can create only for their linked artist record
+    if not current_user.is_admin:
+        if current_user.normalized_role != 'artist':
+            log_rbac_denial('artwork', 'create', 'insufficient_role')
+            return jsonify({'error': 'Permission denied'}), 403
+        if not artist.user_id or str(artist.user_id) != str(current_user.id):
+            log_rbac_denial('artwork', 'create', 'not_owner')
+            return jsonify({'error': 'You can only create artworks for your own artist profile'}), 403
+
+    # Verify artist is not deleted
+    if artist.is_deleted:
+        return jsonify({'error': f'Artist is deleted: {data["artist_id"]}'}), 404
+    
     # Verify storage exists
     storage = db.session.get(Storage, data['storage_id'])
     if not storage:
@@ -1678,6 +1692,15 @@ def update_artwork(artwork_id):
     artwork = db.session.get(Artwork, artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
+    
+    # Verify artwork is not deleted
+    if artwork.is_deleted:
+        return jsonify({'error': 'Artwork is deleted'}), 404
+
+    # Check permissions: admin or artwork owner
+    if not current_user.is_admin and not is_artwork_owner(artwork):
+        log_rbac_denial('artwork', artwork_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
 
     data = request.get_json()
     if not data:
@@ -1693,7 +1716,7 @@ def update_artwork(artwork_id):
 
     # Update artist
     if 'artist_id' in data and data['artist_id'] != artwork.artist_id:
-        artist = Artist.query.get(data['artist_id'])
+        artist = db.session.get(Artist, data['artist_id'])
         if not artist:
             return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
         
@@ -1785,160 +1808,6 @@ def update_artwork(artwork_id):
 @app.route('/api/artworks/<artwork_id>/restore', methods=['PUT'])
 @login_required
 @admin_required
-def restore_deleted_artwork(artwork_id):
-    """ Restores a SOFT deleted artwork
-        - hard deletions will not be able to be restored
-        - will change date_deleted back to None
-    Security:
-        - Requires authentication
-        - Requires admin role
-        - Audit logged
-    Args:
-        - artwork_id: The artwork ID to be restored
-
-    Returns:
-        200: Artwork restored successfully
-        403: Permisison denied
-        404: Artwork not found, artwork is not deleted
-    """
-    # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
-    if not artwork:
-        return jsonify({'error': 'Artwork not found'}), 404
-    
-    # Verify artwork is currently deleted
-    if not artwork.is_deleted:
-        return jsonify({'error': 'Artwork is not deleted'}), 404
-    
-    try:
-        # restoring soft deleted artwork
-        artwork.is_deleted = False
-        artwork.date_deleted = None
-
-        artwork_title = artwork.artwork_ttl
-        artist_id = artwork.artist_id
-        is_deleted = artwork.is_deleted
-        date_deleted = artwork.date_deleted
-        db.session.commit()
-
-        # audit restoration
-        audit_log = AuditLog(
-            user_id=current_user.id,
-            email=current_user.email,
-            event_type='deleted_artwork_restored',
-            ip_address=request.remote_addr,
-            user_agent=request.headers.get('User-Agent', 'Unknown'),
-            details=json.dumps({
-                'artwork_id': artwork_id,
-                'title': artwork_title,
-                'artist_id': artist_id,
-                'is_deleted': is_deleted,
-                'date_deleted': date_deleted
-            })
-        )
-
-        db.session.add(audit_log)
-        db.session.commit()
-
-        app.logger.info(f"Admin {current_user.email} restored artwork {artwork_id}")
-
-        return jsonify({
-            'message': 'Deleted artwork restored successfully',
-            'restored': {
-                'artwork_id': artwork_id,
-                'title': artwork_title,
-                'artist_id': artist_id,
-                'is_deleted': is_deleted,
-                'date_deleted': date_deleted
-            }
-        }), 200
-
-    except Exception as e:
-        db.session.rollback()
-        app.logger.exception("Deleted Artwork restoration failed")
-        return jsonify({'error': 'Failed to restore deleted artwork. Please try again'}), 500
-
-
-# need to add directory in front end /api/artists/[id]/restore
-@app.route('/api/artworks/<artwork_id>/restore', methods=['PUT'])
-@login_required
-@admin_required
-def restore_deleted_artwork(artwork_id):
-    """ Restores a SOFT deleted artwork
-        - hard deletions will not be able to be restored
-        - will change date_deleted back to None
-    Security:
-        - Requires authentication
-        - Requires admin role
-        - Audit logged
-    Args:
-        - artwork_id: The artwork ID to be restored
-
-    Returns:
-        200: Artwork restored successfully
-        403: Permisison denied
-        404: Artwork not found, artwork is not deleted
-    """
-    # Verify artwork exists
-    artwork = Artwork.query.get(artwork_id)
-    if not artwork:
-        return jsonify({'error': 'Artwork not found'}), 404
-    
-    # Verify artwork is currently deleted
-    if not artwork.is_deleted:
-        return jsonify({'error': 'Artwork is not deleted'}), 404
-    
-    try:
-        # restoring soft deleted artwork
-        artwork.is_deleted = False
-        artwork.date_deleted = None
-
-        artwork_title = artwork.artwork_ttl
-        artist_id = artwork.artist_id
-        is_deleted = artwork.is_deleted
-        date_deleted = artwork.date_deleted
-        db.session.commit()
-
-        # audit restoration
-        audit_log = AuditLog(
-            user_id=current_user.id,
-            email=current_user.email,
-            event_type='deleted_artwork_restored',
-            ip_address=request.remote_addr,
-            user_agent=request.headers.get('User-Agent', 'Unknown'),
-            details=json.dumps({
-                'artwork_id': artwork_id,
-                'title': artwork_title,
-                'artist_id': artist_id,
-                'is_deleted': is_deleted,
-                'date_deleted': date_deleted
-            })
-        )
-
-        db.session.add(audit_log)
-        db.session.commit()
-
-        app.logger.info(f"Admin {current_user.email} restored artwork {artwork_id}")
-
-        return jsonify({
-            'message': 'Deleted artwork restored successfully',
-            'restored': {
-                'artwork_id': artwork_id,
-                'title': artwork_title,
-                'artist_id': artist_id,
-                'is_deleted': is_deleted,
-                'date_deleted': date_deleted
-            }
-        }), 200
-
-    except Exception as e:
-        db.session.rollback()
-        app.logger.exception("Deleted Artwork restoration failed")
-        return jsonify({'error': 'Failed to restore deleted artwork. Please try again'}), 500
-
-
-@app.route('/api/artworks/<artwork_id>', methods=['DELETE'])
-@login_required
 def delete_artwork(artwork_id):
     """Delete an artwork and all associated photos.
 
