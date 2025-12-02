@@ -1,7 +1,10 @@
-import { API_BASE_URL } from '$env/static/private';
+import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_API_BASE_URL } from '$env/static/private';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
 
-export const load = async ({ fetch}) => {
+const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5000';
+
+export const load = async ({ fetch }) => {
 
     try {
         const response = await fetch(
@@ -26,7 +29,7 @@ export const load = async ({ fetch}) => {
                     viewableArt.push(artwork);
                 }
             });
-
+            //console.log(JSON.stringify(data));
             return {
                 artworks: viewableArt,
                 pagination: data.pagination,
