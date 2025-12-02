@@ -3069,7 +3069,11 @@ def admin_console_stats():
         # Get total counts
         total_artworks = Artwork.query.count()
         total_artists = Artist.query.count()
-        total_photos = ArtworkPhoto.query.count()
+        # Count only photos for active (non-deleted) artworks
+        total_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
+        ).count()
         total_users = User.query.count()
 
         # Derived role count for artist-guest users
@@ -3087,9 +3091,12 @@ def admin_console_stats():
         recent_artworks = Artwork.query.filter(
             Artwork.date_created >= twenty_four_hours_ago.date()
         ).count() if hasattr(Artwork, 'date_created') else 0
-        
-        recent_photos = ArtworkPhoto.query.filter(
-            ArtworkPhoto.uploaded_at >= twenty_four_hours_ago
+
+        # Count photos for active artworks uploaded in last 24h
+        recent_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.uploaded_at >= twenty_four_hours_ago,
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
         ).count()
         
         recent_users = User.query.filter(
@@ -3165,8 +3172,11 @@ def public_overview_stats():
         total_artworks = Artwork.query.filter(Artwork.is_deleted == False).count()
         # Count only non-deleted artists
         total_artists = Artist.query.filter(Artist.is_deleted == False).count()
-        # Count all photos (photos don't have soft delete)
-        total_photos = ArtworkPhoto.query.count()
+        # Count only photos for active (non-deleted) artworks
+        total_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
+        ).count()
         # Count artist-role users (excluding soft-deleted users)
         artist_role_count = User.query.filter(
             User.role.in_(['artist', 'artist-guest']),
@@ -3873,11 +3883,31 @@ def admin_console_database_info():
         403: Permission denied
     """
     try:
+        # Calculate active photo count (photos for non-deleted artworks)
+        active_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
+        ).count()
+
+        # Calculate photos for deleted artworks
+        deleted_artwork_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == True
+        ).count()
+
+        # Calculate orphaned photos
+        orphaned_photos = ArtworkPhoto.query.filter(
+            ArtworkPhoto.artwork_num.is_(None)
+        ).count()
+
         # Get table row counts
         table_counts = {
             'artist': Artist.query.count(),
             'artwork': Artwork.query.count(),
             'artwork_photos': ArtworkPhoto.query.count(),
+            'artwork_photos_active': active_photos,
+            'artwork_photos_deleted_artworks': deleted_artwork_photos,
+            'artwork_photos_orphaned': orphaned_photos,
             'storage': Storage.query.count(),
             'users': User.query.count(),
             'audit_logs': AuditLog.query.count(),
