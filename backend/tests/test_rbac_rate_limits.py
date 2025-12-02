@@ -319,14 +319,14 @@ class TestRateLimitConfiguration:
     """Test rate limit configuration (logic only, not actual limiting)."""
 
     def test_anonymous_rate_limit_function(self, client):
-        """Anonymous users should get 100/min rate limit."""
+        """Anonymous users should get 300/min rate limit."""
         from app import get_rate_limit_by_identity
         with app.test_request_context():
             limit = get_rate_limit_by_identity()
-            assert limit == "100 per minute"
+            assert limit == "300 per minute"
 
     def test_guest_rate_limit_function(self, client, guest_user):
-        """Logged-in guests should get 200/min rate limit."""
+        """Logged-in guests should get 500/min rate limit."""
         from app import get_rate_limit_by_identity
         login_user(client, guest_user['email'], guest_user['password'])
         with app.test_request_context():
@@ -336,10 +336,10 @@ class TestRateLimitConfiguration:
                 user = User.query.get(guest_user['id'])
                 flask_login(user)
                 limit = get_rate_limit_by_identity()
-                assert limit == "200 per minute"
+                assert limit == "500 per minute"
 
     def test_admin_rate_limit_function(self, client, admin_user):
-        """Admins should get 1000/min rate limit."""
+        """Admins should get 2000/min rate limit."""
         from app import get_rate_limit_by_identity
         login_user(client, admin_user['email'], admin_user['password'])
         with app.test_request_context():
@@ -348,4 +348,4 @@ class TestRateLimitConfiguration:
                 user = User.query.get(admin_user['id'])
                 flask_login(user)
                 limit = get_rate_limit_by_identity()
-                assert limit == "1000 per minute"
+                assert limit == "2000 per minute"

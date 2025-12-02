@@ -339,9 +339,9 @@ def get_rate_limit_by_identity():
     """Get rate limit based on user identity type.
 
     Rate limits:
-        - Anonymous (no session): 100 requests/minute
-        - Logged-in guest: 200 requests/minute
-        - Admin: 1000 requests/minute
+        - Anonymous (no session): 300 requests/minute
+        - Logged-in guest: 500 requests/minute
+        - Admin: 2000 requests/minute (fallback only - admins are exempt via key_func)
 
     Returns:
         String rate limit for Flask-Limiter
@@ -349,16 +349,16 @@ def get_rate_limit_by_identity():
     try:
         if current_user.is_authenticated:
             if current_user.is_admin:
-                return "1000 per minute"
+                return "2000 per minute"
             else:
                 # Logged-in guest (includes artist-linked users)
-                return "200 per minute"
+                return "500 per minute"
         else:
             # Anonymous user
-            return "100 per minute"
+            return "300 per minute"
     except Exception:
         # Fallback to anonymous rate limit if anything fails
-        return "100 per minute"
+        return "300 per minute"
 
 
 def dynamic_rate_limit():
@@ -391,7 +391,7 @@ rate_limit_key_func = create_rate_limit_key_func()
 limiter = Limiter(
     app=app,
     key_func=rate_limit_key_func,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["1000 per day", "200 per hour"],
     storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
 )
 
@@ -1705,7 +1705,7 @@ def get_artist_profile_photo(artist_id):
 
 @app.route('/api/artists/<artist_id>/photos', methods=['POST'])
 @login_required
-@limiter.limit("10 per minute")
+@limiter.limit("30 per minute")
 def upload_artist_profile_photo(artist_id):
     """Upload or replace an artist's profile photo."""
     artist = db.session.get(Artist, artist_id)
@@ -1781,7 +1781,7 @@ def upload_artist_profile_photo(artist_id):
 
 @app.route('/api/artists/<artist_id>/photos', methods=['DELETE'])
 @login_required
-@limiter.limit("10 per minute")
+@limiter.limit("30 per minute")
 def delete_artist_profile_photo(artist_id):
     """Delete an artist's profile photo."""
     artist = db.session.get(Artist, artist_id)
@@ -2313,7 +2313,7 @@ from auth import admin_required
 # Photo Upload Endpoints
 @app.route('/api/artworks/<artwork_id>/photos', methods=['POST'])
 @login_required
-@limiter.limit("20 per minute")
+@limiter.limit("50 per minute")
 def upload_artwork_photo(artwork_id):
     """Upload a photo for an existing artwork.
 
@@ -2431,7 +2431,7 @@ def upload_artwork_photo(artwork_id):
 @app.route('/api/photos', methods=['POST'])
 @login_required
 @admin_required
-@limiter.limit("20 per minute")
+@limiter.limit("50 per minute")
 def upload_orphaned_photo():
     """Upload a photo without associating it to an artwork (orphaned).
 
@@ -2856,7 +2856,7 @@ def get_artwork_photos(artwork_id):
 
 @app.route('/api/photos/<photo_id>', methods=['DELETE'])
 @login_required
-@limiter.limit("20 per minute")
+@limiter.limit("50 per minute")
 def delete_photo(photo_id):
     """Delete a photo.
 
@@ -3069,7 +3069,11 @@ def admin_console_stats():
         # Get total counts
         total_artworks = Artwork.query.count()
         total_artists = Artist.query.count()
-        total_photos = ArtworkPhoto.query.count()
+        # Count only photos for active (non-deleted) artworks
+        total_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
+        ).count()
         total_users = User.query.count()
 
         # Derived role count for artist-guest users
@@ -3087,9 +3091,12 @@ def admin_console_stats():
         recent_artworks = Artwork.query.filter(
             Artwork.date_created >= twenty_four_hours_ago.date()
         ).count() if hasattr(Artwork, 'date_created') else 0
-        
-        recent_photos = ArtworkPhoto.query.filter(
-            ArtworkPhoto.uploaded_at >= twenty_four_hours_ago
+
+        # Count photos for active artworks uploaded in last 24h
+        recent_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.uploaded_at >= twenty_four_hours_ago,
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
         ).count()
         
         recent_users = User.query.filter(
@@ -3165,8 +3172,11 @@ def public_overview_stats():
         total_artworks = Artwork.query.filter(Artwork.is_deleted == False).count()
         # Count only non-deleted artists
         total_artists = Artist.query.filter(Artist.is_deleted == False).count()
-        # Count all photos (photos don't have soft delete)
-        total_photos = ArtworkPhoto.query.count()
+        # Count only photos for active (non-deleted) artworks
+        total_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
+        ).count()
         # Count artist-role users (excluding soft-deleted users)
         artist_role_count = User.query.filter(
             User.role.in_(['artist', 'artist-guest']),
@@ -3873,11 +3883,31 @@ def admin_console_database_info():
         403: Permission denied
     """
     try:
+        # Calculate active photo count (photos for non-deleted artworks)
+        active_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == False
+        ).count()
+
+        # Calculate photos for deleted artworks
+        deleted_artwork_photos = ArtworkPhoto.query.join(Artwork).filter(
+            ArtworkPhoto.artwork_num.isnot(None),
+            Artwork.is_deleted == True
+        ).count()
+
+        # Calculate orphaned photos
+        orphaned_photos = ArtworkPhoto.query.filter(
+            ArtworkPhoto.artwork_num.is_(None)
+        ).count()
+
         # Get table row counts
         table_counts = {
             'artist': Artist.query.count(),
             'artwork': Artwork.query.count(),
             'artwork_photos': ArtworkPhoto.query.count(),
+            'artwork_photos_active': active_photos,
+            'artwork_photos_deleted_artworks': deleted_artwork_photos,
+            'artwork_photos_orphaned': orphaned_photos,
             'storage': Storage.query.count(),
             'users': User.query.count(),
             'audit_logs': AuditLog.query.count(),

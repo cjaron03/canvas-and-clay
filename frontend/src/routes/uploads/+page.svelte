@@ -30,6 +30,9 @@
   let orphanedProgress = [];
   let uploadedPhotoIds = [];
 
+  // Auth check
+  $: isAdmin = $auth.user?.role === 'admin';
+
   // Fetch CSRF token on mount
   onMount(async () => {
     try {
@@ -507,26 +510,30 @@
 
 <h1>Upload Photos</h1>
 
-<div class="tabs">
-  <button
-    class:active={activeTab === 'existing'}
-    class:tab-existing={activeTab === 'existing'}
-    on:click={() => activeTab = 'existing'}
-  >
-    <span class="tab-icon">Link</span>
-    <span class="tab-label">Upload to Existing Artwork</span>
-    <span class="tab-description">Add photos to artworks already in the database</span>
-  </button>
-  <button
-    class:active={activeTab === 'new'}
-    class:tab-new={activeTab === 'new'}
-    on:click={() => activeTab = 'new'}
-  >
-    <span class="tab-icon">Upload</span>
-    <span class="tab-label">Upload New Photos</span>
-    <span class="tab-description">Upload photos to associate with artworks later</span>
-  </button>
-</div>
+{#if isAdmin}
+  <div class="tabs">
+    <button
+      class:active={activeTab === 'existing'}
+      class:tab-existing={activeTab === 'existing'}
+      on:click={() => activeTab = 'existing'}
+    >
+      <span class="tab-icon">Link</span>
+      <span class="tab-label">Upload to Existing Artwork</span>
+      <span class="tab-description">Add photos to artworks already in the database</span>
+    </button>
+    <button
+      class:active={activeTab === 'new'}
+      class:tab-new={activeTab === 'new'}
+      on:click={() => activeTab = 'new'}
+    >
+      <span class="tab-icon">Upload</span>
+      <span class="tab-label">Upload New Photos</span>
+      <span class="tab-description">Upload photos to associate with artworks later</span>
+    </button>
+  </div>
+{:else}
+  <!-- Artist view header logic simplified -->
+{/if}
 
 {#if activeTab === 'existing'}
   <div class="tab-content tab-content-existing">
@@ -678,7 +685,7 @@
     {/if}
   </div>
 
-{:else if activeTab === 'new'}
+{:else if activeTab === 'new' && isAdmin}
   <div class="tab-content tab-content-new">
     <div class="tab-header">
       <h2>Upload New Photos</h2>
