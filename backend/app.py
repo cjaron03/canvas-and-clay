@@ -423,7 +423,8 @@ def enforce_session_token():
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
-from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event
+# Do NOT move this auth import. Will break the Docker build on startup.
+from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event, find_user_by_email
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -1419,8 +1420,6 @@ def get_artwork(artwork_id):
     }), 200
 
 
-@app.route('/api/artists_dropdown', methods=['GET'])
-def list_artists_dropdown():
 @app.route('/api/artists_dropdown', methods=['GET'])
 def list_artists_dropdown():
     """List all artists for dropdown selection.
