@@ -1,6 +1,9 @@
-import { API_BASE_URL } from '$env/static/private';
+import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { error } from '@sveltejs/kit';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
+
+const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5000';
 
 export const load = async ({ params, fetch }) => {
   const { id } = params;
@@ -13,7 +16,7 @@ export const load = async ({ params, fetch }) => {
           accept: 'application/json'
         }
       }),
-      fetch(`${API_BASE_URL}/api/artists`, {
+      fetch(`${API_BASE_URL}/api/artists_dropdown`, {
         headers: {
           accept: 'application/json'
         }
@@ -72,4 +75,3 @@ export const load = async ({ params, fetch }) => {
     throw error(500, message);
   }
 };
-

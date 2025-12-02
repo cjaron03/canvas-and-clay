@@ -6,8 +6,6 @@
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth';
 
-  export let data;
-
   let stats = null;
   let health = null;
   let loadError = null;
@@ -730,7 +728,7 @@
 
       // Fallback to public artists list if admin endpoint fails for any reason
       if (!response.ok) {
-        response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists`, {
+        response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists_dropdown`, {
           headers: { accept: 'application/json' }
         });
       }
@@ -779,6 +777,7 @@
         const data = await resp.json();
         csrf = data.csrf_token;
         // Update store token without touching user state
+        //auth.update({ csrfToken: csrf });
         auth.init(); // keep auth refreshed; token will be preserved now
       }
     } catch (err) {
@@ -1469,18 +1468,15 @@
 
     try {
       // Ensure CSRF token is loaded
-      if (!$auth.csrfToken) {
-        await auth.init();
-      }
-      
+      const csrfToken = await ensureCsrfToken();
+
       const headers = {
         'Content-Type': 'application/json',
         accept: 'application/json'
       };
-      
-      // Add CSRF token if available
-      if ($auth.csrfToken) {
-        headers['X-CSRFToken'] = $auth.csrfToken;
+
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
       }
       
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/cli`, {
@@ -1741,6 +1737,7 @@
       const delay = testEasterEgg ? 100 : (500 + Math.random() * 2000); // Faster in test mode
       setTimeout(() => {
         addCLIOutput('greetings, J here', 'info');
+        // McKenna was here 
       }, delay);
     }
   };
@@ -2631,7 +2628,6 @@
               bind:this={commandInputElement}
               bind:value={commandInput}
               on:input={handleCommandInput}
-              autofocus
               on:keydown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -3385,13 +3381,6 @@
     border-bottom: none;
   }
 
-  .autocomplete-item strong {
-    color: #00ff00;
-    display: block;
-    margin-bottom: 0.25rem;
-    font-family: inherit;
-  }
-
   .suggestion-desc {
     color: #888;
     font-size: 0.75rem;
@@ -3916,7 +3905,7 @@
     background-size: 12px;
   }
 
-  :root[data-theme='light'] .form-select {
+  :global(:root[data-theme='light'] .form-select) {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   }
 

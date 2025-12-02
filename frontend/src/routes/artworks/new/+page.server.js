@@ -1,12 +1,15 @@
-import { API_BASE_URL } from '$env/static/private';
+import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { error } from '@sveltejs/kit';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
+
+const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5000';
 
 export const load = async ({ fetch }) => {
   try {
     // Fetch artists and storage locations in parallel
     const [artistsResponse, storageResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/artists`, {
+      fetch(`${API_BASE_URL}/api/artists_dropdown`, {
         headers: {
           accept: 'application/json'
         }

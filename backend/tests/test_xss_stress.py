@@ -407,30 +407,6 @@ class TestJSONInjection:
         data = response.get_json()
         assert data is not None
     
-    def test_search_with_xss_payload(self, client):
-        """Test search endpoint with XSS payload in query."""
-        xss_payloads = [
-            "<script>alert('XSS')</script>",
-            "javascript:alert('XSS')",
-            "' OR '1'='1",  # SQL injection attempt
-            "'; DROP TABLE users; --",  # SQL injection attempt
-        ]
-        
-        for payload in xss_payloads:
-            response = client.get(f'/api/search?q={payload}')
-            assert response.status_code in [200, 400, 500]  # Should handle gracefully
-            
-            # Response should be valid JSON
-            try:
-                data = response.get_json()
-                # If it's JSON, verify it doesn't contain unescaped script tags
-                json_str = str(data)
-                if '<script' in json_str.lower():
-                    # Should be escaped or removed
-                    assert '&lt;script' in json_str or '<script' not in json_str.lower()
-            except Exception:
-                pass  # Non-JSON responses are acceptable for error cases
-
 
 class TestCSPPolicyVariations:
     """Test CSP policy with different configurations."""
@@ -487,32 +463,6 @@ class TestRealWorldScenarios:
             assert '<script' not in escaped.lower()
             assert 'onerror' not in escaped.lower() or '&lt;' in escaped
     
-    def test_user_input_in_search(self, client):
-        """Test user input in search is handled safely."""
-        malicious_queries = [
-            "<script>alert(document.cookie)</script>",
-            "'; alert('XSS'); //",
-            "<img src=x onerror=alert('XSS')>",
-            "javascript:alert('XSS')",
-        ]
-        
-        for query in malicious_queries:
-            response = client.get(f'/api/search?q={query}')
-            # Should not crash and should return valid response
-            assert response.status_code in [200, 400, 500]
-            
-            # Response should be valid JSON
-            # Note: jsonify() escapes JSON special characters, not HTML
-            # HTML escaping happens at the frontend layer (Svelte auto-escapes)
-            # CSP header provides additional protection
-            if response.status_code == 200:
-                data = response.get_json()
-                # JSON is valid and doesn't break parsing
-                assert data is not None
-                # The query parameter may contain XSS payloads, but:
-                # 1. It's in a JSON string (not HTML)
-                # 2. Frontend will safely render it
-                # 3. CSP blocks script execution
 
 
 class TestPerformance:

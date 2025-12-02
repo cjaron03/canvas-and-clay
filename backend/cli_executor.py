@@ -78,6 +78,10 @@ class CLIExecutor:
             elif action == 'delete':
                 # Delete requires confirmation - return confirmation request
                 return self._execute_delete_preview(entity, entity_id)
+            elif action == 'start_deletion_scheduler':
+                return self._execute_start_deletion_scheduler()
+            elif action == 'stop_deletion_scheduler':
+                return self._execute_stop_deletion_scheduler()
             else:
                 raise CLIExecutionError(f'Unknown action: {action}')
         except Exception as e:
@@ -367,6 +371,44 @@ class CLIExecutor:
             'requires_confirmation': True
         }
     
+    def _execute_start_deletion_scheduler(self) -> Dict[str, Any]:
+        """Start the deletion scheduler."""
+        from app import start_deletion_scheduler
+        try:
+            start_result = start_deletion_scheduler()  # your existing function
+            return {
+                "success": True,
+                "output": start_result["message"],
+                "data": None,
+                "requires_confirmation": False
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "output": f"Failed to start scheduler: {str(e)}",
+                "data": None,
+                "requires_confirmation": False
+            }
+
+    def _execute_stop_deletion_scheduler(self) -> Dict[str, Any]:
+        """Stop the deletion scheduler."""
+        from app import stop_deletion_scheduler
+        try:
+            stop_result = stop_deletion_scheduler()  # your existing function
+            return {
+                "success": True,
+                "output": stop_result["message"],
+                "data": None,
+                "requires_confirmation": False
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "output": f"Failed to stop scheduler: {str(e)}",
+                "data": None,
+                "requires_confirmation": False
+            }
+
     def _get_model(self, entity: str):
         """Get model class for entity."""
         model_map = {

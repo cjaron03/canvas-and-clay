@@ -20,7 +20,7 @@ class CLIParser:
         'artist': {
             'id_field': 'artist_id',
             'id_type': 'CHAR(8)',
-            'fields': ['artist_id', 'artist_fname', 'artist_lname', 'artist_email', 'artist_site', 'artist_bio', 'artist_phone', 'user_id']
+            'fields': ['artist_id', 'artist_fname', 'artist_lname', 'artist_email', 'artist_site', 'profile_photo_url', 'artist_bio', 'artist_phone', 'user_id']
         },
         'artwork': {
             'id_field': 'artwork_num',
@@ -81,7 +81,9 @@ class CLIParser:
         'update': {'read_only': False, 'requires_id': True},
         'delete': {'read_only': False, 'requires_id': True},
         'help': {'read_only': True, 'requires_id': False},
-        'stats': {'read_only': True, 'requires_id': False}
+        'stats': {'read_only': True, 'requires_id': False},
+        'start_deletion_scheduler': {'read_only': False, 'requires_id': False},
+        'stop_deletion_scheduler': {'read_only': False, 'requires_id': False}
     }
     
     @classmethod
@@ -131,6 +133,29 @@ class CLIParser:
                 'positional_args': [],
                 'is_read_only': True
             }
+        
+        # Handle starting deletion scheduler
+        if command.lower() == 'start_deletion_scheduler':
+            return {
+                'action': 'start_deletion_scheduler',
+                'entity': None,
+                'entity_id': None,
+                'options': {},
+                'positional_args': [],
+                'is_read_only': False
+            }
+        
+        # Handle stopping deletion scheduler
+        if command.lower() == 'stop_deletion_scheduler':
+            return {
+                'action': 'stop_deletion_scheduler',
+                'entity': None,
+                'entity_id': None,
+                'options': {},
+                'positional_args': [],
+                'is_read_only': False
+            }
+
         
         # Split command into parts using shlex to handle quoted strings
         try:
@@ -358,6 +383,16 @@ class CLIParser:
                 'command': 'stats',
                 'description': 'Show system statistics',
                 'read_only': True
+            },
+            {
+                'command': 'start_deletion_scheduler',
+                'description': 'Start the deletion scheduler for soft deleted artists/artworks',
+                'read_only': False
+            },
+            {
+                'command': 'stop_deletion_scheduler',
+                'description': 'Stop any active deletion schedulers for soft deleted artists/artworks',
+                'read_only': False
             }
         ]
         
@@ -365,4 +400,3 @@ class CLIParser:
         help_info['entity_fields'] = {entity: cls.ENTITIES[entity]['fields'] for entity in cls.ENTITIES}
         
         return help_info
-

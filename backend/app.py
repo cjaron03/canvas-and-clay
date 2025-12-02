@@ -4,10 +4,19 @@ import json
 import secrets
 import string
 import sys
+import io
+import zipfile
+import logging
 from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
 from dotenv import load_dotenv
+
+# IMPORTANT: load_dotenv() MUST be called before importing encryption module
+# because encryption derives the key at module import time from env vars
+load_dotenv()
+
+from sqlalchemy.pool import StaticPool
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_login import LoginManager, login_required, current_user, logout_user
@@ -17,8 +26,7 @@ from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from utils import sanitize_html
-
-load_dotenv()
+from encryption import KEY_SOURCE
 
 # Check if we're running in a test environment
 def is_test_environment():
@@ -53,10 +61,15 @@ def build_database_uri():
     """Construct database URI from environment variables."""
     # Prefer explicit test database when running under pytest/CI
     test_db_uri = os.getenv('TEST_DATABASE_URL') or os.getenv('PYTEST_DATABASE_URL')
-    if os.getenv('PYTEST_CURRENT_TEST') and test_db_uri:
-        return test_db_uri
-    if os.getenv('PYTEST_CURRENT_TEST') and not os.getenv('DATABASE_URL') and not test_db_uri:
-        # Safe default for tests when no DB is configured
+    if is_test_environment():
+        if test_db_uri:
+            return test_db_uri
+        # Always fall back to file-based sqlite in test runs even if DATABASE_URL is set
+        return 'sqlite:///app_test.db'
+    if os.getenv('PYTEST_CURRENT_TEST'):
+        if test_db_uri:
+            return test_db_uri
+        # Always fall back to sqlite in test runs even if DATABASE_URL is set
         return 'sqlite:///app_test.db'
 
     existing_uri = os.getenv('DATABASE_URL')
@@ -88,9 +101,12 @@ def build_database_uri():
 
 def build_engine_options(database_uri):
     """Configure SQLAlchemy engine options such as pooling and SSL."""
-    # SQLite (default/testing) uses NullPool; skip pool configuration
+    # SQLite (default/testing) uses a shared connection pool to keep state across clients
     if database_uri.startswith('sqlite'):
-        return {}
+        return {
+            'connect_args': {'check_same_thread': False},
+            'poolclass': StaticPool
+        }
 
     engine_options = {
         'pool_size': get_env_int('DB_POOL_SIZE', 5),
@@ -115,6 +131,74 @@ PASSWORD_RESET_CODE_TTL_MINUTES = get_env_int('PASSWORD_RESET_CODE_TTL_MINUTES',
 MAX_PASSWORD_RESET_MESSAGE_LENGTH = get_env_int('PASSWORD_RESET_MESSAGE_MAX_LENGTH', 500)
 
 app = Flask(__name__)
+
+# Log encryption-key status (without exposing key material)
+# Disable ANSI colors when NO_COLOR env var is set or output is not a TTY
+# (common in log aggregators like CloudWatch, Datadog, etc.)
+_use_colors = sys.stdout.isatty() and not os.getenv('NO_COLOR')
+GREEN = "\033[92m" if _use_colors else ""
+RED = "\033[91m" if _use_colors else ""
+YELLOW = "\033[93m" if _use_colors else ""
+CYAN = "\033[96m" if _use_colors else ""
+RESET = "\033[0m" if _use_colors else ""
+
+ASCII_LOGO = r"""
+ ####   ###   #   #  #   #   ###    ####
+#     #   #  ##  #  #   #  #   #  #    
+#     #####  # # #  #   #  #####   ### 
+#     #   #  #  ##   # #   #   #      #
+ ####  #   #  #   #    #    #   #  #### 
+
+ ####  #       ###   #   #
+#     #      #   #   # # 
+#     #      #####    #  
+#     #      #   #    #  
+ ####  #####  #   #    #
+"""
+
+if KEY_SOURCE == "env-key":
+    print(f"{GREEN}**PII ENCRYPTION KEY DETECTED – DECRYPTION SUPPORTED**{RESET}")
+elif KEY_SOURCE == "secret-key":
+    print(f"{YELLOW}**PII ENCRYPTION USING SECRET_KEY FALLBACK – DECRYPTION SUPPORTED (SET PII_ENCRYPTION_KEY FOR CONSISTENCY)**{RESET}")
+else:
+    print(f"{RED}**PII ENCRYPTION USING EPHEMERAL DEV KEY – DECRYPTION WILL FAIL AFTER RESTART. SET PII_ENCRYPTION_KEY.**{RESET}")
+    # Fail early in production if using ephemeral encryption key
+    # (encryption.py already raises in production, but this is a belt-and-suspenders check)
+    if not is_test_environment() and not os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true':
+        raise RuntimeError(
+            "Cannot start in production mode with ephemeral encryption key. "
+            "Set PII_ENCRYPTION_KEY or SECRET_KEY environment variable."
+        )
+print(f"{GREEN}{ASCII_LOGO}{RESET}")
+
+
+def _setup_logging(app_obj):
+    """Uniform, readable docker logs with lowercase levels."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+
+    class LowerFormatter(logging.Formatter):
+        def format(self, record):
+            record.levelname = record.levelname.lower()
+            return super().format(record)
+
+    fmt = "%(asctime)s | %(levelname)s | %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    handler.setFormatter(LowerFormatter(fmt, datefmt))
+
+    app_obj.logger.handlers = []
+    # allow caplog to capture while still formatting our stream handler
+    app_obj.logger.propagate = True
+    app_obj.logger.addHandler(handler)
+    app_obj.logger.setLevel(logging.INFO)
+
+    werkzeug_logger = logging.getLogger("werkzeug")
+    werkzeug_logger.handlers = []
+    werkzeug_logger.addHandler(handler)
+    werkzeug_logger.setLevel(logging.INFO)
+
+
+_setup_logging(app)
 
 # CORS configuration - move to environment variable for production
 # supports multiple origins separated by commas (e.g., "http://localhost:5173,https://example.com")
@@ -141,6 +225,24 @@ engine_options = build_engine_options(database_uri)
 if engine_options:
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+def _mask_db_uri(uri: str) -> str:
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(uri)
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+    except Exception:
+        return uri
+
+
+if is_test_environment():
+    print(f"{YELLOW}**TEST DB ACTIVE** {_mask_db_uri(database_uri)}{RESET}")
+else:
+    print(f"{CYAN}**DB TARGET** {_mask_db_uri(database_uri)}{RESET}")
 
 # Session security configuration
 # security: default to secure=true (HTTPS only), require explicit opt-out for local dev
@@ -304,22 +406,22 @@ def load_user(user_id):
 # Enforce per-session token to allow forced logouts
 @app.before_request
 def enforce_session_token():
-    try:
-        if not current_user.is_authenticated:
-            return
-        token = session.get('session_token')
-        if not token or token != current_user.remember_token:
-            logout_user()
-            session.clear()
-            return jsonify({'error': 'Session expired. Please log in again.'}), 401
-    except Exception:
-        # On any unexpected error, fail closed by clearing session
+    # Only enforce when authenticated; avoid masking errors for anonymous requests
+    if not current_user.is_authenticated:
+        return
+    
+    # Allow auth flows that establish or refresh the session token
+    if request.endpoint in {'auth.login', 'auth.register', 'auth.get_csrf_token'}:
+        return
+
+    token = session.get('session_token')
+    if not token or token != current_user.remember_token:
         logout_user()
         session.clear()
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
-from auth import auth_bp, admin_required, is_artwork_owner, is_photo_owner, log_rbac_denial, log_audit_event
+from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event, find_user_by_email
 app.register_blueprint(auth_bp)
 
 # Security Headers - Protect against common web vulnerabilities
@@ -413,276 +515,86 @@ def api_hello():
     })
 
 
-@app.route('/api/search')
-@limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
-def api_search():
-    """Search across artworks, artists, and locations."""
-    raw_query = request.args.get('q', '', type=str)
-    query = raw_query.strip()
-
-    if not query:
-        return jsonify({
-            'query': raw_query,
-            'items': []
-        })
-
-    like_pattern = f"%{query}%"
-    items = []
-
-    try:
-        # Search artworks
-        artwork_rows = (
-            db.session.query(Artwork, Artist, Storage)
-            .join(Artist, Artwork.artist_id == Artist.artist_id)
-            .outerjoin(Storage, Artwork.storage_id == Storage.storage_id)
-            .filter(
-                db.or_(
-                    Artwork.artwork_num.ilike(like_pattern),  # Search by artwork ID
-                    Artwork.artwork_ttl.ilike(like_pattern),
-                    Artwork.artwork_medium.ilike(like_pattern),
-                    Artist.artist_fname.ilike(like_pattern),
-                    Artist.artist_lname.ilike(like_pattern),
-                    Storage.storage_loc.ilike(like_pattern)
-                )
-            )
-            .order_by(Artwork.artwork_ttl.asc())
-            .limit(10)
-            .all()
-        )
-
-        for artwork, artist, storage in artwork_rows:
-            artist_name = " ".join(
-                part for part in [artist.artist_fname, artist.artist_lname] if part
-            ).strip() or artist.artist_fname or artist.artist_lname
-
-            location_payload = None
-            if storage:
-                location_payload = {
-                    'type': storage.storage_type,
-                    'id': storage.storage_id,
-                    'name': storage.storage_loc,
-                    'profile_url': f"/locations/{storage.storage_id}"
-                }
-
-            # Get primary photo or first photo for this artwork
-            primary_photo = ArtworkPhoto.query.filter_by(
-                artwork_num=artwork.artwork_num,
-                is_primary=True
-            ).first()
-
-            if not primary_photo:
-                # Fall back to most recent photo
-                primary_photo = ArtworkPhoto.query.filter_by(
-                    artwork_num=artwork.artwork_num
-                ).order_by(ArtworkPhoto.uploaded_at.desc()).first()
-
-            thumbnail_url = None
-            if primary_photo:
-                thumbnail_url = f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
-
-            items.append({
-                'type': 'artwork',
-                'id': artwork.artwork_num,
-                'title': artwork.artwork_ttl,
-                'medium': artwork.artwork_medium,
-                'thumbnail': thumbnail_url,
-                'artist': {
-                    'id': artist.artist_id,
-                    'name': artist_name,
-                    'profile_url': f"/artists/{artist.artist_id}"
-                },
-                'location': location_payload,
-                'profile_url': f"/artworks/{artwork.artwork_num}"
-            })
-
-        # Search artists
-        artist_rows = (
-            Artist.query.filter(
-                db.or_(
-                    Artist.artist_fname.ilike(like_pattern),
-                    Artist.artist_lname.ilike(like_pattern),
-                    Artist.artist_email.ilike(like_pattern),
-                    Artist.artist_site.ilike(like_pattern)
-                )
-            )
-            .order_by(Artist.artist_fname.asc(), Artist.artist_lname.asc())
-            .limit(10)
-            .all()
-        )
-
-        for artist in artist_rows:
-            artist_name = " ".join(
-                part for part in [artist.artist_fname, artist.artist_lname] if part
-            ).strip() or artist.artist_fname or artist.artist_lname
-
-            items.append({
-                'type': 'artist',
-                'id': artist.artist_id,
-                'name': artist_name,
-                'email': artist.artist_email,
-                'site': artist.artist_site,
-                'profile_url': f"/artists/{artist.artist_id}"
-            })
-
-        # Search locations
-        storage_rows = (
-            Storage.query.filter(
-                db.or_(
-                    Storage.storage_loc.ilike(like_pattern),
-                    Storage.storage_type.ilike(like_pattern),
-                    Storage.storage_id.ilike(like_pattern)
-                )
-            )
-            .order_by(Storage.storage_loc.asc())
-            .limit(10)
-            .all()
-        )
-
-        for storage in storage_rows:
-            items.append({
-                'type': 'location',
-                'id': storage.storage_id,
-                'name': storage.storage_loc,
-                'storage_type': storage.storage_type,
-                'profile_url': f"/locations/{storage.storage_id}"
-            })
-
-        # Search photos by filename or photo ID
-        photo_rows = (
-            ArtworkPhoto.query.filter(
-                db.or_(
-                    ArtworkPhoto.filename.ilike(like_pattern),
-                    ArtworkPhoto.photo_id.ilike(like_pattern)
-                )
-            )
-            .order_by(ArtworkPhoto.uploaded_at.desc())
-            .limit(10)
-            .all()
-        )
-
-        for photo in photo_rows:
-            photo_item = {
-                'type': 'photo',
-                'id': photo.photo_id,
-                'filename': photo.filename,
-                'thumbnail': f"/uploads/thumbnails/{os.path.basename(photo.thumbnail_path)}",
-                'url': f"/uploads/artworks/{os.path.basename(photo.file_path)}",
-                'width': photo.width,
-                'height': photo.height,
-                'file_size': photo.file_size,
-                'uploaded_at': photo.uploaded_at.isoformat(),
-                'is_primary': photo.is_primary
-            }
-
-            # If photo is associated with an artwork, include artwork info
-            if photo.artwork_num:
-                artwork = db.session.get(Artwork, photo.artwork_num)
-                if artwork:
-                    photo_item['artwork'] = {
-                        'id': artwork.artwork_num,
-                        'title': artwork.artwork_ttl,
-                        'profile_url': f"/artworks/{artwork.artwork_num}"
-                    }
-            else:
-                # Orphaned photo - not associated with any artwork
-                photo_item['orphaned'] = True
-
-            items.append(photo_item)
-
-    except Exception as exc:
-        app.logger.exception("Search failed for query '%s'", query)
-        return jsonify({
-            'query': raw_query,
-            'items': [],
-            'error': 'Search failed. Please try again later.'
-        }), 500
-
-    return jsonify({
-        'query': raw_query,
-        'items': items
-    })
-
-
 # Artist CRUD Endpoints
-@app.route('/api/artists', methods=['GET'])
-def list_artists_page():
-    """ List all artists with pagenation, search, and filtering.
+# @app.route('/api/artists', methods=['GET'])
+# def list_artists_page():
+#     """ List all artists with pagenation, search, and filtering.
     
-     Query Parameters:
-        page (int): Page number (default: 1)
-        per_page (int): Items per page (default: 20, max: 100)
-        search (str): Search term (searches last name, first name, phone number)
-        sort_by (str): sort by artist_id or artist_lname (artist_id default)
-        sort_order (str): order by ascending or descending (ascending default)
+#      Query Parameters:
+#         page (int): Page number (default: 1)
+#         per_page (int): Items per page (default: 20, max: 100)
+#         search (str): Search term (searches last name, first name, phone number)
+#         sort_by (str): sort by artist_id or artist_lname (artist_id default)
+#         sort_order (str): order by ascending or descending (ascending default)
 
-    Returns:
-        200: Paginated list of artists with full details
-    """
-    # Get querey parameters
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 20, type=int), 100)  # Cap at 100
-    search = request.args.get('search', '').strip()
-    sort_by = request.args.get('sort_by', 'artist_id').lower() # artist_id default
-    sort_order = request.args.get('sort_order', 'asc').lower() # asdcending default
+#     Returns:
+#         200: Paginated list of artists with full details
+#     """
+#     # Get querey parameters
+#     page = request.args.get('page', 1, type=int)
+#     per_page = min(request.args.get('per_page', 20, type=int), 100)  # Cap at 100
+#     search = request.args.get('search', '').strip()
+#     sort_by = request.args.get('sort_by', 'artist_id').lower() # artist_id default
+#     sort_order = request.args.get('sort_order', 'asc').lower() # asdcending default
     
-    # Build base query, filter out deleted artists
-    query = db.session.query(Artist).filter(Artist.is_deleted==False)
+#     # Build base query, filter out deleted artists
+#     query = db.session.query(Artist).filter(Artist.is_deleted==False)
     
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.filter(
-            db.or_(
-                Artist.artist_fname.ilike(search_pattern),
-                Artist.artist_lname.ilike(search_pattern),
-                Artist.artist_phone.ilike(search_pattern)
-            )
-        )
+#     if search:
+#         search_pattern = f"%{search}%"
+#         query = query.filter(
+#             db.or_(
+#                 Artist.artist_fname.ilike(search_pattern),
+#                 Artist.artist_lname.ilike(search_pattern),
+#                 Artist.artist_phone.ilike(search_pattern)
+#             )
+#         )
     
-    if sort_by == 'artist_lname':
-        sort_field = Artist.artist_lname
-    else:
-        sort_field = Artist.artist_id
+#     if sort_by == 'artist_lname':
+#         sort_field = Artist.artist_lname
+#     else:
+#         sort_field = Artist.artist_id
 
-    if sort_order == 'desc':
-        query = query.order_by(sort_field.desc())
-    else:
-        query = query.order_by(sort_field.asc())
+#     if sort_order == 'desc':
+#         query = query.order_by(sort_field.desc())
+#     else:
+#         query = query.order_by(sort_field.asc())
     
-    # Get total count before pagination
-    total = query.count()
+#     # Get total count before pagination
+#     total = query.count()
 
-    # Apply pagination
-    query = query.offset((page - 1) * per_page).limit(per_page)
+#     # Apply pagination
+#     query = query.offset((page - 1) * per_page).limit(per_page)
 
-    # Execute query
-    results = query.all()
+#     # Execute query
+#     results = query.all()
 
-    # Build response
-    artists = []
-    for artist in results:
-        artists.append({
-            'id': artist.artist_id,
-            'name': f"{artist.artist_fname} {artist.artist_lname}",
-            'email': artist.artist_email,
-            'site': artist.artist_site,
-            'bio': artist.artist_bio,
-            'phone': artist.artist_phone
-        })
+#     # Build response
+#     artists = []
+#     for artist in results:
+#         artists.append({
+#             'id': artist.artist_id,
+#             'name': f"{artist.artist_fname} {artist.artist_lname}",
+#             'email': artist.artist_email,
+#             'site': artist.artist_site,
+#             'bio': artist.artist_bio,
+#             'phone': artist.artist_phone
+#         })
 
-     # Calculate pagination metadata
-    total_pages = (total + per_page - 1) // per_page
+#      # Calculate pagination metadata
+#     total_pages = (total + per_page - 1) // per_page
 
-    return jsonify({
-        'artists': artists,
-        'pagination': {
-            'page': page,
-            'per_page': per_page,
-            'total': total,
-            'total_pages': total_pages,
-            'has_next': page < total_pages,
-            'has_prev': page > 1
-        }
-    })
+#     return jsonify({
+#         'artists': artists,
+#         'pagination': {
+#             'page': page,
+#             'per_page': per_page,
+#             'total': total,
+#             'total_pages': total_pages,
+#             'has_next': page < total_pages,
+#             'has_prev': page > 1
+#         }
+#     })
 
 
 @app.route('/api/artists', methods=['POST'])
@@ -702,6 +614,7 @@ def create_artist():
         artist_lname (str, required): Artist last name
         email        (str, optional): Artist email
         artist_site  (str, optional): Artist website or social media
+        profile_photo_url (str, optional): Public photo URL to display for the artist
         artist_bio   (str, optional): Artist biography/description
         artist_phone (str, optional): Artist phone number - must be formatted as 
                                                            (123)-456-7890
@@ -766,6 +679,7 @@ def create_artist():
             artist_email = data.get('email'),
             artist_site = data.get('artist_site'),
             artist_bio = data.get('artist_bio'),
+            profile_photo_url = data.get('profile_photo_url'),
             artist_phone = artist_phone,
             is_deleted = False,
             date_deleted = None,
@@ -804,6 +718,7 @@ def create_artist():
                 'artist_lname': artist.artist_lname,
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
+                'profile_photo_url': artist.profile_photo_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'is_deleted': artist.is_deleted,
@@ -820,7 +735,6 @@ def create_artist():
 
 @app.route('/api/artists/<artist_id>', methods=['PUT'])
 @login_required
-@admin_required
 def update_artist(artist_id):
     """Update an existing artist
 
@@ -837,6 +751,7 @@ def update_artist(artist_id):
         artist_lname (str, required): Artist last name
         email (str, optional): Artist email
         artist_site  (str, optional): Artist website or social media
+        profile_photo_url (str, optional): Public URL to display for the artist
         artist_bio   (str, optional): Artist biography/description
         artist_phone (str, optional): Artist phone number - must be formatted as 
                                                            (123)-456-7890
@@ -848,14 +763,23 @@ def update_artist(artist_id):
         403: Permission denied
         404: Artist not found, or artist is deleted
     """
-    # Verify artists exists
+    # Verify artist exists
     artist = Artist.query.get(artist_id)
     if not artist:
         return jsonify({'error': 'Artist not found'}), 404
-    
+
     # Verify artist is not deleted
     if artist.is_deleted:
         return jsonify({'error': 'Artist is deleted.'}), 404
+
+    # Authorization: admin or owning artist
+    if not current_user.is_admin:
+        if current_user.normalized_role != 'artist':
+            log_rbac_denial('artist', artist_id, 'insufficient_role')
+            return jsonify({'error': 'Permission denied'}), 403
+        if not is_artist_owner(artist):
+            log_rbac_denial('artist', artist_id, 'not_owner')
+            return jsonify({'error': 'Permission denied'}), 403
 
     data = request.get_json()
     if not data:
@@ -884,6 +808,11 @@ def update_artist(artist_id):
         changes['artist_site'] = {'old': artist.artist_site, 'new': data['artist_site']}
         artist.artist_site = data['artist_site']
     
+    # Update profile photo url
+    if 'profile_photo_url' in data and data['profile_photo_url'] != artist.profile_photo_url:
+        changes['profile_photo_url'] = {'old': artist.profile_photo_url, 'new': data['profile_photo_url']}
+        artist.profile_photo_url = data['profile_photo_url']
+
     # Update artist bio
     if 'artist_bio' in data and data['artist_bio'] != artist.artist_bio:
         changes['artist_bio'] = {'old': artist.artist_bio, 'new': data['artist_bio']}
@@ -891,21 +820,28 @@ def update_artist(artist_id):
     
     # Update artist phone
     if 'artist_phone' in data:
-        try:
-            import re
-            phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
-            new_phone = str(data['artist_phone']).strip()
+        import re
+        phone_regex = re.compile(r"^\(\d{3}\)-\d{3}-\d{4}$")
+        new_phone_raw = data['artist_phone']
+        new_phone = str(new_phone_raw).strip() if new_phone_raw is not None else ''
+
+        if new_phone == '':
+            if artist.artist_phone is not None:
+                changes['artist_phone'] = {
+                    'old': artist.artist_phone,
+                    'new': None
+                }
+                artist.artist_phone = None
+        else:
             if not phone_regex.match(new_phone):
                 return jsonify({'error': 'Invalid phone-number format. Expected (123)-456-7890'}), 400
-           
+
             if new_phone != artist.artist_phone:
                 changes['artist_phone'] = {
                     'old': artist.artist_phone,
                     'new': new_phone
                 }
                 artist.artist_phone = new_phone
-        except Exception as e:
-            return jsonify({'error': 'Failed to validate phone-number'}), 400
         
     # Update user id
     if 'user_id' in data and data['user_id'] != artist.user_id:
@@ -947,6 +883,7 @@ def update_artist(artist_id):
                 'artist_lname': artist.artist_lname,
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
+                'profile_photo_url': artist.profile_photo_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'user_id': artist.user_id
@@ -1162,7 +1099,6 @@ def delete_artist(artist_id):
         return jsonify({'error': 'Failed to delete artist. Please try again.'}), 500
 
 
-# Artwork CRUD Endpoints
 @app.route('/api/artworks', methods=['GET'])
 @limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def list_artworks():
@@ -1198,7 +1134,7 @@ def list_artworks():
         app.logger.info(f"list_artworks called with: owned_only={owned_only}, page={page}, per_page={per_page}, search={search}, artist_id={artist_id}")
         app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'N/A'}")
         
-        # Build base query - use inner join when filtering by ownership to ensure artist exists
+        # Build base query. Use inner join when filtering by ownership to ensure artist exists
         if owned_only:
             app.logger.info(f"owned_only is True, checking authentication...")
             if not current_user.is_authenticated:
@@ -1448,6 +1384,7 @@ def get_artwork(artwork_id):
             'email': artist.artist_email,
             'phone': artist.artist_phone,
             'website': artist.artist_site,
+            'profile_photo_url': artist.profile_photo_url,
             'bio': artist.artist_bio,
             'user_id': artist.user_id
         } if artist else None,
@@ -1470,8 +1407,8 @@ def get_artwork(artwork_id):
     }), 200
 
 
-@app.route('/api/artists', methods=['GET'])
-def list_artists():
+@app.route('/api/artists_dropdown', methods=['GET'])
+def list_artists_dropdown():
     """List all artists for dropdown selection.
     
     Returns:
@@ -1492,6 +1429,245 @@ def list_artists():
     except Exception as e:
         app.logger.exception("Failed to list artists")
         return jsonify({'error': 'Failed to load artists'}), 500
+
+
+@app.route('/api/artists', methods=['GET'])
+@limiter.limit(get_rate_limit_by_identity)
+def list_artists_catalog():
+    """
+    List all artists after search filters are applied with pagination details.
+
+    Query Parameters:
+        page (int): Page number (default: 1)
+        per_page (int): Items per page (default: 20, max: 100)
+        search (str): Search term
+        medium (str): Filter by medium
+        storage_id (str): Filter by storage location ID
+        ordering (str): Sort order for results (title_asc/title_desc, default: title_asc)
+        owned_only (bool): Implements views by account permissions
+    Returns:
+        200: List of artists with pagination details
+        {
+        artists: [
+            {
+                'id': artist.artist_id,
+                'first_name': artist.artist_fname,
+                'last_name': artist.artist_lname,
+                'email': artist.artist_email,
+                'user_id': artist.user_id,
+                'photo': artist.profile_photo_url
+            }
+            // more artists
+        ],
+        pagination: 
+        {
+            'page': page,
+            'per_page': per_page,
+            'total_filtered_artists': total_filtered_artists,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1
+        }
+    """
+
+    # Get query parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), 100)
+    search = request.args.get('search', '').strip()
+    medium = request.args.get('medium', '').strip()
+    storage_id = request.args.get('storage_id', '').strip()
+    if not storage_id:
+        storage_id = request.args.get('location', '').strip()
+    ordering = request.args.get('ordering', 'name_asc').strip().lower()
+    owned_only = request.args.get('owned', 'false').lower() == 'true'
+
+    try:
+        # Log all query parameters for debugging
+        app.logger.info(f"/artists GET called with: owned_only={owned_only}, page={page}, per_page={per_page},"
+                        f"search={search}, medium={medium}, storage_id={storage_id}"
+                        f"ordering={ordering}, owned_only={owned_only}")
+        app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'auth N/A'}")
+       
+    #   TODO check that this works when I'm signed in as an artist-user profile 
+        current_user_id = None
+        if owned_only:
+            if not current_user.is_authenticated:
+                return jsonify({'error': 'Authentication required'}), 401
+            current_user_id = int(current_user.id)
+
+        # Helper function to build the base query which has all artists. Equivalent SQL: 
+        # SELECT artist_id, artist_fname, artist_lname
+        # FROM artist
+        # LEFT JOIN artwork ON artwork.artist_id = artist.artist_id
+        # LEFT JOIN storage ON artwork.storage_id = storage.storage_id
+        def base_query(*entities):
+            query = db.session.query(*entities).select_from(Artist)
+            query = query.outerjoin(Artwork, Artwork.artist_id == Artist.artist_id)
+            query = query.outerjoin(Storage, Artwork.storage_id == Storage.storage_id)
+            return query
+
+        # Helper function to apply search filters to the base query
+        def apply_filters(query):
+            # if the user is an artist, only shows that artist's entry
+            if current_user_id is not None:
+                query = query.filter(
+                    Artist.user_id.isnot(None),
+                    Artist.user_id == current_user_id
+                )
+            if medium:
+                query = query.filter(Artwork.artwork_medium.ilike(f"%{medium}%"))
+            if storage_id:
+                query = query.filter(Artwork.storage_id == storage_id)
+            if search:
+                like_pattern = f"%{search}%"
+                search_filters = [
+                    Artist.artist_fname.ilike(like_pattern),
+                    Artist.artist_lname.ilike(like_pattern),
+                    Artist.artist_id.ilike(like_pattern),
+                    Artist.artist_bio.ilike(like_pattern),
+                    Storage.storage_loc.ilike(like_pattern),
+                    Artwork.artwork_medium.ilike(like_pattern)
+                ]
+                query = query.filter(db.or_(*search_filters))
+            return query
+
+        # Builds ordering_map to order by first name, then last name
+        ordering_map = {
+            'name_asc': [
+                Artist.artist_fname.asc(),
+                Artist.artist_lname.asc(),
+            ],
+            'name_desc': [
+                Artist.artist_fname.desc(),
+                Artist.artist_lname.desc(),
+            ]
+        }
+        # Assigns the ordering preference to order_by_clauses which now has the full ordering scheme
+        order_by_clauses = ordering_map.get(ordering, ordering_map['name_asc'])
+
+        # Builds a SQL query that incorporates the base query, applies filters, distinct results, and ordering
+        # first and last name are also fetched for ordering. 
+        results_query = apply_filters(
+            base_query(
+                Artist.artist_id,
+                Artist.artist_fname,
+                Artist.artist_lname
+            )
+        ).distinct()
+        for clause in order_by_clauses:
+            results_query = results_query.order_by(clause)
+
+        # Gets the TOTAL result count for pagination purposes
+        count_query = apply_filters(
+            base_query(db.func.count(db.distinct(Artist.artist_id)))
+        )
+        total_filtered_artists = count_query.scalar() or 0
+
+        # all() calls the results_query and assigns the results to rows
+        # includes pagination so only the relevant artists for that page will show up
+        rows = results_query.offset((page - 1) * per_page).limit(per_page).all()
+        # Builds a simple list of artist_ids that are present in rows
+        artist_ids = [row.artist_id for row in rows]
+
+        # Builds artist_map, a dictionary with the id as key and artist row as the value
+        artist_map = {}
+        if artist_ids:
+            # SELECT * FROM artist WHERE artist_id IN (artist_ids);
+            artist_records = Artist.query.filter(
+                Artist.artist_id.in_(artist_ids)
+            ).all()
+            artist_map = {artist.artist_id: artist for artist in artist_records}
+
+        ordered_artists = []
+        for artist_id in artist_ids:
+            artist = artist_map.get(artist_id)
+            if not artist:
+                continue
+            ordered_artists.append({
+                'id': artist.artist_id,
+                'first_name': artist.artist_fname,
+                'last_name': artist.artist_lname,
+                'email': artist.artist_email,
+                'user_id': artist.user_id,
+                'photo': artist.profile_photo_url
+            })
+
+        # Tells the front end how many pages are needed for the entire query
+        total_pages = (total_filtered_artists + per_page - 1) // per_page if total_filtered_artists > 0 else 0
+        pagination = {
+            'page': page,
+            'per_page': per_page,
+            'total_filtered_artists': total_filtered_artists,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1
+        }
+
+        return jsonify({
+            'artists': ordered_artists,
+            'pagination': pagination
+        }), 200
+    except Exception:
+        app.logger.exception("Failed to list artists with filters")
+        return jsonify({'error': 'Failed to load artists'}), 500
+
+
+@app.route('/api/artists/<artist_id>', methods=['GET'])
+@limiter.limit(get_rate_limit_by_identity)
+def get_artist_details(artist_id):
+    """Return detailed artist info plus related mediums and storage locations."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist or artist.is_deleted:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    medium_rows = (
+        db.session.query(db.func.distinct(Artwork.artwork_medium))
+        .filter(
+            Artwork.artist_id == artist_id,
+            Artwork.is_deleted == False,
+            Artwork.artwork_medium.isnot(None),
+            db.func.trim(Artwork.artwork_medium) != ''
+        )
+        .all()
+    )
+    mediums = sorted([row[0] for row in medium_rows if row[0]])
+
+    storage_rows = (
+        db.session.query(
+            Storage.storage_id,
+            Storage.storage_loc,
+            Storage.storage_type
+        )
+        .join(Artwork, Artwork.storage_id == Storage.storage_id)
+        .filter(
+            Artwork.artist_id == artist_id,
+            Artwork.is_deleted == False
+        )
+        .distinct()
+        .all()
+    )
+    storage_locations = [
+        {
+            'id': storage_id,
+            'location': storage_loc or '',
+            'type': storage_type or ''
+        }
+        for storage_id, storage_loc, storage_type in storage_rows
+    ]
+
+    return jsonify({
+        'artist_id': artist.artist_id,
+        'artist_fname': artist.artist_fname,
+        'artist_lname': artist.artist_lname,
+        'artist_bio': artist.artist_bio,
+        'user_id': artist.user_id,
+        'mediums': mediums,
+        'storage_locations': storage_locations,
+        'email': artist.artist_email,
+        'artist_site': artist.artist_site,
+        'artist_phone': artist.artist_phone,
+        'photo_thumbnail': artist.profile_photo_url
+    }), 200
 
 
 @app.route('/api/storage', methods=['GET'])
@@ -1804,7 +1980,6 @@ def update_artwork(artwork_id):
         return jsonify({'error': 'Failed to update artwork. Please try again.'}), 500
 
 
-# need to add directory in front end /api/artists/[id]/restore
 @app.route('/api/artworks/<artwork_id>/restore', methods=['PUT'])
 @login_required
 @admin_required
@@ -2177,6 +2352,233 @@ def upload_orphaned_photo():
     except Exception as e:
         app.logger.exception("Photo upload failed")
         return jsonify({'error': 'Upload failed. Please try again.'}), 500
+
+
+@app.route('/api/admin/bulk-upload', methods=['POST'])
+@login_required
+@admin_required
+def bulk_upload():
+    """Process an admin bulk upload ZIP containing manifest.json and images."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No bulk upload file provided'}), 400
+
+    upload_file = request.files['file']
+    if upload_file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    try:
+        zip_bytes = upload_file.read()
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            if 'manifest.json' not in zf.namelist():
+                return jsonify({'error': 'manifest.json is required in the zip'}), 400
+
+            manifest = json.loads(zf.read('manifest.json'))
+            default_storage_id = manifest.get('default_storage_id')
+            if not default_storage_id:
+                return jsonify({'error': 'default_storage_id is required in manifest'}), 400
+
+            storage = db.session.get(Storage, default_storage_id)
+            if not storage:
+                return jsonify({'error': f'Storage location not found: {default_storage_id}'}), 404
+
+            summary = {
+                'artists_created': 0,
+                'artworks_created': 0,
+                'photos_created': 0,
+                'errors': 0
+            }
+            errors = []
+            warnings = []
+            artist_key_map = {}
+            artwork_key_map = {}
+            duplicate_policy = manifest.get('duplicate_policy', 'suffix').lower()
+
+            def generate_artist_id():
+                max_attempts = 50
+                for _ in range(max_attempts):
+                    candidate = f"A{''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))}"
+                    if not db.session.get(Artist, candidate):
+                        return candidate
+                raise ValueError("Failed to generate unique artist id")
+
+            def generate_artwork_id():
+                max_attempts = 50
+                for _ in range(max_attempts):
+                    candidate = f"AW{''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))}"
+                    if not db.session.get(Artwork, candidate):
+                        return candidate
+                raise ValueError("Failed to generate unique artwork id")
+
+            def next_suffix_title(base_title, artist_id, storage_id):
+                existing_titles = {
+                    art.artwork_ttl for art in Artwork.query.filter_by(
+                        artist_id=artist_id,
+                        storage_id=storage_id,
+                        is_deleted=False
+                    ).all()
+                }
+                if base_title not in existing_titles:
+                    return base_title
+                suffix = 2
+                while True:
+                    candidate = f"{base_title} ({suffix})"
+                    if candidate not in existing_titles:
+                        return candidate
+                    suffix += 1
+
+            # Create artists
+            for artist_entry in manifest.get('artists', []):
+                try:
+                    artist_id = generate_artist_id()
+                    artist = Artist(
+                        artist_id=artist_id,
+                        artist_fname=artist_entry.get('first_name') or artist_entry.get('artist_fname') or '',
+                        artist_lname=artist_entry.get('last_name') or artist_entry.get('artist_lname') or '',
+                        artist_email=artist_entry.get('email'),
+                        artist_site=artist_entry.get('artist_site'),
+                        artist_bio=artist_entry.get('artist_bio'),
+                        artist_phone=None,
+                        is_deleted=False,
+                        date_deleted=None,
+                        user_id=None
+                    )
+                    db.session.add(artist)
+                    artist_key_map[artist_entry.get('key', artist_id)] = artist_id
+                    summary['artists_created'] += 1
+                except Exception as exc:
+                    db.session.rollback()
+                    errors.append(f"Artist error ({artist_entry.get('key')}): {exc}")
+                    summary['errors'] += 1
+
+            db.session.commit()
+
+            # Create artworks
+            for artwork_entry in manifest.get('artworks', []):
+                try:
+                    artist_key = artwork_entry.get('artist_key')
+                    artist_id = None
+
+                    if artist_key:
+                        artist_id = artist_key_map.get(artist_key)
+                        if not artist_id:
+                            raise ValueError(f"Unknown artist_key {artist_key}")
+                    else:
+                        # Support existing artists by direct id or email (CLI sends artist_id)
+                        artist_id_field = artwork_entry.get('artist_id')
+                        artist_email_field = artwork_entry.get('artist_email')
+
+                        if artist_id_field:
+                            artist = db.session.get(Artist, artist_id_field)
+                            if not artist:
+                                raise ValueError(f"Artist not found: {artist_id_field}")
+                        elif artist_email_field:
+                            artist = Artist.query.filter_by(artist_email=artist_email_field).first()
+                            if not artist:
+                                raise ValueError(f"Artist not found for email: {artist_email_field}")
+                        else:
+                            raise ValueError("artist_key or artist_id is required for artwork entry")
+
+                        artist_id = artist.artist_id
+
+                    storage_id = artwork_entry.get('storage_id') or default_storage_id
+                    if not db.session.get(Storage, storage_id):
+                        raise ValueError(f"Storage not found: {storage_id}")
+
+                    # Duplicate handling: override (delete existing) or suffix new title
+                    existing_artworks = Artwork.query.filter_by(
+                        artwork_ttl=artwork_entry.get('title'),
+                        artist_id=artist_id,
+                        storage_id=storage_id,
+                        is_deleted=False
+                    ).all()
+
+                    if existing_artworks:
+                        if duplicate_policy == 'override':
+                            for existing in existing_artworks:
+                                photos = ArtworkPhoto.query.filter_by(artwork_num=existing.artwork_num).all()
+                                for photo in photos:
+                                    delete_photo_files(photo.file_path, photo.thumbnail_path)
+                                    db.session.delete(photo)
+                                db.session.delete(existing)
+                            db.session.flush()
+                            warnings.append(f"Overrode existing artwork '{artwork_entry.get('title')}' for artist {artist_id}")
+                        else:
+                            new_title = next_suffix_title(artwork_entry.get('title'), artist_id, storage_id)
+                            warnings.append(f"Created with suffix title '{new_title}' to avoid duplicate for artist {artist_id}")
+                            artwork_entry['title'] = new_title
+
+                    artwork_id = generate_artwork_id()
+                    artwork = Artwork(
+                        artwork_num=artwork_id,
+                        artwork_ttl=artwork_entry.get('title'),
+                        artwork_medium=artwork_entry.get('medium'),
+                        date_created=None,
+                        artwork_size=artwork_entry.get('artwork_size'),
+                        is_viewable=True,
+                        is_deleted=False,
+                        date_deleted=None,
+                        artist_id=artist_id,
+                        storage_id=storage_id
+                    )
+                    db.session.add(artwork)
+                    artwork_key_map[artwork_entry.get('key', artwork_id)] = artwork_id
+                    summary['artworks_created'] += 1
+                except Exception as exc:
+                    db.session.rollback()
+                    errors.append(f"Artwork error ({artwork_entry.get('key')}): {exc}")
+                    summary['errors'] += 1
+
+            db.session.commit()
+
+            # Create photos
+            for photo_entry in manifest.get('photos', []):
+                try:
+                    filename = photo_entry.get('filename')
+                    artwork_key = photo_entry.get('artwork_key')
+                    artwork_id = artwork_key_map.get(artwork_key)
+                    if not artwork_id:
+                        raise ValueError(f"Unknown artwork_key {artwork_key}")
+                    if filename not in zf.namelist():
+                        raise ValueError(f"File not found in zip: {filename}")
+
+                    file_data = zf.read(filename)
+                    photo_metadata = process_upload(file_data, filename)
+                    photo = ArtworkPhoto(
+                        photo_id=photo_metadata['photo_id'],
+                        artwork_num=artwork_id,
+                        filename=photo_metadata['filename'],
+                        file_path=photo_metadata['file_path'],
+                        thumbnail_path=photo_metadata['thumbnail_path'],
+                        file_size=photo_metadata['file_size'],
+                        mime_type=photo_metadata['mime_type'],
+                        width=photo_metadata['width'],
+                        height=photo_metadata['height'],
+                        uploaded_at=datetime.now(timezone.utc),
+                        uploaded_by=current_user.id,
+                        is_primary=bool(photo_entry.get('is_primary'))
+                    )
+                    db.session.add(photo)
+                    summary['photos_created'] += 1
+                except Exception as exc:
+                    db.session.rollback()
+                    errors.append(f"Photo error ({photo_entry.get('filename')}): {exc}")
+                    summary['errors'] += 1
+
+            db.session.commit()
+
+            return jsonify({
+                'message': 'Bulk upload processed',
+                'summary': summary,
+                'errors': errors,
+                'warnings': warnings
+            }), 200
+
+    except zipfile.BadZipFile:
+        return jsonify({'error': 'Invalid zip file'}), 400
+    except Exception as exc:
+        app.logger.exception("Bulk upload failed")
+        db.session.rollback()
+        return jsonify({'error': f'Bulk upload failed: {exc}'}), 500
 
 
 @app.route('/api/photos/<photo_id>/associate', methods=['PATCH'])
@@ -2606,12 +3008,20 @@ def public_overview_stats():
     """Public overview stats for homepage (no auth required).
 
     Returns total counts for artworks, artists, photos, and artist-role users.
+    Excludes soft-deleted records.
     """
     try:
-        total_artworks = Artwork.query.count()
-        total_artists = Artist.query.count()
+        # Count only non-deleted artworks
+        total_artworks = Artwork.query.filter(Artwork.is_deleted == False).count()
+        # Count only non-deleted artists
+        total_artists = Artist.query.filter(Artist.is_deleted == False).count()
+        # Count all photos (photos don't have soft delete)
         total_photos = ArtworkPhoto.query.count()
-        artist_role_count = User.query.filter(User.role.in_(['artist', 'artist-guest'])).count()
+        # Count artist-role users (excluding soft-deleted users)
+        artist_role_count = User.query.filter(
+            User.role.in_(['artist', 'artist-guest']),
+            User.deleted_at.is_(None)
+        ).count()
 
         return jsonify({
             'counts': {
@@ -4018,6 +4428,56 @@ def admin_console_cli():
                     'confirmation_token': token
                 }), 200
         
+        # Handle scheduler confirmation flow
+        if parsed_command['action'] in ['start_deletion_scheduler', 'stop_deletion_scheduler']:
+            if confirmation_token:
+                # Second confirmation - verify token
+                token_data = _cli_confirmation_tokens.get(confirmation_token)
+                if not token_data:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid or expired confirmation token',
+                        'output': 'Confirmation token is invalid or has expired. Please start over.'
+                    }), 400
+                
+                if token_data.get('user_id') != current_user.id:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Confirmation token does not belong to this user',
+                        'output': 'Confirmation token was issued to a different user. Please start over.'
+                    }), 403
+                
+                try: 
+                    # Execute start command
+                    if parsed_command['action'] == 'start_deletion_scheduler':
+                        result = executor._execute_start_deletion_scheduler()
+                    # Execute stop command
+                    else:
+                        result = executor._execute_stop_deletion_scheduler()
+
+                    # Remove used token
+                   # _cli_confirmation_tokens.pop(confirmation_token, None)
+                    return jsonify(result), 200
+                except CLIExecutionError as e:
+                    return jsonify({
+                        'success': False,
+                        'error': str(e),
+                        'output': f'Scheduler command failed: {str(e)}'
+                    }), 400
+            else:
+                # First request: generate confirmation token
+                token = secrets.token_urlsafe(32)
+                _cli_confirmation_tokens[token] = {
+                    "user_id": current_user.id,
+                    "created_at": datetime.now(timezone.utc)
+                }
+                return jsonify({
+                    "success": True,
+                    "output": f"Are you sure you want to {parsed_command['action'].replace('_', ' ')}?",
+                    "requires_confirmation": True,
+                    "confirmation_token": token
+                }), 200
+
         # Execute other commands
         try:
             result = executor.execute(
@@ -4105,7 +4565,7 @@ def ensure_bootstrap_admin():
     
     try:
         with app.app_context():
-            user = User.query.filter_by(email=bootstrap_email).first()
+            user = find_user_by_email(bootstrap_email)
             
             if user:
                 # ensure existing bootstrap admin has admin role
@@ -4133,9 +4593,18 @@ def ensure_bootstrap_admin():
                     created_at=datetime.now(timezone.utc)
                 )
                 
-                db.session.add(admin_user)
-                db.session.commit()
-                print(f"created bootstrap admin: {bootstrap_email}")
+                try:
+                    db.session.add(admin_user)
+                    db.session.commit()
+                    print(f"created bootstrap admin: {bootstrap_email}")
+                except Exception as create_err:
+                    db.session.rollback()
+                    # Check if it's a unique constraint violation (concurrent startup)
+                    err_str = str(create_err).lower()
+                    if 'unique' in err_str or 'duplicate' in err_str:
+                        print("bootstrap admin already exists, skipping create")
+                    else:
+                        print(f"failed to create bootstrap admin: {create_err}")
     except Exception as e:
         # silently fail if database isn't ready yet (e.g., during migrations)
         # this is expected during initial setup
@@ -4190,7 +4659,6 @@ def _ensure_bootstrap_on_first_request():
 
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
 
 scheduler = None
 # scheduler for deletion of soft-deleted items over 30 days
@@ -4201,7 +4669,26 @@ def start_deletion_scheduler():
         of there being no existing scheduler to prevent
         multiple instances of a scheduler.
     """
+    from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
+
     global scheduler
+
+    if app.config.get("TESTING", False):
+        message = "Skipping Deletion Scheduler start in TESTING mode"
+        app.logger.info(message)
+        return {
+            "status": "skipped start",
+            "message": message
+        }
+    
+    # Skip startup in Flask reloader parent process
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return {
+            "status": "skipped reloader",
+            "message": "Flask reloader parent process, scheduler not started"
+        }
+
+
     if scheduler is None:
         scheduler = BackgroundScheduler(daemon=True)
         scheduler.add_job(
@@ -4215,9 +4702,19 @@ def start_deletion_scheduler():
             days=1
         )
         scheduler.start()
-        app.logger.info("Deletion Scheduler started - using APScheduler.")
+        message = "Deletion Scheduler started - using APScheduler."
+        app.logger.info(message)
+        return {
+            "status": "start scheduler was successful",
+            "message": message
+        }
     else:
-        app.logger.info("Deletion Scheduler already running, skipping start.")
+        message = "Deletion Scheduler already running, skipping start."
+        app.logger.info(message)
+        return {
+            "status": "skipped start",
+            "message": message
+        }
     
 
 # for stopping the deletion scheduler, mostly for testing purposes
@@ -4234,14 +4731,36 @@ def stop_deletion_scheduler():
         deletions. 
     """
     global scheduler
+
+    if app.config.get("TESTING", False):
+        message = "Skipping Deletion Scheduler Stop in TESTING mode"
+        app.logger.info(message)
+        return {
+            "status": "skipped deletion",
+            "message": message
+        }
+    
     if scheduler:
         scheduler.shutdown(wait=False)
         scheduler = None
-        app.logger.info("Deletion Scheduler has stopped - using APScheduler.")
+        message = "Deletion Scheduler has stopped - using APScheduler."
+        app.logger.info(message)
+        return {
+            "status": "stop scheduler was successful",
+            "message": message
+        }
+    
+    else:
+        message = "No running scheduler detected. Stop skipped."
+        app.logger.info(message)
+        return {
+            "status": "skipped stop",
+            "message": message
+        }
 
 # ensure scheduler not running during testing - uncomment to run schedular
-#if not app.config.get("TESTING", False):
-#    start_deletion_scheduler()
+if not app.config.get("TESTING", False):
+    start_deletion_scheduler()
 
 if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'

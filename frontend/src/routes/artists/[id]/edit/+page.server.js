@@ -10,7 +10,7 @@ export const load = async ({ params, fetch }) => {
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/artworks/${encodeURIComponent(id)}`,
+      `${API_BASE_URL}/api/artists/${encodeURIComponent(id)}`,
       {
         headers: {
           accept: 'application/json'
@@ -19,25 +19,25 @@ export const load = async ({ params, fetch }) => {
     );
 
     if (response.status === 404) {
-      throw error(404, 'Artwork not found. Suggestion: Check the artwork ID or browse artworks to find what you\'re looking for.');
+      throw error(404, 'Artist not found. Suggestion: Verify the artist ID and try again.');
     }
 
     if (!response.ok) {
-      const errorMessage = await extractErrorMessage(response, 'load artwork details');
+      const errorMessage = await extractErrorMessage(response, 'load artist details');
       throw error(response.status, errorMessage);
     }
 
-    const artwork = await response.json();
-    return { artwork };
+    const artist = await response.json();
 
+    return { artist };
   } catch (err) {
-    console.error('artwork detail load failed:', err);
+    console.error('Failed to load artist edit data:', err);
     if (err.status) {
       throw err;
     }
-    const message = err instanceof Error 
-      ? `${err.message}. Suggestion: Check your internet connection and try again.` 
-      : 'Failed to load artwork. Suggestion: Refresh the page or try again later.';
+    const message = err instanceof Error
+      ? `${err.message}. Suggestion: Check your internet connection and refresh the page.`
+      : 'Failed to load artist edit form data. Suggestion: Refresh the page or try again later.';
     throw error(500, message);
   }
 };

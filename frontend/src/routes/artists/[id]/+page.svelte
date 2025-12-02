@@ -11,31 +11,11 @@
   let isDeleting = false;
   let selectedPhoto = null;
   let modalElement;
-  let imageErrors = new Set();
 
   const getThumbnailUrl = (path) => {
     if (!path) return null;
     if (path.startsWith('http')) return path;
-    if (!PUBLIC_API_BASE_URL) {
-      console.warn('PUBLIC_API_BASE_URL is not set, image may not load');
-      return null;
-    }
     return `${PUBLIC_API_BASE_URL}${path}`;
-  };
-
-  const handleImageError = (photoId, event) => {
-    console.error('image failed to load for photo:', photoId, event.target.src);
-    imageErrors = new Set(imageErrors).add(photoId);
-  };
-
-  const isImageError = (photoId) => {
-    return imageErrors.has(photoId);
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return 'Unknown';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
   const handleDelete = async () => {
@@ -48,10 +28,8 @@
     deleteError = null;
 
     try {
-      // Ensure we have a CSRF token
       let csrfToken = $auth.csrfToken;
       if (!csrfToken) {
-        // Fetch CSRF token if we don't have one
         const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
           credentials: 'include'
         });
@@ -62,7 +40,7 @@
       }
 
       const response = await fetch(
-        `${PUBLIC_API_BASE_URL}/api/artworks/${encodeURIComponent(data.artwork.id)}`,
+        `${PUBLIC_API_BASE_URL}/api/artists/${encodeURIComponent(data.artist.artist_id)}`,
         {
           method: 'DELETE',
           headers: {
@@ -74,37 +52,35 @@
       );
 
       if (!response.ok) {
-        // Check if response is JSON
         const contentType = response.headers.get('content-type') || '';
-        let errorMessage = 'Failed to delete artwork';
-        
+        let errorMessage = 'Failed to delete artist';
+
         if (contentType.includes('application/json')) {
           try {
             const errorData = await response.json();
             errorMessage = errorData.error || errorMessage;
           } catch {
-            // JSON parsing failed, use default message
+            // default handled below
           }
         } else {
-          // Non-JSON response (likely HTML error page)
           if (response.status === 400) {
-            errorMessage = 'Bad request. The artwork may have associated photos that cannot be deleted, or the request is invalid.';
+            errorMessage =
+              'Bad request. The artist may still have artworks that must be removed before deletion.';
           } else if (response.status === 403) {
-            errorMessage = 'Permission denied. You do not have permission to delete artworks.';
+            errorMessage = 'Permission denied. You do not have permission to delete artists.';
           } else if (response.status === 404) {
-            errorMessage = 'Artwork not found. It may have already been deleted.';
+            errorMessage = 'Artist not found. It may have already been deleted.';
           } else {
-            errorMessage = `Failed to delete artwork (HTTP ${response.status}). Please try again.`;
+            errorMessage = `Failed to delete artist (HTTP ${response.status}). Please try again.`;
           }
         }
-        
+
         throw new Error(errorMessage);
       }
 
-      // Redirect to artworks list after successful deletion
-      goto('/artworks');
+      goto('/artists');
     } catch (err) {
-      deleteError = err.message || 'An unexpected error occurred while deleting the artwork.';
+      deleteError = err.message || 'An unexpected error occurred while deleting the artist.';
       isDeleting = false;
       deleteConfirm = false;
     }
@@ -114,50 +90,33 @@
     deleteConfirm = false;
   };
 
-  const openPhotoModal = (photo) => {
-    selectedPhoto = photo;
-  };
-
   const closePhotoModal = () => {
     selectedPhoto = null;
   };
 
   const handleModalClick = (e) => {
-    // Close modal if clicking outside the image
     if (e.target === modalElement) {
       closePhotoModal();
     }
   };
 
-  const handleModalKeydown = (event) => {
-    if (event.key === 'Escape') {
-      closePhotoModal();
-    }
-    if ((event.key === 'Enter' || event.key === ' ') && event.target === modalElement) {
-      event.preventDefault();
-      closePhotoModal();
-    }
-  };
-
   const handleKeyDown = (e) => {
-    // Close modal on ESC key
     if (e.key === 'Escape' && selectedPhoto) {
       closePhotoModal();
     }
   };
 
-  $: artistOwnerId = data.artwork?.artist?.user_id;
+  $: artistOwnerId = data.artist?.user_id;
   $: canUpload =
     $auth.isAuthenticated &&
     ($auth.user?.role === 'admin' ||
-      ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
-  $: canEditArtwork =
-    $auth.isAuthenticated &&
-    ($auth.user?.role === 'admin' ||
-      ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
+      ($auth.user?.role === 'artist' &&
+        artistOwnerId &&
+        String(artistOwnerId) === String($auth.user?.id)));
+  $: canEditArtist = canUpload;
+  $: canDeleteArtist = $auth.isAuthenticated && $auth.user?.role === 'admin';
 
   onMount(() => {
-    // Add global keydown listener for ESC key
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
@@ -166,181 +125,172 @@
 </script>
 
 <div class="container">
-    <div class="header">
-      <a href="/artworks" class="back-link">← Back to Artworks</a>
-      {#if canEditArtwork}
-        <div class="actions">
-          <a href="/artworks/{data.artwork.id}/edit" class="btn-secondary">Edit</a>
-          {#if $auth.user?.role === 'admin'}
-            {#if !deleteConfirm}
-              <button on:click={handleDelete} class="btn-danger">Delete</button>
-            {:else}
-              <div class="delete-confirm">
-                <span>Are you sure?</span>
-                <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
-                  {isDeleting ? 'Deleting...' : 'Confirm'}
-                </button>
-                <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
-              </div>
-            {/if}
+  <div class="header">
+    <a href="/artists" class="back-link">← Back to Artists</a>
+    {#if canEditArtist}
+      <div class="actions">
+        <a href="/artists/{data.artist.artist_id}/edit" class="btn-secondary">Edit</a>
+        {#if canDeleteArtist}
+          {#if !deleteConfirm}
+            <button on:click={handleDelete} class="btn-danger">Delete</button>
+          {:else}
+            <div class="delete-confirm">
+              <span>Are you sure?</span>
+              <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
+                {isDeleting ? 'Deleting...' : 'Confirm'}
+              </button>
+              <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
+            </div>
           {/if}
-        </div>
-      {/if}
-    </div>
+        {/if}
+      </div>
+    {/if}
+  </div>
 
   {#if deleteError}
     <div class="error">{deleteError}</div>
   {/if}
 
-  <div class="artwork-detail">
-    <div class="photos-section">
-      {#if data.artwork.photos && Array.isArray(data.artwork.photos) && data.artwork.photos.length > 0}
-        {@const validPhotos = data.artwork.photos.filter(p => p && typeof p === 'object' && (p.thumbnail_url || p.thumbnail || p.url))}
-        {#if validPhotos.length > 0}
-          <div class="photo-gallery">
-            {#each validPhotos as photo}
-              {@const thumbnailUrl = photo.thumbnail_url || photo.thumbnail}
-              {@const mainImageUrl = photo.url}
-              {@const photoId = photo.id || photo.photo_id}
-              {@const displayUrl = thumbnailUrl || mainImageUrl}
-              {#if displayUrl}
-                <button
-                  type="button"
-                  class="photo-item"
-                  on:click={() => openPhotoModal(photo)}
-                  disabled={isImageError(photoId)}
-                >
-                  {#if !isImageError(photoId)}
-                    <img
-                      src={getThumbnailUrl(displayUrl)}
-                      alt={photo.filename || 'Artwork photo'}
-                      on:error={(e) => handleImageError(photoId, e)}
-                      on:load={() => {
-                        const newErrors = new Set(imageErrors);
-                        newErrors.delete(photoId);
-                        imageErrors = newErrors;
-                      }}
-                    />
-                    <div class="photo-overlay">
-                      <span>View Full Size</span>
-                    </div>
-                  {:else}
-                    <div class="no-image-placeholder">
-                      Image failed to load
-                    </div>
-                  {/if}
-                </button>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <div class="no-photos">
-            <p>No photos available for this artwork</p>
-            {#if canUpload}
-              <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Upload Photo</a>
-            {/if}
-          </div>
-        {/if}
+  <div class="artist-detail">
+    <div class="artworks-section">
+      {#if data.artworksError}
+        <div class="artworks-error">{data.artworksError}</div>
+      {:else if data.artworks && data.artworks.length > 0}
+        <div class="artwork-grid">
+          {#each data.artworks as artwork}
+            {@const thumbnailPath = artwork.primary_photo?.thumbnail_url || artwork.primary_photo?.thumbnail}
+            <a href="/artworks/{artwork.id}" class="artwork-card">
+              <div class="artwork-thumbnail">
+                {#if thumbnailPath}
+                  <img src={getThumbnailUrl(thumbnailPath)} alt={artwork.title || 'Artwork thumbnail'} />
+                {:else}
+                  <div class="no-image">No Image</div>
+                {/if}
+              </div>
+              <div class="artwork-info">
+                <h3>{artwork.title || 'Untitled'}</h3>
+                <p class="artwork-id"><code>{artwork.id}</code></p>
+                {#if artwork.medium}
+                  <p class="medium">{artwork.medium}</p>
+                {/if}
+                {#if artwork.storage?.location}
+                  <p class="storage">Storage: {artwork.storage.location}</p>
+                {/if}
+              </div>
+            </a>
+          {/each}
+        </div>
       {:else}
-        <div class="no-photos">
-          <p>No photos available for this artwork</p>
-          {#if canUpload}
-            <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Upload Photo</a>
-          {/if}
+        <div class="no-artworks">
+          <p>No artworks recorded for this artist yet.</p>
         </div>
       {/if}
     </div>
 
     <div class="info-section">
-      <h1>{data.artwork.title}</h1>
-
-      <div class="metadata">
-        <div class="meta-item">
-          <span class="meta-label">Artwork ID</span>
-          <span class="meta-value"><code>{data.artwork.id}</code></span>
-        </div>
-
-        <div class="meta-item">
-          <span class="meta-label">Artist</span>
-          <span class="meta-value">{data.artwork.artist?.name || 'Unknown Artist'}</span>
-        </div>
-
-        {#if data.artwork.artist?.id}
-          <div class="meta-item">
-            <span class="meta-label">Artist ID</span>
-            <span class="meta-value"><code>{data.artwork.artist.id}</code></span>
-          </div>
-        {/if}
-
-        {#if data.artwork.medium}
-          <div class="meta-item">
-            <span class="meta-label">Medium</span>
-            <span class="meta-value">{data.artwork.medium}</span>
-          </div>
-        {/if}
-
-        {#if data.artwork.size}
-          <div class="meta-item">
-            <span class="meta-label">Size</span>
-            <span class="meta-value">{data.artwork.size}</span>
-          </div>
-        {/if}
-
-        {#if data.artwork.date_created}
-          <div class="meta-item">
-            <span class="meta-label">Date Created</span>
-            <span class="meta-value">{formatDate(data.artwork.date_created)}</span>
-          </div>
-        {/if}
-
-        {#if data.artwork.storage}
-          <div class="meta-item">
-            <span class="meta-label">Storage Location</span>
-            <span class="meta-value">
-              {data.artwork.storage.location}
-              {#if data.artwork.storage.type}
-                <span class="storage-type">({data.artwork.storage.type})</span>
-              {/if}
-            </span>
-          </div>
-
-          {#if data.artwork.storage.id}
-            <div class="meta-item">
-              <span class="meta-label">Storage ID</span>
-              <span class="meta-value"><code>{data.artwork.storage.id}</code></span>
-            </div>
-          {/if}
-        {/if}
-
-        {#if data.artwork.photos && data.artwork.photos.length > 0}
-          <div class="meta-item">
-            <span class="meta-label">Photos</span>
-            <span class="meta-value">{data.artwork.photos.length} photo{data.artwork.photos.length === 1 ? '' : 's'}</span>
-          </div>
+      <div class="artist-thumbnail">
+        {#if data.artist.photo_thumbnail}
+          <img
+            src={getThumbnailUrl(data.artist.photo_thumbnail)}
+            alt={`${data.artist.artist_fname || ''} ${data.artist.artist_lname || ''}`.trim() || 'Artist thumbnail'}
+          />
+        {:else}
+          <div class="no-image-placeholder">No Image</div>
         {/if}
       </div>
 
-      {#if canUpload}
-        <div class="actions-bottom">
-          <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Add Photo</a>
+      <h1>{[data.artist.artist_fname, data.artist.artist_lname].filter(Boolean).join(' ') || 'Unknown Artist'}</h1>
+
+      <div class="metadata">
+        <div class="meta-item">
+          <span class="meta-label">Artist ID</span>
+          <span class="meta-value"><code>{data.artist.artist_id}</code></span>
         </div>
-      {/if}
+
+        {#if data.artist.artist_bio}
+          <div class="meta-item">
+            <span class="meta-label">Artist Bio</span>
+            <p class="meta-value bio">{data.artist.artist_bio}</p>
+          </div>
+        {/if}
+
+        {#if data.artist.mediums && data.artist.mediums.length > 0}
+          <div class="meta-item">
+            <span class="meta-label">Mediums</span>
+            <div class="meta-value list">
+              <ul>
+                {#each data.artist.mediums as medium}
+                  <li>{medium}</li>
+                {/each}
+              </ul>
+            </div>
+          </div>
+        {/if}
+
+        {#if data.artist.storage_locations && data.artist.storage_locations.length > 0}
+          <div class="meta-item">
+            <span class="meta-label">Storage Locations</span>
+            <div class="meta-value list">
+              <ul>
+                {#each data.artist.storage_locations as location}
+                  <li>
+                    <span class="storage-location-name">{location.location || 'Unknown location'}</span>
+                    {#if location.type}
+                      <span class="storage-type">({location.type})</span>
+                    {/if}
+                    {#if location.id}
+                      <span class="storage-id"><code>{location.id}</code></span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          </div>
+        {/if}
+
+        {#if data.artist.email}
+          <div class="meta-item">
+            <span class="meta-label">Artist Email</span>
+            <span class="meta-value">{data.artist.email}</span>
+          </div>
+        {/if}
+
+        {#if data.artist.artist_site}
+          <div class="meta-item">
+            <span class="meta-label">Artist Site</span>
+            <span class="meta-value">
+              <a href={data.artist.artist_site} target="_blank" rel="noopener noreferrer">
+                {data.artist.artist_site}
+              </a>
+            </span>
+          </div>
+        {/if}
+
+        {#if data.artist.artist_phone}
+          <div class="meta-item">
+            <span class="meta-label">Artist Phone</span>
+            <span class="meta-value">{data.artist.artist_phone}</span>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 </div>
 
-<!-- Photo Modal -->
 {#if selectedPhoto}
-  {@const fullPhotoUrl = selectedPhoto.url ? getThumbnailUrl(selectedPhoto.url) : (selectedPhoto.thumbnail_url || selectedPhoto.thumbnail ? getThumbnailUrl(selectedPhoto.thumbnail_url || selectedPhoto.thumbnail) : null)}
+  {@const fullPhotoUrl = selectedPhoto.url
+    ? getThumbnailUrl(selectedPhoto.url)
+    : selectedPhoto.thumbnail_url || selectedPhoto.thumbnail
+      ? getThumbnailUrl(selectedPhoto.thumbnail_url || selectedPhoto.thumbnail)
+      : null}
   <div
     class="photo-modal"
     bind:this={modalElement}
     on:click={handleModalClick}
-    on:keydown={handleModalKeydown}
     role="dialog"
     aria-modal="true"
     aria-label="Full size image view"
-    tabindex="0"
+    tabindex="-1"
   >
     <div class="photo-modal-content">
       <button
@@ -353,7 +303,7 @@
       {#if fullPhotoUrl}
         <img
           src={fullPhotoUrl}
-          alt={selectedPhoto.filename || 'Full size artwork photo'}
+          alt={selectedPhoto.filename || 'Full size artist photo'}
           class="photo-modal-image"
         />
       {:else}
@@ -474,85 +424,113 @@
     margin-bottom: 1rem;
   }
 
-  .artwork-detail {
+  .artist-detail {
     display: grid;
     grid-template-columns: 2fr 1fr;
     gap: 2rem;
   }
 
-  .photos-section {
+  .artworks-section {
     background: var(--bg-tertiary);
     border-radius: 8px;
     padding: 1.5rem;
+    min-height: 400px;
+    display: flex;
+    flex-direction: column;
   }
 
-  .photo-gallery {
+  .artworks-error {
+    padding: 1rem;
+    background: var(--error-color);
+    color: white;
+    border-radius: 4px;
+  }
+
+  .artwork-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 350px));
+    gap: 1.5rem;
+    justify-content: center;
   }
 
-  .photo-item {
-    position: relative;
-    aspect-ratio: 1;
+  .artwork-card {
+    background: var(--bg-tertiary);
     border-radius: 8px;
     overflow: hidden;
-    cursor: pointer;
-    display: block;
-    width: 100%;
-    border: none;
-    padding: 0;
-    background: transparent;
-  }
-
-  .photo-item:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .photo-item img {
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    transition: transform 0.2s;
   }
 
-  .photo-item:hover img {
-    transform: scale(1.05);
+  .artwork-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
   }
 
-  .photo-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+  .artwork-thumbnail {
+    width: 100%;
+    height: 200px;
+    background: var(--bg-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
+    overflow: hidden;
   }
 
-  .photo-item:hover .photo-overlay {
-    opacity: 1;
+  .artwork-thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
-  .photo-overlay span {
-    color: white;
+  .no-image {
+    color: var(--text-tertiary);
     font-size: 0.875rem;
-    font-weight: 500;
   }
 
-  .no-photos {
+  .artwork-info {
+    padding: 1rem;
+  }
+
+  .artwork-info h3 {
+    margin: 0 0 0.5rem 0;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+  }
+
+  .artwork-id {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.75rem;
+  }
+
+  .artwork-id code {
+    background: var(--bg-secondary);
+    color: var(--accent-color);
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-weight: bold;
+  }
+
+  .medium,
+  .storage {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin: 0 0 0.25rem 0;
+  }
+
+  .no-artworks {
     text-align: center;
     padding: 3rem;
     color: var(--text-secondary);
   }
 
-  .no-photos p {
-    margin: 0 0 1rem 0;
+  .no-artworks p {
+    margin: 0;
   }
 
   .no-image-placeholder {
@@ -570,12 +548,32 @@
     background: var(--bg-tertiary);
     border-radius: 8px;
     padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
 
   h1 {
     margin: 0 0 1.5rem 0;
     color: var(--text-primary);
     font-size: 1.75rem;
+  }
+
+  .artist-thumbnail {
+    width: 100%;
+    aspect-ratio: 1.5 / 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .artist-thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .metadata {
@@ -622,9 +620,31 @@
     font-size: 0.875rem;
   }
 
+  .meta-value.bio {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  .meta-value.list ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .storage-location-name {
+    font-weight: 600;
+  }
+
   .storage-type {
     color: var(--text-tertiary);
     font-size: 0.875rem;
+    margin-left: 0.25rem;
+  }
+
+  .storage-id {
+    margin-left: 0.5rem;
   }
 
   .actions-bottom {
@@ -634,7 +654,7 @@
   }
 
   @media (max-width: 1024px) {
-    .artwork-detail {
+    .artist-detail {
       grid-template-columns: 1fr;
     }
   }
@@ -716,10 +736,6 @@
       flex-direction: column;
       align-items: flex-start;
       gap: 1rem;
-    }
-
-    .photo-gallery {
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     }
 
     .photo-modal {
