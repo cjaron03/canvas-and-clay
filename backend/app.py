@@ -26,6 +26,8 @@ from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from utils import sanitize_html
+from upload_utils import process_upload, process_artist_profile_upload
+from upload_utils import FileValidationError, delete_photo_files, sanitize_filename
 from encryption import KEY_SOURCE
 
 # Check if we're running in a test environment
@@ -421,6 +423,7 @@ def enforce_session_token():
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
+# Do NOT move this auth import. Will break the Docker build on startup.
 from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event, find_user_by_email
 app.register_blueprint(auth_bp)
 
@@ -679,7 +682,10 @@ def create_artist():
             artist_email = data.get('email'),
             artist_site = data.get('artist_site'),
             artist_bio = data.get('artist_bio'),
-            profile_photo_url = data.get('profile_photo_url'),
+            profile_photo_url = None,
+            profile_photo_thumb_url = None,
+            profile_photo_object_key = None,
+            profile_photo_thumb_object_key = None,
             artist_phone = artist_phone,
             is_deleted = False,
             date_deleted = None,
@@ -719,6 +725,7 @@ def create_artist():
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
                 'profile_photo_url': artist.profile_photo_url,
+                'profile_photo_thumb_url': artist.profile_photo_thumb_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'is_deleted': artist.is_deleted,
@@ -884,6 +891,7 @@ def update_artist(artist_id):
                 'email': artist.artist_email,
                 'artist_site': artist.artist_site,
                 'profile_photo_url': artist.profile_photo_url,
+                'profile_photo_thumb_url': artist.profile_photo_thumb_url,
                 'artist_bio': artist.artist_bio,
                 'artist_phone': artist.artist_phone,
                 'user_id': artist.user_id
@@ -1041,6 +1049,12 @@ def delete_artist(artist_id):
 
                 # Delete artwork
                 db.session.delete(artwork)
+
+            if artist.profile_photo_object_key or artist.profile_photo_thumb_object_key:
+                try:
+                    delete_photo_files(artist.profile_photo_object_key, artist.profile_photo_thumb_object_key)
+                except Exception as e:
+                    app.logger.warning(f"Failed to delete artist profile photo files for {artist.artist_id}: {e}")
             
             # Delete artist
             db.session.delete(artist)
@@ -1383,7 +1397,7 @@ def get_artwork(artwork_id):
             'email': artist.artist_email,
             'phone': artist.artist_phone,
             'website': artist.artist_site,
-            'profile_photo_url': artist.profile_photo_url,
+            'profile_photo_url': artist.profile_photo_thumb_url or artist.profile_photo_url,
             'bio': artist.artist_bio,
             'user_id': artist.user_id
         } if artist else None,
@@ -1454,7 +1468,7 @@ def list_artists_catalog():
                 'last_name': artist.artist_lname,
                 'email': artist.artist_email,
                 'user_id': artist.user_id,
-                'photo': artist.profile_photo_url
+                'photo': artist.profile_photo_thumb_url or artist.profile_photo_url
             }
             // more artists
         ],
@@ -1486,8 +1500,7 @@ def list_artists_catalog():
                         f"search={search}, medium={medium}, storage_id={storage_id}"
                         f"ordering={ordering}, owned_only={owned_only}")
         app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'auth N/A'}")
-       
-    #   TODO check that this works when I'm signed in as an artist-user profile 
+
         current_user_id = None
         if owned_only:
             if not current_user.is_authenticated:
@@ -1588,7 +1601,7 @@ def list_artists_catalog():
                 'last_name': artist.artist_lname,
                 'email': artist.artist_email,
                 'user_id': artist.user_id,
-                'photo': artist.profile_photo_url
+                'photo': artist.profile_photo_thumb_url or artist.profile_photo_url
             })
 
         # Tells the front end how many pages are needed for the entire query
@@ -1665,8 +1678,148 @@ def get_artist_details(artist_id):
         'email': artist.artist_email,
         'artist_site': artist.artist_site,
         'artist_phone': artist.artist_phone,
-        'photo_thumbnail': artist.profile_photo_url
+        'photo_thumbnail': artist.profile_photo_thumb_url or artist.profile_photo_url,
+        'photo_url': artist.profile_photo_url,
     }), 200
+
+
+@app.route('/api/artists/<artist_id>/photos', methods=['GET'])
+@limiter.limit(get_rate_limit_by_identity)
+def get_artist_profile_photo(artist_id):
+    """Return profile photo metadata for an artist."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist or artist.is_deleted:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    if not artist.profile_photo_url:
+        return jsonify({'artist_id': artist_id, 'photo': None}), 200
+
+    return jsonify({
+        'artist_id': artist_id,
+        'photo': {
+            'url': artist.profile_photo_url,
+            'thumbnail_url': artist.profile_photo_thumb_url or artist.profile_photo_url,
+        }
+    }), 200
+
+
+@app.route('/api/artists/<artist_id>/photos', methods=['POST'])
+@login_required
+@limiter.limit("10 per minute")
+def upload_artist_profile_photo(artist_id):
+    """Upload or replace an artist's profile photo."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist or artist.is_deleted:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    if not current_user.is_admin and not is_artist_owner(artist):
+        log_rbac_denial('artist_photo', artist_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
+
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No photo file provided'}), 400
+
+    file = request.files['photo']
+    if not file or file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    file_data = file.read()
+
+    try:
+        metadata = process_artist_profile_upload(file_data, file.filename, artist_id)
+
+        # Delete existing photo if it exists
+        if artist.profile_photo_object_key or artist.profile_photo_thumb_object_key:
+            try:
+                delete_photo_files(artist.profile_photo_object_key, artist.profile_photo_thumb_object_key)
+            except Exception as cleanup_error:
+                app.logger.warning(
+                    f"Failed to delete existing profile photo files for artist {artist_id}: {cleanup_error}"
+                )
+
+        artist.profile_photo_object_key = metadata['file_path']
+        artist.profile_photo_thumb_object_key = metadata['thumbnail_path']
+        artist.profile_photo_url = f"/{metadata['file_path'].lstrip('/')}"
+        artist.profile_photo_thumb_url = f"/{metadata['thumbnail_path'].lstrip('/')}"
+
+        db.session.commit()
+
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='artist_profile_photo_uploaded',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_id': artist_id,
+                'filename': metadata['filename'],
+                'mime_type': metadata['mime_type'],
+                'width': metadata['width'],
+                'height': metadata['height']
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"User {current_user.email} uploaded profile photo for artist {artist_id}")
+
+        return jsonify({
+            'message': 'Profile photo uploaded successfully',
+            'photo': {
+                'url': artist.profile_photo_url,
+                'thumbnail_url': artist.profile_photo_thumb_url
+            }
+        }), 201
+
+    except FileValidationError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Failed to upload artist profile photo")
+        return jsonify({'error': 'Upload failed. Please try again.'}), 500
+
+
+@app.route('/api/artists/<artist_id>/photos', methods=['DELETE'])
+@login_required
+@limiter.limit("10 per minute")
+def delete_artist_profile_photo(artist_id):
+    """Delete an artist's profile photo."""
+    artist = db.session.get(Artist, artist_id)
+    if not artist or artist.is_deleted:
+        return jsonify({'error': 'Artist not found'}), 404
+
+    if not artist.profile_photo_url:
+        return jsonify({'error': 'Photo not found'}), 404
+
+    if not current_user.is_admin and not is_artist_owner(artist):
+        log_rbac_denial('artist_photo', artist_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
+
+    if artist.profile_photo_object_key or artist.profile_photo_thumb_object_key:
+        try:
+            delete_photo_files(artist.profile_photo_object_key, artist.profile_photo_thumb_object_key)
+        except Exception as cleanup_error:
+            app.logger.warning(
+                f"Failed to delete profile photo files for artist {artist_id}: {cleanup_error}"
+            )
+
+    artist.profile_photo_object_key = None
+    artist.profile_photo_thumb_object_key = None
+    artist.profile_photo_url = None
+    artist.profile_photo_thumb_url = None
+
+    db.session.commit()
+
+    log_audit_event(
+        'artist_profile_photo_deleted',
+        user_id=current_user.id,
+        email=current_user.email,
+        details={
+            'artist_id': artist_id
+        }
+    )
+
+    return jsonify({'message': 'Profile photo deleted successfully'}), 200
 
 
 @app.route('/api/storage', methods=['GET'])
@@ -2155,12 +2308,9 @@ def delete_artwork(artwork_id):
         app.logger.exception("Artwork deletion failed")
         return jsonify({'error': 'Failed to delete artwork. Please try again.'}), 500
 
-
-# Photo Upload Endpoints
-from upload_utils import process_upload, FileValidationError, delete_photo_files, sanitize_filename
 from auth import admin_required
 
-
+# Photo Upload Endpoints
 @app.route('/api/artworks/<artwork_id>/photos', methods=['POST'])
 @login_required
 @limiter.limit("20 per minute")

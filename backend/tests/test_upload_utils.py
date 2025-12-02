@@ -22,6 +22,8 @@ try:
         THUMBNAIL_SIZE,
         ARTWORKS_DIR,
         THUMBNAILS_DIR,
+        ARTIST_PROFILE_DIR,
+        ARTIST_PROFILE_THUMBNAILS_DIR,
     )
 except ModuleNotFoundError:
     # In Docker container, backend code is in current directory
@@ -40,6 +42,8 @@ except ModuleNotFoundError:
         THUMBNAIL_SIZE,
         ARTWORKS_DIR,
         THUMBNAILS_DIR,
+        ARTIST_PROFILE_DIR,
+        ARTIST_PROFILE_THUMBNAILS_DIR,
     )
 
 
@@ -82,7 +86,7 @@ def cleanup_uploads():
     """Fixture to clean up test uploads after each test."""
     yield
     # Clean up test files after test runs
-    for directory in [ARTWORKS_DIR, THUMBNAILS_DIR]:
+    for directory in [ARTWORKS_DIR, THUMBNAILS_DIR, ARTIST_PROFILE_DIR, ARTIST_PROFILE_THUMBNAILS_DIR]:
         if os.path.exists(directory):
             for filename in os.listdir(directory):
                 filepath = os.path.join(directory, filename)

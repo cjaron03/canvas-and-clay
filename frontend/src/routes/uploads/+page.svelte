@@ -4,6 +4,7 @@
   import { get } from 'svelte/store';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
+  import { validateImageFile } from '$lib/utils/fileValidation';
 
   let activeTab = 'existing'; // 'existing' or 'new'
   let csrfToken = '';
@@ -105,29 +106,6 @@
     }
   };
 
-  // Validate file
-  const validateFile = (file) => {
-    const maxSize = 10 * 1024 * 1024; // 10MB in bytes
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
-    
-    if (!file.type || !allowedTypes.includes(file.type)) {
-      return {
-        valid: false,
-        error: `"${file.name}" is not a supported image format. Accepted formats: JPG, PNG, WebP, AVIF.`
-      };
-    }
-    
-    if (file.size > maxSize) {
-      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      return {
-        valid: false,
-        error: `"${file.name}" is too large (${sizeMB}MB). Maximum file size is 10MB.`
-      };
-    }
-    
-    return { valid: true };
-  };
-
   // Handle file selection for existing artwork
   const handleFileSelect = (event) => {
     const files = event.target.files || event.dataTransfer?.files;
@@ -137,7 +115,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -210,7 +188,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -263,7 +241,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -337,7 +315,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
