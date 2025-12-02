@@ -12,6 +12,8 @@ venv/
 # Database files
 infra/postgres_data/
 infra/test_postgres_data/
+backend/instance/
+*.db
 
 # Uploaded files (keep .gitkeep)
 backend/uploads/*

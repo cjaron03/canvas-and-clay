@@ -15,9 +15,20 @@ export const load = async ({ fetch}) => {
 
         if (response.ok){
             const data = await response.json();
-            //console.log(JSON.stringify(data));
+            const viewableArt = [];
+
+            const artworksArray = Array.isArray(data.artworks)
+                ? data.artworks
+                : (Array.isArray(data.artworks?.array) ? data.artworks.array : []);
+
+            artworksArray.forEach(artwork => {
+                if (artwork?.is_viewable === true) {
+                    viewableArt.push(artwork);
+                }
+            });
+
             return {
-                artworks: data.artworks,
+                artworks: viewableArt,
                 pagination: data.pagination,
                 error: null
             };

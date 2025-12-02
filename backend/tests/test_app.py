@@ -41,8 +41,7 @@ def test_health_endpoint_database_failure(client):
         data = response.get_json()
         assert data['status'] == 'degraded'
         assert data['service'] == 'canvas-clay-backend'
-        assert 'error' in data['database']
-        assert 'Connection refused' in data['database']
+        assert data['database'] == 'error'
 
 def test_security_headers(client):
     """Test that security headers are set on all responses."""

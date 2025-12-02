@@ -1,10 +1,8 @@
 <script>
     import { PUBLIC_API_BASE_URL } from '$env/static/public';
+    import { auth } from '$lib/stores/auth';
     export let data;
-    //console.log(JSON.stringify(data));
 
-    let artworkList = [];
-    let viewableList = [];
     let currArtIndex = 0;
 
     const getThumbnailUrl = (thumbnail) => {
@@ -38,9 +36,18 @@
             <p>Artist name: {data.artworks[currArtIndex].artist.name}</p>
             <p>Artist email: {data.artworks[currArtIndex].artist.email}</p>
         </div>
-        <button on:click={prevArtwork}>Previous</button>
-        <button on:click={nextArtwork}>Next</button>
+        <div class="button_container">
+            <button class="gallery_button" on:click={prevArtwork}>Previous</button>
+            <button class="gallery_button" on:click={nextArtwork}>Next</button>
+        </div>
     </div>
+    {#if $auth.isAuthenticated}
+        {#if $auth.user?.role === 'admin'}
+            <div class="button_container">
+                <a href="/artworks/{data.artworks[currArtIndex].id}/edit" class="gallery_button">Edit Artwork</a>
+            </div>
+        {/if}
+    {/if}  
 {:else}
     <p>fetch did not work</p>
 {/if}
@@ -48,29 +55,53 @@
 <style>
     .gallery_cont {
         border: 0.05rem solid var(--border-color);
-        width: 50%;
+        width: 95%;
         margin: auto;
+        margin-top: 0.5rem;
         padding: 0.5rem;
         display: flex;
+        flex-direction: column;
+        align-items: center;
     }
 
     .artist_info {
         border: 0.1rem solid var(--border-color);
-        padding: 0.15rem;
+        margin: 0.5rem;
+        padding: 0.5rem;
         background-color: var(--bg-secondary);
     }
 
     .photo_placeholder {
         width: 95%;
-        height: 60%;
+        height: 25rem;
+        display: flex;
+        justify-content: center;
+        align-items: center;
         background-color: var(--bg-tertiary);
     }
 
     .artwork_image {
         display: flex;
-        width: 200%;
-        height: auto;
         justify-content: center;
         align-items: center;
+    }
+
+    .button_container {
+        display: flex;
+        flex-direction: row;
+    }
+
+    .gallery_button {
+        margin: 0.5rem;
+        padding: 1.5rem;
+        width: 8rem;
+        border: 0.15rem solid var(--border-color);
+        border-radius: 1rem;
+        background-color: var(--accent-color);
+        cursor: pointer;
+    }
+
+    .gallery_button:hover {
+        background-color: var(--accent-hover);
     }
 </style>

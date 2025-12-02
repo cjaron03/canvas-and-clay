@@ -40,23 +40,17 @@ function createAuthStore() {
 					});
 					if (meResponse.ok) {
 						const data = await meResponse.json();
-						// Preserve existing CSRF token if /auth/me doesn't return one
-						update((state) => ({
+						set({
 							user: data.user,
 							isAuthenticated: true,
-							csrfToken: data.csrf_token || state.csrfToken
-						}));
-					} else if (meResponse.status === 401) {
-						// 401 is expected when not logged in - silently clear auth state
-						// Note: Browser console will still show the HTTP 401, but this is expected behavior
-						set({
-							user: null,
-							isAuthenticated: false,
-							csrfToken: null
+							csrfToken: data.csrf_token || null
 						});
 					} else {
-						// Other errors (403, 500, etc.) - log but still clear state
-						console.warn('Auth check failed with unexpected status:', meResponse.status);
+						// Explicitly clear auth state if not authenticated
+						// 401 is expected after logout, so don't log it as an error
+						if (meResponse.status !== 401) {
+							console.warn('Auth check failed:', meResponse.status);
+						}
 						set({
 							user: null,
 							isAuthenticated: false,
@@ -223,7 +217,7 @@ function createAuthStore() {
 				csrfToken: null
 			});
 
-			goto('/login');
+			goto('/login?logout=success');
 		},
 
 		// Clear state (for use after 401 errors)
