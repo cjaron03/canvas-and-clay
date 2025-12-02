@@ -1807,7 +1807,6 @@ def delete_artist_profile_photo(artist_id):
     artist.profile_photo_thumb_object_key = None
     artist.profile_photo_url = None
     artist.profile_photo_thumb_url = None
-    artist.profile_photo_uploaded_at = None
 
     db.session.commit()
 
