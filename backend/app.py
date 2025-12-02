@@ -6,10 +6,16 @@ import string
 import sys
 import io
 import zipfile
+import logging
 from datetime import timedelta, datetime, timezone, date
 from urllib.parse import quote_plus
 from functools import wraps
 from dotenv import load_dotenv
+
+# IMPORTANT: load_dotenv() MUST be called before importing encryption module
+# because encryption derives the key at module import time from env vars
+load_dotenv()
+
 from sqlalchemy.pool import StaticPool
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -22,8 +28,7 @@ from flask_limiter.util import get_remote_address
 from utils import sanitize_html
 from upload_utils import process_upload, process_artist_profile_upload
 from upload_utils import FileValidationError, delete_photo_files, sanitize_filename
-
-load_dotenv()
+from encryption import KEY_SOURCE
 
 # Check if we're running in a test environment
 def is_test_environment():
@@ -129,6 +134,74 @@ MAX_PASSWORD_RESET_MESSAGE_LENGTH = get_env_int('PASSWORD_RESET_MESSAGE_MAX_LENG
 
 app = Flask(__name__)
 
+# Log encryption-key status (without exposing key material)
+# Disable ANSI colors when NO_COLOR env var is set or output is not a TTY
+# (common in log aggregators like CloudWatch, Datadog, etc.)
+_use_colors = sys.stdout.isatty() and not os.getenv('NO_COLOR')
+GREEN = "\033[92m" if _use_colors else ""
+RED = "\033[91m" if _use_colors else ""
+YELLOW = "\033[93m" if _use_colors else ""
+CYAN = "\033[96m" if _use_colors else ""
+RESET = "\033[0m" if _use_colors else ""
+
+ASCII_LOGO = r"""
+ ####   ###   #   #  #   #   ###    ####
+#     #   #  ##  #  #   #  #   #  #    
+#     #####  # # #  #   #  #####   ### 
+#     #   #  #  ##   # #   #   #      #
+ ####  #   #  #   #    #    #   #  #### 
+
+ ####  #       ###   #   #
+#     #      #   #   # # 
+#     #      #####    #  
+#     #      #   #    #  
+ ####  #####  #   #    #
+"""
+
+if KEY_SOURCE == "env-key":
+    print(f"{GREEN}**PII ENCRYPTION KEY DETECTED – DECRYPTION SUPPORTED**{RESET}")
+elif KEY_SOURCE == "secret-key":
+    print(f"{YELLOW}**PII ENCRYPTION USING SECRET_KEY FALLBACK – DECRYPTION SUPPORTED (SET PII_ENCRYPTION_KEY FOR CONSISTENCY)**{RESET}")
+else:
+    print(f"{RED}**PII ENCRYPTION USING EPHEMERAL DEV KEY – DECRYPTION WILL FAIL AFTER RESTART. SET PII_ENCRYPTION_KEY.**{RESET}")
+    # Fail early in production if using ephemeral encryption key
+    # (encryption.py already raises in production, but this is a belt-and-suspenders check)
+    if not is_test_environment() and not os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true':
+        raise RuntimeError(
+            "Cannot start in production mode with ephemeral encryption key. "
+            "Set PII_ENCRYPTION_KEY or SECRET_KEY environment variable."
+        )
+print(f"{GREEN}{ASCII_LOGO}{RESET}")
+
+
+def _setup_logging(app_obj):
+    """Uniform, readable docker logs with lowercase levels."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+
+    class LowerFormatter(logging.Formatter):
+        def format(self, record):
+            record.levelname = record.levelname.lower()
+            return super().format(record)
+
+    fmt = "%(asctime)s | %(levelname)s | %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    handler.setFormatter(LowerFormatter(fmt, datefmt))
+
+    app_obj.logger.handlers = []
+    # allow caplog to capture while still formatting our stream handler
+    app_obj.logger.propagate = True
+    app_obj.logger.addHandler(handler)
+    app_obj.logger.setLevel(logging.INFO)
+
+    werkzeug_logger = logging.getLogger("werkzeug")
+    werkzeug_logger.handlers = []
+    werkzeug_logger.addHandler(handler)
+    werkzeug_logger.setLevel(logging.INFO)
+
+
+_setup_logging(app)
+
 # CORS configuration - move to environment variable for production
 # supports multiple origins separated by commas (e.g., "http://localhost:5173,https://example.com")
 cors_origins_env = os.getenv('CORS_ORIGINS')
@@ -154,6 +227,24 @@ engine_options = build_engine_options(database_uri)
 if engine_options:
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+def _mask_db_uri(uri: str) -> str:
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(uri)
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+    except Exception:
+        return uri
+
+
+if is_test_environment():
+    print(f"{YELLOW}**TEST DB ACTIVE** {_mask_db_uri(database_uri)}{RESET}")
+else:
+    print(f"{CYAN}**DB TARGET** {_mask_db_uri(database_uri)}{RESET}")
 
 # Session security configuration
 # security: default to secure=true (HTTPS only), require explicit opt-out for local dev
@@ -332,7 +423,6 @@ def enforce_session_token():
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
-from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event
 from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event
 app.register_blueprint(auth_bp)
 
@@ -4490,6 +4580,56 @@ def admin_console_cli():
                     'confirmation_token': token
                 }), 200
         
+        # Handle scheduler confirmation flow
+        if parsed_command['action'] in ['start_deletion_scheduler', 'stop_deletion_scheduler']:
+            if confirmation_token:
+                # Second confirmation - verify token
+                token_data = _cli_confirmation_tokens.get(confirmation_token)
+                if not token_data:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid or expired confirmation token',
+                        'output': 'Confirmation token is invalid or has expired. Please start over.'
+                    }), 400
+                
+                if token_data.get('user_id') != current_user.id:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Confirmation token does not belong to this user',
+                        'output': 'Confirmation token was issued to a different user. Please start over.'
+                    }), 403
+                
+                try: 
+                    # Execute start command
+                    if parsed_command['action'] == 'start_deletion_scheduler':
+                        result = executor._execute_start_deletion_scheduler()
+                    # Execute stop command
+                    else:
+                        result = executor._execute_stop_deletion_scheduler()
+
+                    # Remove used token
+                   # _cli_confirmation_tokens.pop(confirmation_token, None)
+                    return jsonify(result), 200
+                except CLIExecutionError as e:
+                    return jsonify({
+                        'success': False,
+                        'error': str(e),
+                        'output': f'Scheduler command failed: {str(e)}'
+                    }), 400
+            else:
+                # First request: generate confirmation token
+                token = secrets.token_urlsafe(32)
+                _cli_confirmation_tokens[token] = {
+                    "user_id": current_user.id,
+                    "created_at": datetime.now(timezone.utc)
+                }
+                return jsonify({
+                    "success": True,
+                    "output": f"Are you sure you want to {parsed_command['action'].replace('_', ' ')}?",
+                    "requires_confirmation": True,
+                    "confirmation_token": token
+                }), 200
+
         # Execute other commands
         try:
             result = executor.execute(
@@ -4577,7 +4717,7 @@ def ensure_bootstrap_admin():
     
     try:
         with app.app_context():
-            user = User.query.filter_by(email=bootstrap_email).first()
+            user = find_user_by_email(bootstrap_email)
             
             if user:
                 # ensure existing bootstrap admin has admin role
@@ -4605,9 +4745,18 @@ def ensure_bootstrap_admin():
                     created_at=datetime.now(timezone.utc)
                 )
                 
-                db.session.add(admin_user)
-                db.session.commit()
-                print(f"created bootstrap admin: {bootstrap_email}")
+                try:
+                    db.session.add(admin_user)
+                    db.session.commit()
+                    print(f"created bootstrap admin: {bootstrap_email}")
+                except Exception as create_err:
+                    db.session.rollback()
+                    # Check if it's a unique constraint violation (concurrent startup)
+                    err_str = str(create_err).lower()
+                    if 'unique' in err_str or 'duplicate' in err_str:
+                        print("bootstrap admin already exists, skipping create")
+                    else:
+                        print(f"failed to create bootstrap admin: {create_err}")
     except Exception as e:
         # silently fail if database isn't ready yet (e.g., during migrations)
         # this is expected during initial setup
@@ -4662,7 +4811,6 @@ def _ensure_bootstrap_on_first_request():
 
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
 
 scheduler = None
 # scheduler for deletion of soft-deleted items over 30 days
@@ -4673,7 +4821,26 @@ def start_deletion_scheduler():
         of there being no existing scheduler to prevent
         multiple instances of a scheduler.
     """
+    from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
+
     global scheduler
+
+    if app.config.get("TESTING", False):
+        message = "Skipping Deletion Scheduler start in TESTING mode"
+        app.logger.info(message)
+        return {
+            "status": "skipped start",
+            "message": message
+        }
+    
+    # Skip startup in Flask reloader parent process
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return {
+            "status": "skipped reloader",
+            "message": "Flask reloader parent process, scheduler not started"
+        }
+
+
     if scheduler is None:
         scheduler = BackgroundScheduler(daemon=True)
         scheduler.add_job(
@@ -4687,9 +4854,19 @@ def start_deletion_scheduler():
             days=1
         )
         scheduler.start()
-        app.logger.info("Deletion Scheduler started - using APScheduler.")
+        message = "Deletion Scheduler started - using APScheduler."
+        app.logger.info(message)
+        return {
+            "status": "start scheduler was successful",
+            "message": message
+        }
     else:
-        app.logger.info("Deletion Scheduler already running, skipping start.")
+        message = "Deletion Scheduler already running, skipping start."
+        app.logger.info(message)
+        return {
+            "status": "skipped start",
+            "message": message
+        }
     
 
 # for stopping the deletion scheduler, mostly for testing purposes
@@ -4706,14 +4883,36 @@ def stop_deletion_scheduler():
         deletions. 
     """
     global scheduler
+
+    if app.config.get("TESTING", False):
+        message = "Skipping Deletion Scheduler Stop in TESTING mode"
+        app.logger.info(message)
+        return {
+            "status": "skipped deletion",
+            "message": message
+        }
+    
     if scheduler:
         scheduler.shutdown(wait=False)
         scheduler = None
-        app.logger.info("Deletion Scheduler has stopped - using APScheduler.")
+        message = "Deletion Scheduler has stopped - using APScheduler."
+        app.logger.info(message)
+        return {
+            "status": "stop scheduler was successful",
+            "message": message
+        }
+    
+    else:
+        message = "No running scheduler detected. Stop skipped."
+        app.logger.info(message)
+        return {
+            "status": "skipped stop",
+            "message": message
+        }
 
 # ensure scheduler not running during testing - uncomment to run schedular
-#if not app.config.get("TESTING", False):
-#    start_deletion_scheduler()
+if not app.config.get("TESTING", False):
+    start_deletion_scheduler()
 
 if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'

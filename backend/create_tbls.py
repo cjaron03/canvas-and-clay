@@ -1,5 +1,7 @@
 """Model declarations for non-auth tables used by the Canvas & Clay app."""
 
+from encryption import EncryptedString, normalize_email
+
 def init_tables(db):
     """Return table models, defining them once per process.
 
@@ -35,14 +37,14 @@ def init_tables(db):
         artist_id = db.Column(db.CHAR(8), primary_key=True)
         artist_fname =  db.Column(db.String(20), nullable=False)
         artist_lname =  db.Column(db.String(20), nullable=False)
-        artist_email =  db.Column(db.String(100), nullable=True)
+        artist_email =  db.Column(EncryptedString(255, normalizer=normalize_email), nullable=True)
         artist_site = db.Column(db.String(100), nullable=True)
         profile_photo_url = db.Column(db.String(512), nullable=True)
         profile_photo_thumb_url = db.Column(db.String(512), nullable=True)
         profile_photo_object_key = db.Column(db.String(512), nullable=True)
         profile_photo_thumb_object_key = db.Column(db.String(512), nullable=True)
         artist_bio = db.Column(db.String(800), nullable=True)
-        artist_phone = db.Column(db.CHAR(14), nullable=True)
+        artist_phone = db.Column(EncryptedString(100), nullable=True)
         is_deleted = db.Column(db.Boolean, default=False, server_default='FALSE', nullable=False)
         date_deleted = db.Column(db.Date, nullable=True)
         user_id = db.Column(db.Integer, db.ForeignKey('users.id',

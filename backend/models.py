@@ -5,6 +5,8 @@ Import db from this module after initializing it in app.py.
 from datetime import datetime, timezone
 from flask_login import UserMixin
 
+from encryption import EncryptedString, normalize_email
+
 
 def init_models(database):
     """Initialize models with the database instance.
@@ -34,7 +36,7 @@ def init_models(database):
         __tablename__ = 'users'
         
         id = database.Column(database.Integer, primary_key=True)
-        email = database.Column(database.String(120), unique=True, nullable=False, index=True)
+        email = database.Column(EncryptedString(255, normalizer=normalize_email), unique=True, nullable=False, index=True)
         hashed_password = database.Column(database.String(128), nullable=False)
         created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
         role = database.Column(database.String(20), nullable=False, default='guest')
@@ -115,17 +117,23 @@ def init_models(database):
     
     class FailedLoginAttempt(database.Model):
         """Model to track failed login attempts for account lockout.
-        
+
         Attributes:
             id: Primary key
             email: Email address that failed login
             ip_address: IP address of the failed attempt
             attempted_at: Timestamp of the failed attempt
             user_agent: User agent string from the request
+
+        SECURITY NOTE: email is intentionally NOT encrypted here because:
+        - Rate limiting requires fast, searchable lookups by email
+        - These records have short retention (cleaned up after lockout window)
+        - The threat model prioritizes operational security over data-at-rest protection
         """
         __tablename__ = 'failed_login_attempts'
-        
+
         id = database.Column(database.Integer, primary_key=True)
+        # Intentionally unencrypted - see class docstring for rationale
         email = database.Column(database.String(120), nullable=False, index=True)
         ip_address = database.Column(database.String(45), nullable=False, index=True)
         attempted_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
@@ -136,7 +144,7 @@ def init_models(database):
     
     class AuditLog(database.Model):
         """Model for security audit logging.
-        
+
         Attributes:
             id: Primary key
             event_type: Type of event (e.g., 'login_success', 'login_failure', 'account_locked')
@@ -146,12 +154,18 @@ def init_models(database):
             user_agent: User agent string from the request
             details: Additional details in JSON format
             created_at: Timestamp of the event
+
+        SECURITY NOTE: email is intentionally NOT encrypted here because:
+        - Security investigations require searchable audit trails
+        - Compliance requirements may mandate plaintext audit records
+        - Audit logs should remain readable even if encryption keys are rotated
         """
         __tablename__ = 'audit_logs'
-        
+
         id = database.Column(database.Integer, primary_key=True)
         event_type = database.Column(database.String(50), nullable=False, index=True)
         user_id = database.Column(database.Integer, nullable=True, index=True)
+        # Intentionally unencrypted - see class docstring for rationale
         email = database.Column(database.String(120), nullable=True, index=True)
         ip_address = database.Column(database.String(45), nullable=False, index=True)
         user_agent = database.Column(database.String(255), nullable=True)
@@ -167,7 +181,7 @@ def init_models(database):
 
         id = database.Column(database.Integer, primary_key=True)
         user_id = database.Column(database.Integer, database.ForeignKey('users.id'), nullable=True, index=True)
-        email = database.Column(database.String(254), nullable=False, index=True)
+        email = database.Column(EncryptedString(255, normalizer=normalize_email), nullable=False, index=True)
         status = database.Column(database.String(20), nullable=False, default='pending', index=True)
         user_message = database.Column(database.Text, nullable=True)
         admin_message = database.Column(database.Text, nullable=True)
