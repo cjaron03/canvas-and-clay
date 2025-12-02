@@ -11,12 +11,12 @@
         return `${PUBLIC_API_BASE_URL}${thumbnail}`;
     };
 
-    function nextArtwork(){
+    const nextArtwork = () => {
         currArtIndex = (currArtIndex + 1) % data.artworks.length;
-    }
-    function prevArtwork(){
+    };
+    const prevArtwork = () => {
         currArtIndex = (currArtIndex - 1 + data.artworks.length) % data.artworks.length;
-    }
+    };
     
 </script>
 
