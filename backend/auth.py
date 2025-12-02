@@ -171,7 +171,7 @@ def is_photo_owner(photo):
 
 
 @auth_bp.route('/csrf-token', methods=['GET'])
-@rate_limit("100 per minute")  # More lenient limit for frequently-called endpoint
+@rate_limit("200 per minute")  # High traffic endpoint
 def get_csrf_token():
     """get csrf token for frontend requests.
     
@@ -281,7 +281,7 @@ def is_bootstrap_email(email: str) -> bool:
 
 
 @auth_bp.route('/register', methods=['POST'])
-@rate_limit("3 per minute")
+@rate_limit("10 per minute")
 def register():
     """Register a new user account.
 
@@ -518,7 +518,7 @@ def clear_failed_login_attempts(email):
 
 
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit("20 per 15 minutes")  # Increased for development/testing
+@rate_limit("10 per minute")
 def login():
     """Login with email and password.
     
@@ -702,7 +702,7 @@ def delete_account():
 
 
 @auth_bp.route('/me', methods=['GET'])
-@rate_limit("100 per minute")  # More lenient limit for frequently-called endpoint
+@rate_limit("200 per minute")  # Frequently called endpoint
 @login_required
 def get_current_user():
     """Get current authenticated user information.
@@ -754,7 +754,7 @@ def admin_only_route():
 
 
 @auth_bp.route('/password-reset/request', methods=['POST'])
-@rate_limit("3 per hour")
+@rate_limit("5 per hour")
 def request_password_reset():
     """Allow users to file a manual password reset request for admin review."""
     db, _, User, _, _, PasswordResetRequest, _ = get_dependencies()
@@ -820,7 +820,7 @@ def request_password_reset():
 
 
 @auth_bp.route('/password-reset/verify', methods=['POST'])
-@rate_limit("10 per hour")
+@rate_limit("20 per hour")
 def verify_reset_code():
     """Verify a reset code without changing the password."""
     db, bcrypt, User, _, _, PasswordResetRequest, _ = get_dependencies()
@@ -893,7 +893,7 @@ def verify_reset_code():
 
 
 @auth_bp.route('/password-reset/confirm', methods=['POST'])
-@rate_limit("5 per hour")
+@rate_limit("10 per hour")
 def confirm_password_reset():
     """Redeem an admin-issued reset code and set a new password."""
     db, bcrypt, User, _, _, PasswordResetRequest, _ = get_dependencies()
