@@ -40,8 +40,6 @@
 - [x] **privilege escalation via self-service admin role** - FIXED (fix-privilege-escalation-csrf branch)
   - removed role parameter from registration endpoint
   - all new users are forced to 'visitor' role
-  - bootstrap admin created via environment variable on startup
-  - migration added to downgrade existing admins to visitor except bootstrap admin
   - admin promotion endpoint deferred to future implementation
 
 - [x] **csrf protection missing** - FIXED (fix-privilege-escalation-csrf branch)
@@ -142,6 +140,73 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
 
 ---
 
+## RBAC & Dynamic Rate Limiting (November 2025)
+
+### role normalization and identity-based rate limiting completed
+
+### phase 1 - role normalization (visitor → guest)
+- [x] **semantic improvement** - COMPLETED
+  - normalized role from 'visitor' to 'guest' for clarity
+  - `User.normalized_role` property handles backwards compatibility
+  - `User.is_guest` property added for convenience
+  - database migration updates existing 'visitor' roles to 'guest'
+  - code fallback treats legacy 'visitor' as 'guest'
+  - all API responses now return normalized roles
+  - tests updated to expect 'guest' instead of 'visitor'
+
+### phase 2 - dynamic rate limiting by identity
+- [x] **identity-based rate limits** - COMPLETED
+  - `get_rate_limit_by_identity()` function determines rate limit dynamically
+  - anonymous users (no session): 100 requests/minute
+  - logged-in guests (including artist-linked): 200 requests/minute
+  - admins: 1000 requests/minute
+  - upload endpoints: 20/minute for ALL users (security-critical)
+  - applied to public read endpoints (search, browse, view)
+
+### phase 3 - RBAC decorators and helpers
+- [x] **helper functions** - COMPLETED
+  - `get_current_role()` - returns 'admin', 'guest', or 'anonymous'
+  - `is_artwork_owner(artwork)` - checks `artwork.artist.user_id == current_user.id`
+  - `is_photo_owner(photo)` - checks artwork ownership via photo's artwork
+  - `log_rbac_denial(resource_type, resource_id, reason)` - audit logs with differentiated reasons
+
+### phase 4 - ownership-based mutation permissions
+- [x] **endpoint permissions** - COMPLETED
+  - **public read (anonymous/guest)**: search, browse artworks, view details
+  - **owner OR admin**: edit/delete artwork, upload/delete photos on owned artworks
+  - **admin-only**: create artworks, orphaned photo uploads, storage CRUD, artist-user assignment
+  - owners can delete ANY photo on their artwork (not just photos they uploaded)
+  - consistent 403 responses with differentiated audit logging
+
+### implementation details
+- **permission matrix**:
+  | Action              | Guest | Guest+Owner | Admin |
+  |---------------------|-------|-------------|-------|
+  | Search/browse       | ✓     | ✓           | ✓     |
+  | Create artwork      | ✗     | ✗           | ✓     |
+  | Edit own artwork    | ✗     | ✓           | ✓     |
+  | Delete own artwork  | ✗     | ✓           | ✓     |
+  | Upload to own art   | ✗     | ✓           | ✓     |
+  | Upload orphaned     | ✗     | ✗           | ✓     |
+  | Assign artist→user  | ✗     | ✗           | ✓     |
+
+- **rate limit matrix**:
+  | User Type              | Rate Limit    |
+  |------------------------|---------------|
+  | Anonymous              | 100/minute    |
+  | Logged-in Guest        | 200/minute    |
+  | Artist-linked Guest    | 200/minute    |
+  | Admin                  | 1000/minute   |
+  | Upload (all users)     | 20/minute     |
+
+- **audit logging**: RBAC denials logged with reason ('insufficient_role' vs 'not_owner')
+- **backwards compatibility**: existing 'visitor' users automatically treated as 'guest'
+- **migration path**: Alembic migration updates database, code fallback for safety
+
+see `backend/tests/test_rbac_rate_limits.py` for comprehensive test coverage.
+
+---
+
 ## High Priority (Core Security)
 
 ### Authentication & Authorization
@@ -153,9 +218,10 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
   - [x] Add "remember me" functionality with secure tokens
 
 - [x] **Role-Based Access Control (RBAC)** - COMPLETED
-  - [x] Define user roles: Admin, Visitor
+  - [x] Define user roles: Admin, Guest (normalized from Visitor)
   - [x] Create decorators for role checking (@admin_required, @login_required)
-  - [ ] Implement permission system for artwork management (pending artwork features)
+  - [x] Implement permission system for artwork management (owner-based RBAC)
+  - [x] Dynamic rate limiting by user identity (anonymous/guest/admin)
   - [ ] Admin dashboard access control (pending frontend implementation)
 
 ### Input Validation & Sanitization
@@ -245,7 +311,7 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
   - [x] Log account lockout events
   - [x] Log rate limit exceeded events
   - [ ] Log admin actions and role changes (pending admin promotion endpoint)
-  - [ ] Log sensitive operations (password resets, account modifications)
+  - [x] Log sensitive operations (password resets, account modifications)
   - [ ] Log file uploads (pending file upload feature)
   - [ ] Set up log rotation and aggregation (operational concern)
   - [ ] Configure alerting for suspicious patterns (operational concern)
@@ -258,10 +324,10 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
 - [ ] Implement HSTS headers
 
 ### Password Policies
-- [ ] Minimum length: 8 characters
-- [ ] Require uppercase, lowercase, number, special char
-- [ ] Prevent common passwords
-- [ ] Implement password strength meter
+- [x] Minimum length: 8 characters
+- [x] Require uppercase, lowercase, number, special char
+- [x] Prevent common passwords
+- [x] Implement password strength meter
 
 ### Two-Factor Authentication (Optional)
 - [ ] Add TOTP-based 2FA
@@ -281,6 +347,19 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
 - [x] CSRF testing
 - [ ] File upload bypass testing
 - [ ] Authentication bypass testing
+
+### Password Changes 
+- [ ] Require current passwords before allowing a change 
+- [ ] validate current password using same rules for reg (length, complexity etc)
+- [ ] log password changes in audit log 
+- [ ] require re-auth for sensistive ops after password change 
+
+
+### Prevent Account duplicates (Check)
+ - [ ] Just check to see if a user can register a account using a email already registered
+Notes:
+  make sure to use bycrpt to generate the hash, update hashed passoword in password field under user model, and consider invalidating all existing sessions after change (revoke csrf tokens)
+
 
 ## Implementation Priority Order
 
@@ -309,7 +388,14 @@ see `docs/UPLOAD_SECURITY_PLAN.md` for complete implementation details and test 
 4. ~~**orphaned upload controls**~~ - COMPLETED: admin-only policy
 5. ~~**upload security tests**~~ - COMPLETED: comprehensive test suite
 
-### phase 4 (future enhancements)
+### phase 4 (COMPLETED - RBAC & Dynamic Rate Limiting - November 2025)
+1. ~~**role normalization (visitor→guest)**~~ - COMPLETED: semantic improvement with backwards compatibility
+2. ~~**dynamic rate limiting by identity**~~ - COMPLETED: different limits for anonymous/guest/admin
+3. ~~**RBAC decorators and helpers**~~ - COMPLETED: owner checking, audit logging
+4. ~~**ownership-based RBAC enforcement**~~ - COMPLETED: owners can edit/delete artworks and photos
+5. ~~**comprehensive RBAC tests**~~ - COMPLETED: test suite for all permission scenarios
+
+### phase 5 (future enhancements)
 10. JWT token implementation
 11. two-factor authentication
 12. penetration testing

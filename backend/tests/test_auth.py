@@ -1,6 +1,7 @@
 """Tests for authentication endpoints and session security."""
+from datetime import datetime, timezone, timedelta
 import pytest
-from app import app, db, User
+from app import app, db, User, PasswordResetRequest, bcrypt
 
 
 @pytest.fixture
@@ -82,7 +83,7 @@ class TestUserRegistration:
         data = response.get_json()
         assert data['message'] == 'User registered successfully'
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == 'visitor'
+        assert data['user']['role'] == 'guest'
         assert 'id' in data['user']
         assert 'created_at' in data['user']
         assert 'password' not in data['user']
@@ -176,15 +177,15 @@ class TestUserRegistration:
         assert '128 characters' in data['error']
     
     def test_register_ignores_role_parameter(self, client, sample_user):
-        """test that role parameter is ignored and all users are created as visitor (security fix)."""
+        """test that role parameter is ignored and all users are created as guest (security fix)."""
         # try to register as admin (should be ignored)
         sample_user['role'] = 'admin'
         response = client.post('/auth/register', json=sample_user)
-        
+
         assert response.status_code == 201
         data = response.get_json()
-        # verify user was created as visitor, not admin
-        assert data['user']['role'] == 'visitor'
+        # verify user was created as guest, not admin
+        assert data['user']['role'] == 'guest'
     
     def test_register_no_data(self, client):
         """Test registration with no JSON data."""
@@ -213,8 +214,8 @@ class TestUserLogin:
         data = response.get_json()
         assert data['message'] == 'Login successful'
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == 'visitor'
-        
+        assert data['user']['role'] == 'guest'
+
         # verify session cookie is set
         assert 'Set-Cookie' in response.headers or 'session' in str(response.headers)
     
@@ -322,6 +323,7 @@ class TestUserLogin:
         assert response.status_code == 403
         data = response.get_json()
         assert 'Account is disabled' in data['error']
+        assert 'contact a Canvas admin' in data['error']
 
 
 class TestUserLogout:
@@ -377,7 +379,7 @@ class TestProtectedRoutes:
     
     def test_admin_route_as_admin(self, client, admin_user):
         """Test admin route access with admin role."""
-        # Register user (will be visitor by default)
+        # Register user (will be guest by default)
         client.post('/auth/register', json=admin_user)
         
         # Manually promote to admin (simulating admin promotion endpoint)
@@ -399,9 +401,9 @@ class TestProtectedRoutes:
         data = response.get_json()
         assert 'Admin access granted' in data['message']
     
-    def test_admin_route_as_visitor(self, client, sample_user):
-        """Test admin route access denied for visitor role."""
-        # Register and login as visitor
+    def test_admin_route_as_guest(self, client, sample_user):
+        """Test admin route access denied for guest role."""
+        # Register and login as guest
         client.post('/auth/register', json=sample_user)
         client.post('/auth/login', json={
             'email': sample_user['email'],
@@ -430,7 +432,7 @@ class TestProtectedRoutes:
         assert response.status_code == 200
         data = response.get_json()
         assert data['user']['email'] == sample_user['email']
-        assert data['user']['role'] == 'visitor'
+        assert data['user']['role'] == 'guest'
 
 
 class TestSessionSecurity:
@@ -552,3 +554,90 @@ class TestCSRFProtection:
         
         # should fail with 400
         assert response.status_code == 400
+
+
+class TestPasswordResetFlow:
+    """Tests for manual password reset workflow endpoints."""
+
+    def test_password_reset_request_creates_entry(self, client, sample_user):
+        """Verify requesting a reset creates a pending record."""
+        client.post('/auth/register', json=sample_user)
+
+        response = client.post('/auth/password-reset/request', json={
+            'email': sample_user['email'],
+            'message': 'Please reset my password'
+        })
+        assert response.status_code == 200
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            assert entry is not None
+            assert entry.status == 'pending'
+            assert entry.user_message is not None
+
+    def test_password_reset_request_deduplicates(self, client, sample_user):
+        """Ensure duplicate requests are ignored while still returning 200."""
+        client.post('/auth/register', json=sample_user)
+        client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+
+        response = client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+        assert response.status_code == 200
+        data = response.get_json()
+        assert 'pending' in data['message'].lower()
+
+        with app.app_context():
+            assert PasswordResetRequest.query.filter_by(email=sample_user['email']).count() == 1
+
+    def test_password_reset_confirm_success(self, client, sample_user):
+        """End-to-end reset confirmation updates the stored password hash."""
+        client.post('/auth/register', json=sample_user)
+        client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+        reset_code = 'RESETCODE12'
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry.status = 'approved'
+            entry.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
+            entry.reset_code_hint = reset_code[-4:]
+            entry.expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+            db.session.commit()
+
+        response = client.post('/auth/password-reset/confirm', json={
+            'email': sample_user['email'],
+            'code': reset_code,
+            'password': 'BrandNewPass123'
+        })
+        assert response.status_code == 200
+
+        with app.app_context():
+            user = User.query.filter_by(email=sample_user['email']).first()
+            assert bcrypt.check_password_hash(user.hashed_password, 'BrandNewPass123')
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            assert entry.status == 'completed'
+
+    def test_password_reset_confirm_expired_code(self, client, sample_user):
+        """Expired reset codes are rejected and marked as expired."""
+        client.post('/auth/register', json=sample_user)
+        client.post('/auth/password-reset/request', json={'email': sample_user['email']})
+        reset_code = 'EXPIRED12'
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry.status = 'approved'
+            entry.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
+            entry.reset_code_hint = reset_code[-4:]
+            entry.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.session.commit()
+
+        response = client.post('/auth/password-reset/confirm', json={
+            'email': sample_user['email'],
+            'code': reset_code,
+            'password': 'AnotherPass123'
+        })
+        assert response.status_code == 400
+        data = response.get_json()
+        assert 'expired' in data['error'].lower()
+
+        with app.app_context():
+            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            assert entry.status == 'expired'

@@ -61,6 +61,11 @@ pip install -r requirements.txt
 python app.py
 ```
 
+**Security-critical env vars (backend):**
+- `SECRET_KEY` **must** be set for any secure/non-dev run (app now fails fast if missing when secure cookies are enabled).
+- `CORS_ORIGINS` must be set when cookies are secure; keep localhost only for local dev. Comma-separate multiple origins.
+- `ALLOW_INSECURE_COOKIES=true` is only for local HTTP dev; leave unset/false in prod.
+
 ### Frontend (SvelteKit)
 ```bash
 cd frontend
@@ -74,6 +79,14 @@ npm run dev
 - Database credentials can be provided as a single `DATABASE_URL` **or** via granular settings (`DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_ENGINE`). Optional security/perf variables include `DB_SSL_MODE`, `DB_SSL_ROOT_CERT`, and pooling controls (`DB_POOL_SIZE`, `DB_POOL_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`, `DB_POOL_RECYCLE`, `DB_POOL_PRE_PING`).
 - Frontend `.env`: Configure API base URL (default: `http://localhost:5001`)
   - `PUBLIC_API_BASE_URL`: Points to the backend API (must be prefixed with `PUBLIC_` for SvelteKit)
+
+**Tests (backend):**
+- Point tests to the SQLite test DB to avoid Postgres dependency:
+  ```bash
+  cd backend
+  DATABASE_URL=sqlite:///app_test.db TEST_DATABASE_URL=sqlite:///app_test.db ./venv/bin/pytest
+  ```
+  (Adjust `TEST_DATABASE_URL` if you prefer a different test database.)
 
 ## Docker Optimization
 
@@ -238,10 +251,6 @@ Create `backend/.env` from `backend/.env.example`:
 # Session Security Settings (for local development)
 ALLOW_INSECURE_COOKIES=true  # Allow cookies over HTTP (set to false in production)
 
-# Bootstrap Admin Configuration
-BOOTSTRAP_ADMIN_EMAIL=admin@canvas-clay.local
-BOOTSTRAP_ADMIN_PASSWORD=ChangeMe123  # change immediately after first login
-
 # CORS Configuration (optional - defaults to http://localhost:5173)
 CORS_ORIGINS=http://localhost:5173,https://example.com
 ```
@@ -249,7 +258,6 @@ CORS_ORIGINS=http://localhost:5173,https://example.com
 **Important Notes:**
 - For local development without HTTPS, set `ALLOW_INSECURE_COOKIES=true` in `.env`
 - Cookies default to `Secure=True` (HTTPS only) for production security
-- The bootstrap admin user is automatically created/promoted on application startup
 - All new user registrations are forced to 'visitor' role (security fix)
 - Admin role can only be granted by existing admins (future admin promotion endpoint)
 - CORS origins can be configured via `CORS_ORIGINS` env var (comma-separated for multiple origins)

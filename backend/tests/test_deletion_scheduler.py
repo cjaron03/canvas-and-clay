@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import db, app, Artist, Artwork, Storage, ArtworkPhoto
 from app import start_deletion_scheduler, stop_deletion_scheduler, scheduler
-from scheduled_deletes import scheduled_artwork_deletion
+from scheduled_deletes import scheduled_artwork_deletion, scheduled_artist_deletion
 
 
 @pytest.fixture
@@ -42,7 +42,97 @@ def mock_delete_files(monkeypatch):
 
 
 @pytest.fixture
-def test_data(client):
+def test_artist_data(client):
+    """Create test data for scheduled_artist_deletion()."""
+
+    # Creating old soft-deleted artist 
+    old_date = date.today() - timedelta(days=40)
+    old_artist = Artist(
+        artist_id='ARTISTOL',
+        artist_fname='Old',
+        artist_lname='Artist',
+        artist_email='old@artist.com',
+        artist_phone='(111)-111-1111',
+        is_deleted=True,
+        date_deleted=old_date
+    )
+
+    # Creating recently deleted artist
+    recent_date = date.today() - timedelta(days=5)
+    recent_artist = Artist(
+        artist_id='ARTIST11',
+        artist_fname='Recent',
+        artist_lname='Artist',
+        artist_email='recent@artist.com',
+        artist_phone='(222)-222-2222',
+        is_deleted=True,
+        date_deleted=recent_date
+    )
+    db.session.add_all([old_artist, recent_artist])
+    db.session.flush()
+
+    #  Creating Storage 
+    test_artist_storage = Storage(
+        storage_id='STOR002',
+        storage_loc='Test Storage',
+        storage_type='Rack'
+    )
+    db.session.add(test_artist_storage)
+    db.session.flush()
+
+    # Creating artwork for old artist
+    old_artwork = Artwork(
+        artwork_num='OLDARTW1',
+        artwork_ttl='Old Art',
+        is_deleted=True,
+        date_deleted=old_date,
+        artist_id='ARTISTOL',
+        storage_id='STOR002'
+    )
+
+    # Creating artwork for recent artist
+    recent_artwork = Artwork(
+        artwork_num='RECARTW1',
+        artwork_ttl='Recent Art',
+        is_deleted=True,
+        date_deleted=recent_date,
+        artist_id='ARTIST11',
+        storage_id='STOR002'
+    )
+
+    db.session.add_all([old_artwork, recent_artwork])
+    db.session.flush()
+
+    # Creating photo for old artwork
+    old_photo = ArtworkPhoto(
+        photo_id='PHOTO111',
+        artwork_num='OLDARTW1',
+        filename='old_photo.jpg',
+        file_path='/fake/path/old_photo.jpg',
+        thumbnail_path='/fake/path/thumb-old-photo.jpg',
+        file_size=100,
+        mime_type='image/jpeg',
+        width=100,
+        height=100,
+        uploaded_at=datetime.now(timezone.utc),
+        is_primary=False
+    )
+    db.session.add(old_photo)
+    db.session.flush()
+
+
+    db.session.commit()
+
+    return {
+        "artists": [old_artist, recent_artist],
+        "storage": test_artist_storage,
+        "artworks": [old_artwork, recent_artwork],
+        "photos": [old_photo]
+    }
+
+
+@pytest.fixture
+def test_artwork_data(client):
     """ Create test data, including soft deleted artwork older than 30 days, with photos"""
   
     # Creating test artist
@@ -130,11 +220,51 @@ def test_data(client):
     }
 
 
+class TestScheduledArtistDeletion:
+    """Tests for scheduled_artist_deletion() function."""
+    def test_delete_old_soft_deleted_artist(
+            self, client, mock_delete_files, test_artist_data
+    ):
+        """Ensure artists older than 30 days and their photos are deleted.
+            And that recently soft-deleted artists remains."""
+        # Pre-conditions
+        assert Artist.query.count() == 2
+        assert Artwork.query.count() == 2
+        assert ArtworkPhoto.query.count() == 1
+
+        # run scheduled artsit deletion manually
+        scheduled_artist_deletion()
+
+        # Validate deleiton
+        assert Artist.query.count() == 1
+        assert Artwork.query.count() == 1
+        assert ArtworkPhoto.query.count() == 0
+
+        # Ensure recently deleted artist was not included in scheduled deletion
+        remaining_artist = Artist.query.first()
+        assert remaining_artist.artist_id == 'ARTIST11'
+
+    
+    def test_no_error_when_no_old_artists(self, client, mock_delete_files):
+        """Deleting when nothing qualifies should not raise errors."""
+        # Ensure empty DB
+        assert Artist.query.count() == 0
+        assert Artwork.query.count() == 0
+        assert ArtworkPhoto.query.count() == 0
+
+        # should raise no exceptions
+        scheduled_artist_deletion()
+
+        # Ensure DB still empty
+        assert Artist.query.count() == 0
+        assert Artwork.query.count() == 0
+        assert ArtworkPhoto.query.count() == 0
+
 class TestScheduledArtworkDeletion:
     """Tests for scheduled_artwork_deletion() function."""
 
     def test_delete_old_soft_deleted_artwork(
-        self, client, mock_delete_files, test_data
+        self, client, mock_delete_files, test_artwork_data
     ):
         """Ensure artworks older than 30 days and their photos are deleted.
            And that the recently soft-deleted artwork remains.

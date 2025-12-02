@@ -122,6 +122,16 @@
     }
   };
 
+  $: artistOwnerId = data.artwork?.artist?.user_id;
+  $: canUpload =
+    $auth.isAuthenticated &&
+    ($auth.user?.role === 'admin' ||
+      ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
+  $: canEditArtwork =
+    $auth.isAuthenticated &&
+    ($auth.user?.role === 'admin' ||
+      ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
+
   onMount(() => {
     // Add global keydown listener for ESC key
     window.addEventListener('keydown', handleKeyDown);
@@ -132,25 +142,27 @@
 </script>
 
 <div class="container">
-  <div class="header">
-    <a href="/artworks" class="back-link">← Back to Artworks</a>
-    {#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
-      <div class="actions">
-        <a href="/artworks/{data.artwork.id}/edit" class="btn-secondary">Edit</a>
-        {#if !deleteConfirm}
-          <button on:click={handleDelete} class="btn-danger">Delete</button>
-        {:else}
-          <div class="delete-confirm">
-            <span>Are you sure?</span>
-            <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
-              {isDeleting ? 'Deleting...' : 'Confirm'}
-            </button>
-            <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </div>
+    <div class="header">
+      <a href="/artworks" class="back-link">← Back to Artworks</a>
+      {#if canEditArtwork}
+        <div class="actions">
+          <a href="/artworks/{data.artwork.id}/edit" class="btn-secondary">Edit</a>
+          {#if $auth.user?.role === 'admin'}
+            {#if !deleteConfirm}
+              <button on:click={handleDelete} class="btn-danger">Delete</button>
+            {:else}
+              <div class="delete-confirm">
+                <span>Are you sure?</span>
+                <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
+                  {isDeleting ? 'Deleting...' : 'Confirm'}
+                </button>
+                <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
+              </div>
+            {/if}
+          {/if}
+        </div>
+      {/if}
+    </div>
 
   {#if deleteError}
     <div class="error">{deleteError}</div>
@@ -185,7 +197,7 @@
       {:else}
         <div class="no-photos">
           <p>No photos available for this artwork</p>
-          {#if $auth.isAuthenticated}
+          {#if canUpload}
             <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Upload Photo</a>
           {/if}
         </div>
@@ -261,7 +273,7 @@
         {/if}
       </div>
 
-      {#if $auth.isAuthenticated}
+      {#if canUpload}
         <div class="actions-bottom">
           <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Add Photo</a>
         </div>

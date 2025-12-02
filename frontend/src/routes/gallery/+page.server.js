@@ -1,27 +1,11 @@
 import { API_BASE_URL } from '$env/static/private';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
 
-export const load = async ({ url, fetch}) => {
-    const page = parseInt(url.searchParams.get('page') ?? '1', 10);
-    const perPage = parseInt(url.searchParams.get('per_page') ?? '20', 10);
-    const search = url.searchParams.get('search') ?? '';
-    const artistId = url.searchParams.get('artist_id') ?? '';
-    const medium = url.searchParams.get('medium') ?? '';
-    const storageId = url.searchParams.get('storage_id') ?? '';
-    const ordering = url.searchParams.get('ordering') ?? 'title_asc';
+export const load = async ({ fetch}) => {
 
     try {
-        const params = new URLSearchParams();
-        params.set('page', page.toString());
-        params.set('per_page', perPage.toString());
-        if (search) params.set('search', search);
-        if (artistId) params.set('artist_id', artistId);
-        if (medium) params.set('medium', medium);
-        if (storageId) params.set('storage_id', storageId);
-        if (ordering) params.set('ordering', ordering);
-
         const response = await fetch(
-            `${API_BASE_URL}/api/artworks?${params.toString()}`,
+            `${API_BASE_URL}/api/artworks?`,
             {
                 headers: {
                     accept: 'application/json'
@@ -29,7 +13,27 @@ export const load = async ({ url, fetch}) => {
             }
         )
 
-        if (!response.ok){
+        if (response.ok){
+            const data = await response.json();
+            const viewableArt = [];
+
+            const artworksArray = Array.isArray(data.artworks)
+                ? data.artworks
+                : (Array.isArray(data.artworks?.array) ? data.artworks.array : []);
+
+            artworksArray.forEach(artwork => {
+                if (artwork?.is_viewable === true) {
+                    viewableArt.push(artwork);
+                }
+            });
+
+            return {
+                artworks: viewableArt,
+                pagination: data.pagination,
+                error: null
+            };
+        }
+        else {
             const errorMessage = await extractErrorMessage(response, 'load artworks')
             return {
                 artworks: [],
@@ -37,13 +41,6 @@ export const load = async ({ url, fetch}) => {
                 error: errorMessage
             };
         }
-
-        const data = response.json();
-        return {
-            artworks: data.artworks ?? [],
-            pagination: data.pagination ?? null,
-            error: null
-        };
 
     } catch(err) {
         console.error('artwork load failed:', err);
