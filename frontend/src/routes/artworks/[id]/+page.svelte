@@ -156,17 +156,28 @@
     <!-- Right Column: Info & Metadata -->
     <div class="info-section">
       <div class="title-group">
+        <div class="main-title-container">
+          <h1>{data.artwork.title}</h1>
+          <div class="artist-link">
+            {#if data.artwork.artist?.id}
+              <a href="/artists/{data.artwork.artist.id}">{data.artwork.artist.name}</a>
+            {:else}
+              <span class="unknown-artist">{data.artwork.artist?.name || 'Unknown Artist'}</span>
+            {/if}
+          </div>
+        </div>
+
         {#if canEditArtwork}
           <div class="admin-toolbar">
             <a href="/uploads?artwork_id={data.artwork.id}" class="tool-btn" title="Add Photo">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
             </a>
             <a href="/artworks/{data.artwork.id}/edit" class="tool-btn" title="Edit Details">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
             </a>
             {#if canDelete}
               <button on:click={openDeleteModal} class="tool-btn delete" title="Delete Artwork">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
               </button>
             {/if}
             {#if canRestore}
@@ -176,14 +187,6 @@
             {/if}
           </div>
         {/if}
-        <h1>{data.artwork.title}</h1>
-        <div class="artist-link">
-          {#if data.artwork.artist?.id}
-            <a href="/artists/{data.artwork.artist.id}">{data.artwork.artist.name}</a>
-          {:else}
-            <span class="unknown-artist">{data.artwork.artist?.name || 'Unknown Artist'}</span>
-          {/if}
-        </div>
       </div>
 
       <div class="core-meta">
@@ -420,23 +423,29 @@
 
   .title-group {
     margin-bottom: 2rem;
-    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap; /* Allow toolbar to wrap on smaller screens */
+  }
+
+  .main-title-container {
+    flex-grow: 1; /* Allow title to take up available space */
   }
 
   .admin-toolbar {
     display: flex;
-    gap: 0.5rem;
-    position: absolute;
-    top: 0;
-    right: 0;
+    gap: 0.75rem; /* Increased gap */
+    flex-shrink: 0; /* Prevent toolbar from shrinking */
   }
 
   .tool-btn {
-    padding: 0.5rem;
+    padding: 0.75rem; /* Increased padding for bigger buttons */
     color: var(--text-secondary);
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
+    border: 1px solid var(--border-color); /* Added subtle border */
+    border-radius: 6px; /* Slightly more rounded */
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
@@ -447,12 +456,13 @@
   .tool-btn:hover {
     background: var(--bg-secondary);
     color: var(--text-primary);
-    border-color: var(--border-color);
+    border-color: var(--accent-color);
   }
 
   .tool-btn.delete:hover {
     color: var(--error-color);
     background: rgba(220, 38, 38, 0.1);
+    border-color: var(--error-color);
   }
 
   h1 {
@@ -461,7 +471,7 @@
     margin: 0 0 0.5rem 0;
     color: var(--text-primary);
     line-height: 1.2;
-    padding-right: 6rem; /* Space for toolbar */
+    /* padding-right removed, handled by flexbox */
   }
 
   .artist-link a {
