@@ -9,663 +9,583 @@
   export let data;
 
   let showDeleteModal = false;
+  let showDetails = false;
   let selectedPhoto = null;
   let modalElement;
   let imageErrors = new Set();
+  let currentPhotoIndex = 0;
+
+  // Initialize with primary photo if available, otherwise first photo
+  $: validPhotos = data.artwork.photos?.filter(p => p && (p.thumbnail_url || p.thumbnail || p.url)) || [];
+  
+  $: if (validPhotos.length > 0 && currentPhotoIndex >= validPhotos.length) {
+    currentPhotoIndex = 0;
+  }
 
   const getThumbnailUrl = (path) => {
     if (!path) return null;
     if (path.startsWith('http')) return path;
-    if (!PUBLIC_API_BASE_URL) {
-      console.warn('PUBLIC_API_BASE_URL is not set, image may not load');
-      return null;
-    }
+    if (!PUBLIC_API_BASE_URL) return null;
     return `${PUBLIC_API_BASE_URL}${path}`;
   };
 
-  const handleImageError = (photoId, event) => {
-    console.error('image failed to load for photo:', photoId, event.target.src);
+  const getFullUrl = (photo) => {
+    if (!photo) return null;
+    if (photo.url) return getThumbnailUrl(photo.url);
+    // Fallback to thumbnail if full url not available (should be rare with new backend)
+    return getThumbnailUrl(photo.thumbnail_url || photo.thumbnail);
+  };
+
+  const handleImageError = (photoId) => {
+    console.error('image failed to load:', photoId);
     imageErrors = new Set(imageErrors).add(photoId);
   };
 
-  const isImageError = (photoId) => {
-    return imageErrors.has(photoId);
-  };
+  const isImageError = (photoId) => imageErrors.has(photoId);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'Unknown';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
-  const openDeleteModal = () => {
-    showDeleteModal = true;
-  };
-
-  const closeDeleteModal = () => {
-    showDeleteModal = false;
-  };
+  const openDeleteModal = () => showDeleteModal = true;
+  const closeDeleteModal = () => showDeleteModal = false;
 
   const handleDeleteSuccess = (result) => {
-    // Redirect based on deletion type
-    if (result.deletion_type === 'Soft-deleted') {
-      // For soft delete, reload the page to show restore button
-      window.location.reload();
-    } else {
-      // For hard delete or force delete, redirect to artworks list
-      goto('/artworks');
-    }
+    if (result.deletion_type === 'Soft-deleted') window.location.reload();
+    else goto('/artworks');
   };
 
-  const handleRestoreSuccess = () => {
-    // Reload page to show updated artwork state
-    window.location.reload();
-  };
+  const handleRestoreSuccess = () => window.location.reload();
 
-  const openPhotoModal = (photo) => {
-    selectedPhoto = photo;
-  };
-
-  const closePhotoModal = () => {
-    selectedPhoto = null;
-  };
+  const openPhotoModal = (photo) => selectedPhoto = photo;
+  const closePhotoModal = () => selectedPhoto = null;
 
   const handleModalClick = (e) => {
-    // Close modal if clicking outside the image
-    if (e.target === modalElement) {
-      closePhotoModal();
-    }
+    if (e.target === modalElement) closePhotoModal();
   };
 
-  const handleModalKeydown = (event) => {
-    if (event.key === 'Escape') {
-      closePhotoModal();
-    }
-    if ((event.key === 'Enter' || event.key === ' ') && event.target === modalElement) {
-      event.preventDefault();
-      closePhotoModal();
-    }
+  const handleModalKeydown = (e) => {
+    if (e.key === 'Escape') closePhotoModal();
   };
 
   const handleKeyDown = (e) => {
-    // Close modal on ESC key
-    if (e.key === 'Escape' && selectedPhoto) {
-      closePhotoModal();
-    }
+    if (e.key === 'Escape' && selectedPhoto) closePhotoModal();
   };
 
   $: artistOwnerId = data.artwork?.artist?.user_id;
-  $: canUpload =
-    $auth.isAuthenticated &&
-    ($auth.user?.role === 'admin' ||
-      ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
-  $: canEditArtwork =
-    $auth.isAuthenticated &&
-    ($auth.user?.role === 'admin' ||
-      ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
+  $: canEditArtwork = $auth.isAuthenticated && ($auth.user?.role === 'admin' || ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
   $: isSoftDeleted = data.artwork?.is_deleted === true;
   $: canDelete = canEditArtwork && !isSoftDeleted;
   $: canRestore = canEditArtwork && isSoftDeleted;
 
   onMount(() => {
-    // Add global keydown listener for ESC key
     window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
+    return () => window.removeEventListener('keydown', handleKeyDown);
   });
 </script>
 
 <div class="container">
-    <div class="header">
-      <a href="/artworks" class="back-link">← Back to Artworks</a>
-      {#if canEditArtwork}
-        <div class="actions">
-          <a href="/artworks/{data.artwork.id}/edit" class="btn-secondary">Edit</a>
-          {#if canDelete}
-            <button on:click={openDeleteModal} class="btn-danger">Delete</button>
-          {/if}
-          {#if canRestore}
-            <ArtworkRestoreButton
-              artworkId={data.artwork.id}
-              artworkTitle={data.artwork.title}
-              onSuccess={handleRestoreSuccess}
-            />
-          {/if}
-        </div>
-      {/if}
-    </div>
+  <div class="header-nav">
+    <a href="/artworks" class="back-link">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+      Back to Artworks
+    </a>
+  </div>
 
-  <div class="artwork-detail">
-    <div class="photos-section">
-      {#if data.artwork.photos && Array.isArray(data.artwork.photos) && data.artwork.photos.length > 0}
-        {@const validPhotos = data.artwork.photos.filter(p => p && typeof p === 'object' && (p.thumbnail_url || p.thumbnail || p.url))}
+  <div class="artwork-layout">
+    <!-- Left Column: Image Viewer -->
+    <div class="image-section">
+      <div class="main-image-container">
         {#if validPhotos.length > 0}
-          <div class="photo-gallery">
-            {#each validPhotos as photo}
-              {@const thumbnailUrl = photo.thumbnail_url || photo.thumbnail}
-              {@const mainImageUrl = photo.url}
-              {@const photoId = photo.id || photo.photo_id}
-              {@const displayUrl = thumbnailUrl || mainImageUrl}
-              {#if displayUrl}
-                <button
-                  type="button"
-                  class="photo-item"
-                  on:click={() => openPhotoModal(photo)}
-                  disabled={isImageError(photoId)}
-                >
-                  {#if !isImageError(photoId)}
-                    <img
-                      src={getThumbnailUrl(displayUrl)}
-                      alt={photo.filename || 'Artwork photo'}
-                      on:error={(e) => handleImageError(photoId, e)}
-                      on:load={() => {
-                        const newErrors = new Set(imageErrors);
-                        newErrors.delete(photoId);
-                        imageErrors = newErrors;
-                      }}
-                    />
-                    <div class="photo-overlay">
-                      <span>View Full Size</span>
-                    </div>
-                  {:else}
-                    <div class="no-image-placeholder">
-                      Image failed to load
-                    </div>
-                  {/if}
-                </button>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <div class="no-photos">
-            <p>No photos available for this artwork</p>
-            {#if canUpload}
-              <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Upload Photo</a>
-            {/if}
-          </div>
-        {/if}
-      {:else}
-        <div class="no-photos">
-          <p>No photos available for this artwork</p>
-          {#if canUpload}
-            <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Upload Photo</a>
-          {/if}
-        </div>
-      {/if}
-    </div>
-
-    <div class="info-section">
-      <h1>{data.artwork.title}</h1>
-
-      <div class="metadata">
-        <div class="meta-item">
-          <span class="meta-label">Artwork ID</span>
-          <span class="meta-value"><code>{data.artwork.id}</code></span>
-        </div>
-
-        <div class="meta-item">
-          <span class="meta-label">Artist</span>
-          <span class="meta-value">{data.artwork.artist?.name || 'Unknown Artist'}</span>
-        </div>
-
-        {#if data.artwork.artist?.id}
-          <div class="meta-item">
-            <span class="meta-label">Artist ID</span>
-            <span class="meta-value"><code>{data.artwork.artist.id}</code></span>
-          </div>
-        {/if}
-
-        {#if data.artwork.medium}
-          <div class="meta-item">
-            <span class="meta-label">Medium</span>
-            <span class="meta-value">{data.artwork.medium}</span>
-          </div>
-        {/if}
-
-        {#if data.artwork.size}
-          <div class="meta-item">
-            <span class="meta-label">Size</span>
-            <span class="meta-value">{data.artwork.size}</span>
-          </div>
-        {/if}
-
-        {#if data.artwork.date_created}
-          <div class="meta-item">
-            <span class="meta-label">Date Created</span>
-            <span class="meta-value">{formatDate(data.artwork.date_created)}</span>
-          </div>
-        {/if}
-
-        {#if data.artwork.storage}
-          <div class="meta-item">
-            <span class="meta-label">Storage Location</span>
-            <span class="meta-value">
-              {data.artwork.storage.location}
-              {#if data.artwork.storage.type}
-                <span class="storage-type">({data.artwork.storage.type})</span>
-              {/if}
-            </span>
-          </div>
-
-          {#if data.artwork.storage.id}
-            <div class="meta-item">
-              <span class="meta-label">Storage ID</span>
-              <span class="meta-value"><code>{data.artwork.storage.id}</code></span>
+          {@const currentPhoto = validPhotos[currentPhotoIndex]}
+          {@const photoId = currentPhoto.id || currentPhoto.photo_id}
+          
+          {#if !isImageError(photoId)}
+            <button class="main-image-btn" on:click={() => openPhotoModal(currentPhoto)}>
+              <img 
+                src={getFullUrl(currentPhoto)} 
+                alt={data.artwork.title}
+                on:error={(e) => handleImageError(photoId, e)}
+              />
+              <div class="zoom-hint">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>
+              </div>
+            </button>
+          {:else}
+            <div class="placeholder-large">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+              <span>Image unavailable</span>
             </div>
           {/if}
-        {/if}
-
-        {#if data.artwork.photos && data.artwork.photos.length > 0}
-          <div class="meta-item">
-            <span class="meta-label">Photos</span>
-            <span class="meta-value">{data.artwork.photos.length} photo{data.artwork.photos.length === 1 ? '' : 's'}</span>
+        {:else}
+          <div class="placeholder-large">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            <span>No photos uploaded</span>
           </div>
         {/if}
       </div>
 
-      {#if canUpload}
-        <div class="actions-bottom">
-          <a href="/uploads?artwork_id={data.artwork.id}" class="btn-primary">Add Photo</a>
+      {#if validPhotos.length > 1}
+        <div class="thumbnail-strip">
+          {#each validPhotos as photo, i}
+            <button 
+              class="thumb-btn" 
+              class:active={i === currentPhotoIndex}
+              on:click={() => currentPhotoIndex = i}
+            >
+              <img src={getThumbnailUrl(photo.thumbnail_url || photo.thumbnail)} alt="Thumbnail" />
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Right Column: Info & Metadata -->
+    <div class="info-section">
+      <div class="title-group">
+        {#if canEditArtwork}
+          <div class="admin-toolbar">
+            <a href="/uploads?artwork_id={data.artwork.id}" class="tool-btn" title="Add Photo">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+            </a>
+            <a href="/artworks/{data.artwork.id}/edit" class="tool-btn" title="Edit Details">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            </a>
+            {#if canDelete}
+              <button on:click={openDeleteModal} class="tool-btn delete" title="Delete Artwork">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>
+            {/if}
+            {#if canRestore}
+              <div class="restore-wrapper">
+                <ArtworkRestoreButton artworkId={data.artwork.id} artworkTitle={data.artwork.title} onSuccess={handleRestoreSuccess} />
+              </div>
+            {/if}
+          </div>
+        {/if}
+        <h1>{data.artwork.title}</h1>
+        <div class="artist-link">
+          {#if data.artwork.artist?.id}
+            <a href="/artists/{data.artwork.artist.id}">{data.artwork.artist.name}</a>
+          {:else}
+            <span class="unknown-artist">{data.artwork.artist?.name || 'Unknown Artist'}</span>
+          {/if}
+        </div>
+      </div>
+
+      <div class="core-meta">
+        {#if data.artwork.medium}
+          <div class="meta-row">
+            <span class="label">Medium</span>
+            <span class="value">{data.artwork.medium}</span>
+          </div>
+        {/if}
+        {#if data.artwork.size}
+          <div class="meta-row">
+            <span class="label">Dimensions</span>
+            <span class="value">{data.artwork.size}</span>
+          </div>
+        {/if}
+        {#if data.artwork.date_created}
+          <div class="meta-row">
+            <span class="label">Date</span>
+            <span class="value">{formatDate(data.artwork.date_created)}</span>
+          </div>
+        {/if}
+      </div>
+
+      <div class="details-toggle">
+        <button on:click={() => showDetails = !showDetails} class="toggle-btn">
+          {showDetails ? 'Hide details' : 'Show details'}
+          <svg class:rotated={showDetails} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+      </div>
+
+      {#if showDetails}
+        <div class="extended-meta">
+          <div class="meta-group">
+            <h4>System IDs</h4>
+            <div class="meta-pair"><span>Artwork ID:</span> <code>{data.artwork.id}</code></div>
+            {#if data.artwork.artist?.id}
+              <div class="meta-pair"><span>Artist ID:</span> <code>{data.artwork.artist.id}</code></div>
+            {/if}
+          </div>
+          
+          {#if data.artwork.storage}
+            <div class="meta-group">
+              <h4>Location</h4>
+              <div class="meta-pair"><span>Location:</span> {data.artwork.storage.location}</div>
+              {#if data.artwork.storage.type}
+                <div class="meta-pair"><span>Type:</span> {data.artwork.storage.type}</div>
+              {/if}
+              {#if data.artwork.storage.id}
+                <div class="meta-pair"><span>Storage ID:</span> <code>{data.artwork.storage.id}</code></div>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
   </div>
 </div>
 
-<!-- Photo Modal -->
 {#if selectedPhoto}
-  {@const fullPhotoUrl = selectedPhoto.url ? getThumbnailUrl(selectedPhoto.url) : (selectedPhoto.thumbnail_url || selectedPhoto.thumbnail ? getThumbnailUrl(selectedPhoto.thumbnail_url || selectedPhoto.thumbnail) : null)}
-  <div
-    class="photo-modal"
-    bind:this={modalElement}
-    on:click={handleModalClick}
-    on:keydown={handleModalKeydown}
-    role="dialog"
-    aria-modal="true"
-    aria-label="Full size image view"
-    tabindex="0"
-  >
-    <div class="photo-modal-content">
-      <button
-        class="photo-modal-close"
-        on:click={closePhotoModal}
-        aria-label="Close image view"
-      >
-        ×
-      </button>
-      {#if fullPhotoUrl}
-        <img
-          src={fullPhotoUrl}
-          alt={selectedPhoto.filename || 'Full size artwork photo'}
-          class="photo-modal-image"
-        />
-      {:else}
-        <div class="photo-modal-placeholder">No image available</div>
-      {/if}
-      {#if selectedPhoto.filename}
-        <div class="photo-modal-caption">{selectedPhoto.filename}</div>
-      {/if}
-    </div>
+  <div class="photo-modal" bind:this={modalElement} on:click={handleModalClick} on:keydown={handleModalKeydown} role="dialog" tabindex="0">
+    <button class="photo-modal-close" on:click={closePhotoModal}>×</button>
+    <img src={getFullUrl(selectedPhoto)} alt="Full size" class="photo-modal-image" />
   </div>
 {/if}
 
-<!-- Delete Modal -->
 {#if showDeleteModal}
-  <ArtworkDeleteModal
-    artworkId={data.artwork.id}
-    artworkTitle={data.artwork.title}
-    onSuccess={handleDeleteSuccess}
-    onCancel={closeDeleteModal}
-  />
+  <ArtworkDeleteModal artworkId={data.artwork.id} artworkTitle={data.artwork.title} onSuccess={handleDeleteSuccess} onCancel={closeDeleteModal} />
 {/if}
 
 <style>
   .container {
-    max-width: 1400px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 2rem;
   }
 
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .header-nav {
     margin-bottom: 2rem;
   }
 
   .back-link {
-    color: var(--accent-color);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
     text-decoration: none;
+    font-weight: 500;
     transition: color 0.2s;
   }
 
   .back-link:hover {
-    color: var(--accent-hover);
-  }
-
-  .actions {
-    display: flex;
-    gap: 1rem;
-    align-items: center;
-  }
-
-  .btn-primary {
-    padding: 0.5rem 1rem;
-    background: var(--accent-color);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
-  }
-
-  .btn-primary:hover {
-    background: var(--accent-hover);
-  }
-
-  .btn-secondary {
-    padding: 0.5rem 1rem;
-    background: var(--bg-tertiary);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
   }
 
-  .btn-secondary:hover:not(:disabled) {
-    background: var(--bg-secondary);
-    border-color: var(--accent-color);
-  }
-
-  .btn-danger {
-    padding: 0.5rem 1rem;
-    background: var(--error-color);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
-  }
-
-  .btn-danger:hover:not(:disabled) {
-    background: #b71c1c;
-  }
-
-  .btn-secondary:disabled,
-  .btn-danger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .artwork-detail {
+  .artwork-layout {
     display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 2rem;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 4rem;
+    align-items: start;
   }
 
-  .photos-section {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
-    padding: 1.5rem;
-  }
-
-  .photo-gallery {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* Image Section */
+  .image-section {
+    display: flex;
+    flex-direction: column;
     gap: 1rem;
   }
 
-  .photo-item {
-    position: relative;
-    aspect-ratio: 1;
-    border-radius: 8px;
-    overflow: hidden;
-    cursor: pointer;
-    display: block;
+  .main-image-container {
     width: 100%;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+    aspect-ratio: 1; /* Default aspect, allows intrinsic sizing via img */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .main-image-btn {
     border: none;
     padding: 0;
     background: transparent;
-  }
-
-  .photo-item:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .photo-item img {
+    cursor: zoom-in;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    transition: transform 0.2s;
-  }
-
-  .photo-item:hover img {
-    transform: scale(1.05);
-  }
-
-  .photo-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
   }
 
-  .photo-item:hover .photo-overlay {
+  .main-image-btn img {
+    max-width: 100%;
+    max-height: 80vh; /* Prevent overly tall images */
+    object-fit: contain;
+    display: block;
+  }
+
+  .zoom-hint {
+    position: absolute;
+    bottom: 1rem;
+    right: 1rem;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 0.5rem;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+
+  .main-image-btn:hover .zoom-hint {
     opacity: 1;
   }
 
-  .photo-overlay span {
-    color: white;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .no-photos {
-    text-align: center;
-    padding: 3rem;
-    color: var(--text-secondary);
-  }
-
-  .no-photos p {
-    margin: 0 0 1rem 0;
-  }
-
-  .no-image-placeholder {
+  .placeholder-large {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    color: var(--text-tertiary);
     width: 100%;
     height: 100%;
+    min-height: 400px;
+  }
+
+  .thumbnail-strip {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+  }
+
+  .thumb-btn {
+    width: 80px;
+    height: 80px;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    border-radius: 4px;
+    overflow: hidden;
+    opacity: 0.7;
+    transition: all 0.2s;
+  }
+
+  .thumb-btn:hover, .thumb-btn.active {
+    opacity: 1;
+    border-color: var(--accent-color);
+  }
+
+  .thumb-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* Info Section */
+  .info-section {
+    padding-top: 1rem;
+  }
+
+  .title-group {
+    margin-bottom: 2rem;
+    position: relative;
+  }
+
+  .admin-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+
+  .tool-btn {
+    padding: 0.5rem;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-secondary);
-    color: var(--text-tertiary);
-    font-size: 0.875rem;
   }
 
-  .info-section {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
-    padding: 1.5rem;
+  .tool-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+  }
+
+  .tool-btn.delete:hover {
+    color: var(--error-color);
+    background: rgba(220, 38, 38, 0.1);
   }
 
   h1 {
-    margin: 0 0 1.5rem 0;
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem 0;
     color: var(--text-primary);
-    font-size: 1.75rem;
+    line-height: 1.2;
+    padding-right: 6rem; /* Space for toolbar */
   }
 
-  .metadata {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .meta-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border-color);
-  }
-
-  .meta-item:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-
-  .meta-label {
-    font-size: 0.75rem;
-    text-transform: uppercase;
+  .artist-link a {
+    font-size: 1.25rem;
     color: var(--text-secondary);
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    margin-bottom: 0.25rem;
+    text-decoration: none;
+    font-weight: 500;
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s;
   }
 
-  .meta-value {
-    color: var(--text-primary);
-    font-size: 1rem;
-    line-height: 1.5;
-  }
-
-  .meta-value code {
-    background: var(--bg-secondary);
+  .artist-link a:hover {
     color: var(--accent-color);
-    padding: 0.25rem 0.5rem;
-    border-radius: 3px;
-    font-family: monospace;
-    font-weight: bold;
-    font-size: 0.875rem;
+    border-bottom-color: var(--accent-color);
   }
 
-  .storage-type {
+  .unknown-artist {
+    font-size: 1.25rem;
     color: var(--text-tertiary);
-    font-size: 0.875rem;
+    font-style: italic;
   }
 
-  .actions-bottom {
-    margin-top: 2rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--border-color);
+  .core-meta {
+    margin-bottom: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
 
-  @media (max-width: 1024px) {
-    .artwork-detail {
-      grid-template-columns: 1fr;
-    }
+  .meta-row {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    font-size: 1rem;
   }
 
+  .meta-row .label {
+    color: var(--text-tertiary);
+    font-weight: 500;
+    min-width: 100px;
+  }
+
+  .meta-row .value {
+    color: var(--text-primary);
+  }
+
+  .details-toggle {
+    margin-bottom: 1rem;
+  }
+
+  .toggle-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent-color);
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+  }
+
+  .toggle-btn svg {
+    transition: transform 0.2s;
+  }
+
+  .toggle-btn svg.rotated {
+    transform: rotate(180deg);
+  }
+
+  .extended-meta {
+    background: var(--bg-secondary);
+    padding: 1.5rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+
+  .meta-group {
+    margin-bottom: 1.5rem;
+  }
+
+  .meta-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .meta-group h4 {
+    margin: 0 0 0.75rem 0;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+  }
+
+  .meta-pair {
+    margin-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .meta-pair span {
+    color: var(--text-tertiary);
+  }
+
+  .meta-pair code {
+    background: var(--bg-tertiary);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.85em;
+  }
+
+  /* Modal Styles */
   .photo-modal {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.9);
+    inset: 0;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
-    padding: 2rem;
-    cursor: pointer;
+    cursor: zoom-out;
   }
 
-  .photo-modal-content {
-    position: relative;
-    max-width: 90vw;
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    cursor: default;
+  .photo-modal-image {
+    max-width: 95vw;
+    max-height: 95vh;
+    object-fit: contain;
+    box-shadow: 0 0 40px rgba(0,0,0,0.5);
   }
 
   .photo-modal-close {
     position: absolute;
-    top: -2.5rem;
-    right: 0;
-    background: rgba(255, 255, 255, 0.2);
-    color: white;
+    top: 1rem;
+    right: 1rem;
+    background: rgba(255, 255, 255, 0.1);
     border: none;
+    color: white;
+    font-size: 2rem;
+    width: 3rem;
+    height: 3rem;
     border-radius: 50%;
-    width: 2.5rem;
-    height: 2.5rem;
-    font-size: 1.5rem;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background 0.2s;
-    z-index: 1001;
   }
 
   .photo-modal-close:hover {
     background: rgba(255, 255, 255, 0.3);
   }
 
-  .photo-modal-image {
-    max-width: 100%;
-    max-height: 85vh;
-    object-fit: contain;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  }
-
-  .photo-modal-placeholder {
-    padding: 4rem;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    border-radius: 8px;
-    font-size: 1.125rem;
-  }
-
-  .photo-modal-caption {
-    margin-top: 1rem;
-    color: white;
-    text-align: center;
-    font-size: 0.875rem;
-    opacity: 0.9;
-  }
-
-  @media (max-width: 768px) {
-    .header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 1rem;
+  @media (max-width: 900px) {
+    .artwork-layout {
+      grid-template-columns: 1fr;
+      gap: 2rem;
     }
 
-    .photo-gallery {
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    h1 {
+      font-size: 2rem;
+      padding-right: 0;
     }
 
-    .photo-modal {
-      padding: 1rem;
-    }
-
-    .photo-modal-close {
-      top: -3rem;
-      width: 2rem;
-      height: 2rem;
-      font-size: 1.25rem;
-    }
-
-    .photo-modal-image {
-      max-height: 80vh;
+    .admin-toolbar {
+      position: relative;
+      justify-content: flex-end;
+      margin-bottom: 1rem;
     }
   }
 </style>
