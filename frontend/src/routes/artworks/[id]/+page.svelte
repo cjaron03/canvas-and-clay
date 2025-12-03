@@ -97,6 +97,12 @@
     <!-- Left Column: Image Viewer -->
     <div class="image-section">
       <div class="main-image-container">
+        {#if data.artwork.prev_artwork_id}
+          <a href="/artworks/{data.artwork.prev_artwork_id}" class="nav-arrow prev" title="Previous Artwork">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </a>
+        {/if}
+        
         {#if validPhotos.length > 0}
           {@const currentPhoto = validPhotos[currentPhotoIndex]}
           {@const photoId = currentPhoto.id || currentPhoto.photo_id}
@@ -123,6 +129,12 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
             <span>No photos uploaded</span>
           </div>
+        {/if}
+
+        {#if data.artwork.next_artwork_id}
+          <a href="/artworks/{data.artwork.next_artwork_id}" class="nav-arrow next" title="Next Artwork">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </a>
         {/if}
       </div>
 
@@ -327,6 +339,37 @@
   .main-image-btn:hover .zoom-hint {
     opacity: 1;
   }
+
+  .nav-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255, 255, 255, 0.8);
+    color: var(--text-primary);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.2s;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+
+  .main-image-container:hover .nav-arrow {
+    opacity: 1;
+  }
+
+  .nav-arrow:hover {
+    background: white;
+    transform: translateY(-50%) scale(1.1);
+  }
+
+  .nav-arrow.prev { left: 1rem; }
+  .nav-arrow.next { right: 1rem; }
 
   .placeholder-large {
     display: flex;

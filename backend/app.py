@@ -1365,7 +1365,8 @@ def list_artworks():
                 } if storage else None,
                 'primary_photo': {
                     'id': primary_photo.photo_id,
-                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}",
+                    'url': f"/uploads/artworks/{os.path.basename(primary_photo.file_path)}"
                 } if primary_photo else None,
                 'photo_count': photo_count
             }
@@ -1441,8 +1442,22 @@ def get_artwork(artwork_id):
         ArtworkPhoto.uploaded_at.desc()
     ).all()
 
+    # Find next and previous artwork IDs for navigation
+    # Order by artwork_num (same as default sort usually)
+    next_artwork = Artwork.query.filter(
+        Artwork.artwork_num > artwork_id,
+        Artwork.is_deleted == False
+    ).order_by(Artwork.artwork_num.asc()).first()
+
+    prev_artwork = Artwork.query.filter(
+        Artwork.artwork_num < artwork_id,
+        Artwork.is_deleted == False
+    ).order_by(Artwork.artwork_num.desc()).first()
+
     return jsonify({
         'id': artwork.artwork_num,
+        'next_artwork_id': next_artwork.artwork_num if next_artwork else None,
+        'prev_artwork_id': prev_artwork.artwork_num if prev_artwork else None,
         'title': artwork.artwork_ttl,
         'medium': artwork.artwork_medium,
         'size': artwork.artwork_size,
