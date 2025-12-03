@@ -15,12 +15,17 @@
     loading = true;
     loadError = '';
     try {
-      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/artworks?owned=true&include_deleted=true&per_page=200`, {
+      const isArtist = $auth.user?.role === 'artist';
+      const params = isArtist
+        ? 'owned=true&include_deleted=true&per_page=200'
+        : 'include_deleted=true&per_page=200'; // Admins see all artworks
+
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/artworks?${params}`, {
         credentials: 'include',
         headers: { accept: 'application/json' }
       });
       if (response.status === 401 || response.status === 403) {
-        loadError = 'You need an artist account to view this page.';
+        loadError = 'You need an artist or admin account to view this page.';
         return;
       }
       if (!response.ok) {
@@ -61,8 +66,11 @@
 
   onMount(async () => {
     await auth.init();
-    if (!$auth.isAuthenticated || $auth.user?.role !== 'artist') {
-      loadError = 'You need an artist account to view this page.';
+    const isArtist = $auth.user?.role === 'artist';
+    const isAdmin = $auth.user?.role === 'admin';
+
+    if (!$auth.isAuthenticated || (!isArtist && !isAdmin)) {
+      loadError = 'You need an artist or admin account to view this page.';
       loading = false;
       return;
     }
@@ -71,7 +79,7 @@
 </script>
 
 <div class="container">
-  <h1>My Artworks</h1>
+  <h1>{$auth.user?.role === 'admin' ? 'All Artworks' : 'My Artworks'}</h1>
   {#if loadError}
     <div class="inline-error">{loadError}</div>
   {:else if loading}
