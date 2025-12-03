@@ -4813,6 +4813,7 @@ def admin_console_cli():
 
 
 @app.route('/uploads/<path:filename>')
+@limiter.exempt
 def serve_upload(filename):
     """Serve uploaded files securely.
 
