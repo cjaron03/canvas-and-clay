@@ -113,6 +113,18 @@ def list_artworks_by_artist_storage(session: requests.Session, base_url: str, ar
     return resp.json().get('artworks', [])
 
 
+def check_user_exists(session, base_url, email):
+    """Check if a user email already exists."""
+    try:
+        resp = session.get(f"{base_url}/api/admin/console/users", timeout=20)
+        if resp.status_code == 200:
+            users = resp.json().get('users', [])
+            return any(u.get('email', '').lower() == email.lower() for u in users)
+    except Exception:
+        pass
+    return False
+
+
 def register_user(session, base_url, email, password):
     step(f"Registering user {email} ...")
     csrf_token = get_csrf_token(session, base_url)
@@ -153,7 +165,10 @@ def create_artist(session, base_url, payload):
     if resp.status_code != 201:
         raise RuntimeError(f"Create artist failed ({resp.status_code}): {resp.text}")
     step_done("Artist created")
-    return resp.json()['artist']['artist_id']
+    try:
+        return resp.json()['artist']['id']
+    except KeyError as e:
+        raise RuntimeError(f"Unexpected API response format: missing {e}. Response: {resp.text[:200]}")
 
 
 def assign_artist_user(session, base_url, artist_id, user_id):
@@ -171,7 +186,8 @@ def assign_artist_user(session, base_url, artist_id, user_id):
 
 
 def bulk_upload(session: requests.Session, base_url: str, zip_path: str) -> dict:
-    step("Uploading bulk zip...")
+    file_size = os.path.getsize(zip_path)
+    step(f"Uploading bulk zip ({file_size / 1024 / 1024:.2f} MB)...")
     csrf_token = get_csrf_token(session, base_url)
     with open(zip_path, 'rb') as fh:
         files = {'file': (os.path.basename(zip_path), fh, 'application/zip')}
@@ -448,6 +464,13 @@ def main():
         else:
             # Create new user
             new_email = prompt("New artist user email:")
+
+            # Check if user already exists
+            if check_user_exists(session, base_url, new_email):
+                step_fail(f"User {new_email} already exists!")
+                print("Please use 'Use existing artist' flow or choose a different email.")
+                raise RuntimeError(f"User {new_email} already exists. Cannot create duplicate.")
+
             new_password = prompt("Artist user password (leave blank to auto-generate):", secret=True, allow_empty=True)
             if not new_password:
                 new_password = generate_password()
@@ -465,7 +488,7 @@ def main():
             artist_payload = {
                 "artist_fname": first_name,
                 "artist_lname": last_name,
-                "artist_email": new_email,
+                "email": new_email,
                 "artist_site": site or None,
                 "artist_bio": bio or None,
                 "artist_phone": phone or None,
