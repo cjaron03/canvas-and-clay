@@ -708,17 +708,27 @@ def get_current_user():
     """Get current authenticated user information.
 
     Returns:
-        200: User info
+        200: User info (includes linked artist for artist role)
         401: Not authenticated
     """
-    return jsonify({
-        'user': {
-            'id': current_user.id,
-            'email': current_user.email,
-            'role': current_user.normalized_role,
-            'created_at': current_user.created_at.isoformat()
-        }
-    }), 200
+    user_data = {
+        'id': current_user.id,
+        'email': current_user.email,
+        'role': current_user.normalized_role,
+        'created_at': current_user.created_at.isoformat()
+    }
+
+    # If user is an artist, include their linked artist info
+    if current_user.normalized_role == 'artist':
+        Artist, _, _, _, _, _, _ = init_tables(db)
+        linked_artist = Artist.query.filter_by(user_id=current_user.id, is_deleted=False).first()
+        if linked_artist:
+            user_data['artist'] = {
+                'id': linked_artist.artist_id,
+                'name': f"{linked_artist.fname} {linked_artist.lname}"
+            }
+
+    return jsonify({'user': user_data}), 200
 
 
 @auth_bp.route('/protected', methods=['GET'])

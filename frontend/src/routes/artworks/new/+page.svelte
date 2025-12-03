@@ -3,6 +3,7 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { goto } from '$app/navigation';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
+  import { auth } from '$lib/stores/auth';
 
   export let data;
 
@@ -23,6 +24,16 @@
   let showArtistDropdown = false;
   let storageSearch = '';
   let showStorageDropdown = false;
+
+  // Check if logged-in user is an artist with linked profile
+  $: isArtist = $auth.user?.role === 'artist';
+  $: linkedArtist = $auth.user?.artist;
+
+  // Auto-fill artist for logged-in artists
+  $: if (linkedArtist && isArtist) {
+    artistId = linkedArtist.id;
+    artistSearch = `${linkedArtist.id} - ${linkedArtist.name}`;
+  }
 
   onMount(async () => {
     // Fetch CSRF token
@@ -192,32 +203,44 @@
       <div class="form-group artwork-selector">
         <label for="artist-search">Artist <span class="required">*</span></label>
         <div class="search-wrapper">
-          <input
-            id="artist-search"
-            type="text"
-            bind:value={artistSearch}
-            on:input={handleArtistSearch}
-            on:focus={() => { if (artistSearch.length > 0) showArtistDropdown = true; }}
-            placeholder="Search by ID or name..."
-            autocomplete="off"
-            required
-            disabled={isSubmitting}
-          />
-          {#if showArtistDropdown && filteredArtists.length > 0}
-            <div class="dropdown">
-              {#each filteredArtists.slice(0, 10) as artist}
-                <button
-                  type="button"
-                  class="dropdown-item"
-                  on:click={() => selectArtist(artist)}
-                >
-                  <div class="option-content">
-                    <div class="option-id"><code>{artist.id}</code></div>
-                    <div class="option-name">{artist.name}</div>
-                  </div>
-                </button>
-              {/each}
+          {#if isArtist && linkedArtist}
+            <div class="artist-display-card">
+              <div class="artist-info">
+                <span class="artist-name">{linkedArtist.name}</span>
+                <span class="artist-id-badge">#{linkedArtist.id}</span>
+              </div>
+              <div class="artist-status">
+                <span class="status-text">Linked Profile</span>
+              </div>
             </div>
+          {:else}
+            <input
+              id="artist-search"
+              type="text"
+              bind:value={artistSearch}
+              on:input={handleArtistSearch}
+              on:focus={() => { if (artistSearch.length > 0) showArtistDropdown = true; }}
+              placeholder="Search by ID or name..."
+              autocomplete="off"
+              disabled={isSubmitting}
+              required
+            />
+            {#if showArtistDropdown && filteredArtists.length > 0}
+              <div class="dropdown">
+                {#each filteredArtists.slice(0, 10) as artist}
+                  <button
+                    type="button"
+                    class="dropdown-item"
+                    on:click={() => selectArtist(artist)}
+                  >
+                    <div class="option-content">
+                      <div class="option-id"><code>{artist.id}</code></div>
+                      <div class="option-name">{artist.name}</div>
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            {/if}
           {/if}
         </div>
         <input
@@ -225,8 +248,14 @@
           bind:value={artistId}
           required
         />
-        {#if artistId && !data.artists.find(a => a.id === artistId)}
+        {#if isArtist && linkedArtist}
+          <small>Artworks will be automatically associated with your artist profile.</small>
+        {:else if !data.artists.length}
+          <small>No artists available. Please contact an administrator.</small>
+        {:else if artistId && !data.artists.find(a => a.id === artistId)}
           <small class="warning">⚠ This artist ID was not found in the list above</small>
+        {:else}
+          <small>Search and select an artist from the dropdown</small>
         {/if}
       </div>
 
@@ -514,6 +543,42 @@
     border: 1px solid var(--error-color);
     border-radius: 4px;
     font-weight: bold;
+  }
+
+  .artist-display-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent-color);
+    border-radius: 4px;
+  }
+  
+  .artist-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .artist-name {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .artist-id-badge {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-family: monospace;
+  }
+
+  .artist-status {
+    font-size: 0.8rem;
+    color: var(--accent-color);
+    font-weight: 500;
   }
 
   @media (max-width: 768px) {
