@@ -722,7 +722,7 @@ def create_artist():
                 'id': new_artistid,
                 'artist_fname': artist.artist_fname,
                 'artist_lname': artist.artist_lname,
-                'email': artist.artist_email,
+                'email': _get_artist_display_email(artist),
                 'artist_site': artist.artist_site,
                 'profile_photo_url': artist.profile_photo_url,
                 'profile_photo_thumb_url': artist.profile_photo_thumb_url,
