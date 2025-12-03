@@ -117,12 +117,12 @@ def artwork_for_artist_1(artist_user_1):
 
     # Cleanup
     Artwork.query.filter_by(artwork_num='AW-TEST-001').delete()
-    Storage.query.filter_by(storage_id='ST-TEST-001').delete()
+    Storage.query.filter_by(storage_id='STTEST1').delete()
     db.session.commit()
 
     # Create storage
     storage = Storage(
-        storage_id='ST-TEST-001',
+        storage_id='STTEST1',
         storage_loc='Test Location',
         storage_type='flat_file'
     )
@@ -134,7 +134,7 @@ def artwork_for_artist_1(artist_user_1):
         artwork_num='AW-TEST-001',
         artwork_ttl='Test Artwork 1',
         artist_id='ART001',
-        storage_id='ST-TEST-001',
+        storage_id='STTEST1',
         is_deleted=False
     )
     db.session.add(artwork)
@@ -153,12 +153,12 @@ def soft_deleted_artwork(artist_user_1):
 
     # Cleanup
     Artwork.query.filter_by(artwork_num='AW-TEST-002').delete()
-    Storage.query.filter_by(storage_id='ST-TEST-002').delete()
+    Storage.query.filter_by(storage_id='STTEST2').delete()
     db.session.commit()
 
     # Create storage
     storage = Storage(
-        storage_id='ST-TEST-002',
+        storage_id='STTEST2',
         storage_loc='Test Location 2',
         storage_type='flat_file'
     )
@@ -170,7 +170,7 @@ def soft_deleted_artwork(artist_user_1):
         artwork_num='AW-TEST-002',
         artwork_ttl='Test Artwork 2',
         artist_id='ART001',
-        storage_id='ST-TEST-002',
+        storage_id='STTEST2',
         is_deleted=True,
         date_deleted=date.today()
     )
