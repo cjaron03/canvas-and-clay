@@ -64,5 +64,22 @@ if [ "${SEED_USERS}" = "1" ]; then
   python3 seed_users.py
 fi
 
+# Auto-import images on fresh deployment
+if [ -f "/app/images.zip" ]; then
+  if [ "${AUTO_IMPORT_IMAGES}" = "1" ]; then
+    echo "AUTO_IMPORT_IMAGES=1: Importing images..."
+    python3 import_images.py --input /app/images.zip
+  else
+    echo ""
+    echo "=========================================="
+    echo "  images.zip found - import available!"
+    echo "=========================================="
+    echo "To import images, either:"
+    echo "  1. Set AUTO_IMPORT_IMAGES=1 in docker-compose.yml"
+    echo "  2. Run: docker exec canvas_backend python3 import_images.py --input /app/images.zip"
+    echo ""
+  fi
+fi
+
 echo "starting flask application..."
 exec "$@"

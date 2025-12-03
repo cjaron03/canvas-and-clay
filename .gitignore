@@ -40,6 +40,11 @@ users.json
 users_export*.json
 infra/users.json
 
+# Image export files
+images.zip
+images_export*.zip
+infra/images.zip
+
 # IDE files
 .vscode/
 .idea/
