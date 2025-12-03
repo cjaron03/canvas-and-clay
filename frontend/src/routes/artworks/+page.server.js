@@ -6,7 +6,7 @@ const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://l
 
 export const load = async ({ url, fetch }) => {
   const page = parseInt(url.searchParams.get('page') ?? '1', 10);
-  const perPage = parseInt(url.searchParams.get('per_page') ?? '20', 10);
+  const perPage = parseInt(url.searchParams.get('per_page') ?? '24', 10);
   const search = url.searchParams.get('search') ?? '';
   const artistId = url.searchParams.get('artist_id') ?? '';
   const medium = url.searchParams.get('medium') ?? '';

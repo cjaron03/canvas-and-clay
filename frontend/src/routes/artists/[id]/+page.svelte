@@ -66,7 +66,10 @@
 
 <div class="container">
   <div class="header">
-    <a href="/artists" class="back-link">← Back to Artists</a>
+    <a href="/artists" class="back-link">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+      Back to Artists
+    </a>
     {#if canEditArtist}
       <div class="actions">
         <a href="/artists/{data.artist.artist_id}/edit" class="btn-secondary">Edit</a>
@@ -267,9 +270,13 @@
   }
 
   .back-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     color: var(--accent-color);
     text-decoration: none;
     transition: color 0.2s;
+    font-weight: 500;
   }
 
   .back-link:hover {

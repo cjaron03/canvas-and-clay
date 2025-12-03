@@ -445,9 +445,9 @@ def main():
         # Fetch artists for lookup
         artists = list_artists(session, base_url)
         if artists:
-            print("Existing artists (id | name | email | linked_user_email):")
+            print("Existing artists (id | name | email):")
             for a in artists:
-                print(f"- {a.get('id')} | {a.get('name')} | {a.get('email')} | user:{a.get('user_email')}")
+                print(f"- {a.get('id')} | {a.get('name')} | {a.get('email')}")
 
         # Choose artist
         chosen_artist_id = None

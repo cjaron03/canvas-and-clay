@@ -15,6 +15,9 @@ from utils import sanitize_html
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
 
+# Dummy bcrypt hash for constant-time comparison (prevents timing attacks on password reset)
+_DUMMY_BCRYPT_HASH = '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.VTtYI1rUqK.AAu'
+
 
 def get_dependencies():
     """Get dependencies from app context to avoid circular imports."""
@@ -857,9 +860,6 @@ def verify_reset_code():
         return jsonify({'error': 'Reset code length is invalid'}), 400
 
     user = find_user_by_email(email)
-    if not user:
-        return jsonify({'error': 'Invalid email or reset code'}), 400
-
     reset_request = PasswordResetRequest.query.filter(
         PasswordResetRequest.email == email,
         PasswordResetRequest.status == 'approved'
@@ -867,6 +867,16 @@ def verify_reset_code():
         PasswordResetRequest.approved_at.desc().nullslast(),
         PasswordResetRequest.created_at.desc()
     ).first()
+
+    # Always perform bcrypt check for constant-time response (prevents timing attacks)
+    stored_hash = (reset_request.reset_code_hash
+                   if (reset_request and reset_request.reset_code_hash)
+                   else _DUMMY_BCRYPT_HASH)
+    code_valid = bcrypt.check_password_hash(stored_hash, reset_code)
+
+    # Now check conditions after constant-time operation
+    if not user:
+        return jsonify({'error': 'Invalid email or reset code'}), 400
 
     if not reset_request or not reset_request.reset_code_hash:
         return jsonify({'error': 'No active reset request found. Please request a new one.'}), 400
@@ -894,7 +904,7 @@ def verify_reset_code():
             )
             return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
 
-    if not bcrypt.check_password_hash(reset_request.reset_code_hash, reset_code):
+    if not code_valid:
         log_audit_event(
             'password_reset_code_invalid',
             user_id=reset_request.user_id or user.id,
@@ -935,9 +945,6 @@ def confirm_password_reset():
         return jsonify({'error': password_error}), 400
 
     user = find_user_by_email(email)
-    if not user:
-        return jsonify({'error': 'Invalid email or reset code'}), 400
-
     reset_request = PasswordResetRequest.query.filter(
         PasswordResetRequest.email == email,
         PasswordResetRequest.status == 'approved'
@@ -945,6 +952,16 @@ def confirm_password_reset():
         PasswordResetRequest.approved_at.desc().nullslast(),
         PasswordResetRequest.created_at.desc()
     ).first()
+
+    # Always perform bcrypt check for constant-time response (prevents timing attacks)
+    stored_hash = (reset_request.reset_code_hash
+                   if (reset_request and reset_request.reset_code_hash)
+                   else _DUMMY_BCRYPT_HASH)
+    code_valid = bcrypt.check_password_hash(stored_hash, reset_code)
+
+    # Now check conditions after constant-time operation
+    if not user:
+        return jsonify({'error': 'Invalid email or reset code'}), 400
 
     if not reset_request or not reset_request.reset_code_hash:
         return jsonify({'error': 'No active reset request found. Please request a new one.'}), 400
@@ -972,7 +989,7 @@ def confirm_password_reset():
             )
             return jsonify({'error': 'Reset code has expired. Please request a new one.'}), 400
 
-    if not bcrypt.check_password_hash(reset_request.reset_code_hash, reset_code):
+    if not code_valid:
         log_audit_event(
             'password_reset_code_invalid',
             user_id=reset_request.user_id or user.id,
