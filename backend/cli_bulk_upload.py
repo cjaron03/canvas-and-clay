@@ -496,7 +496,7 @@ def main():
                     raise RuntimeError("Cancelled by user.")
 
                 user_id = existing_user.get('id')
-                step_ok(f"Using existing user {new_email} (id: {user_id})")
+                print(f"[✓] Using existing user {new_email} (id: {user_id})")
                 # Ensure user has artist role
                 promote_to_artist(session, base_url, user_id)
             else:
