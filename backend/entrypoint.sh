@@ -35,5 +35,34 @@ else
   flask db upgrade
 fi
 
+# Auto-import users on fresh deployment
+if [ -f "/app/users.json" ]; then
+  user_count=$(python3 -c "from app import app, User; app.app_context().push(); print(User.query.count())" 2>/dev/null || echo "0")
+
+  if [ "$user_count" -le "1" ]; then
+    echo "Fresh database detected with users.json present"
+
+    if [ "${AUTO_IMPORT_USERS}" = "1" ]; then
+      echo "AUTO_IMPORT_USERS=1: Importing users..."
+      python3 import_users.py --input /app/users.json --keep-passwords
+    else
+      echo ""
+      echo "=========================================="
+      echo "  users.json found - import available!"
+      echo "=========================================="
+      echo "To import users, either:"
+      echo "  1. Set AUTO_IMPORT_USERS=1 in docker-compose.yml"
+      echo "  2. Run: docker exec canvas_backend python3 import_users.py --input /app/users.json --keep-passwords"
+      echo ""
+    fi
+  fi
+fi
+
+# Seed users from env vars if configured
+if [ "${SEED_USERS}" = "1" ]; then
+  echo "SEED_USERS=1: Seeding users from environment..."
+  python3 seed_users.py
+fi
+
 echo "starting flask application..."
 exec "$@"

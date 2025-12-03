@@ -1,15 +1,21 @@
 services: 
-  backend: 
+  backend:
     build:
       context: ../backend
     container_name: canvas_backend
-    ports: 
+    ports:
       - "5001:5000"
     env_file:
       - ../backend/.env
+    environment:
+      # User sync options (see backend/.env.example for details)
+      - AUTO_IMPORT_USERS=0  # Set to 1 to auto-import from users.json on fresh DB
+      - SEED_USERS=0         # Set to 1 to seed from SEED_USER_* env vars
     volumes:
       - ../backend:/app
       - uploads_data:/app/uploads
+      # Optional: mount users.json for auto-import (uncomment to enable)
+      # - ./users.json:/app/users.json:ro
     depends_on:
       - db
     networks:
