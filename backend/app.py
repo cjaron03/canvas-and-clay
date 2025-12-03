@@ -1113,6 +1113,54 @@ def delete_artist(artist_id):
         return jsonify({'error': 'Failed to delete artist. Please try again.'}), 500
 
 
+@app.route('/api/artworks/suggest', methods=['GET'])
+def suggest_artworks():
+    """
+    Get search suggestions for artworks and artists.
+    """
+    query_str = request.args.get('q', '').strip()
+    if not query_str or len(query_str) < 2:
+        return jsonify([]), 200
+
+    search_pattern = f"%{query_str}%"
+    suggestions = []
+
+    # Search Artworks (Title)
+    artworks = Artwork.query.filter(
+        Artwork.artwork_ttl.ilike(search_pattern),
+        Artwork.is_deleted == False
+    ).limit(5).all()
+
+    for artwork in artworks:
+        suggestions.append({
+            'type': 'artwork',
+            'id': artwork.artwork_num,
+            'text': artwork.artwork_ttl,
+            'subtext': artwork.artwork_medium
+        })
+
+    # Search Artists (Name)
+    # We need to construct full name search or search first/last independently
+    artists = Artist.query.filter(
+        db.or_(
+            Artist.artist_fname.ilike(search_pattern),
+            Artist.artist_lname.ilike(search_pattern)
+        ),
+        Artist.is_deleted == False
+    ).limit(3).all()
+
+    for artist in artists:
+        full_name = f"{artist.artist_fname or ''} {artist.artist_lname or ''}".strip()
+        suggestions.append({
+            'type': 'artist',
+            'id': artist.artist_id,
+            'text': full_name,
+            'subtext': 'Artist'
+        })
+
+    return jsonify(suggestions), 200
+
+
 @app.route('/api/artworks', methods=['GET'])
 @limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def list_artworks():

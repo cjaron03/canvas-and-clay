@@ -3,10 +3,14 @@
   import { auth } from '$lib/stores/auth';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { onMount, onDestroy } from 'svelte';
 
   export let data;
 
   let imageErrors = new Set();
+  let suggestions = [];
+  let showSuggestions = false;
+  let searchContainer;
   
   // Reactive filter state initialized from URL data
   let filters = {
@@ -66,13 +70,66 @@
     goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
   };
 
+  const fetchSuggestions = async (query) => {
+    if (query.length < 2) {
+      suggestions = [];
+      showSuggestions = false;
+      return;
+    }
+    try {
+      const res = await fetch(`${PUBLIC_API_BASE_URL}/api/artworks/suggest?q=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        suggestions = await res.json();
+        showSuggestions = suggestions.length > 0;
+      }
+    } catch (err) {
+      console.error('Failed to fetch suggestions:', err);
+    }
+  };
+
+  const selectSuggestion = (suggestion) => {
+    if (suggestion.type === 'artwork') {
+      goto(`/artworks/${suggestion.id}`);
+    } else if (suggestion.type === 'artist') {
+      updateFilters({ search: '', artistId: suggestion.id });
+    }
+    showSuggestions = false;
+    filters.search = ''; 
+  };
+
   const handleSearchInput = (e) => {
     filters.search = e.target.value;
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      updateFilters({ search: filters.search });
-    }, 300);
+    
+    if (filters.search.length >= 2) {
+      debounceTimer = setTimeout(() => {
+        fetchSuggestions(filters.search);
+        updateFilters({ search: filters.search });
+      }, 300);
+    } else {
+      suggestions = [];
+      showSuggestions = false;
+      debounceTimer = setTimeout(() => {
+        updateFilters({ search: filters.search });
+      }, 300);
+    }
   };
+
+  const handleClickOutside = (event) => {
+    if (searchContainer && !searchContainer.contains(event.target)) {
+      showSuggestions = false;
+    }
+  };
+
+  onMount(() => {
+    document.addEventListener('click', handleClickOutside);
+  });
+  
+  onDestroy(() => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('click', handleClickOutside);
+    }
+  });
 
   const clearFilters = () => {
     filters = {
@@ -107,15 +164,35 @@
   </header>
 
   <div class="filters-container">
-    <div class="search-bar">
+    <div class="search-bar" bind:this={searchContainer}>
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
       <input
         type="text"
         placeholder="Search by title, artist, or medium..."
         value={filters.search}
         on:input={handleSearchInput}
+        on:focus={() => { if (filters.search.length >= 2) showSuggestions = true; }}
         aria-label="Search artworks"
       />
+      {#if showSuggestions && suggestions.length > 0}
+        <div class="suggestions-dropdown">
+          {#each suggestions as suggestion}
+            <button class="suggestion-item" on:click={() => selectSuggestion(suggestion)}>
+              <div class="suggestion-icon">
+                {#if suggestion.type === 'artwork'}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                {/if}
+              </div>
+              <div class="suggestion-content">
+                <div class="suggestion-text">{suggestion.text}</div>
+                <div class="suggestion-subtext">{suggestion.subtext || (suggestion.type === 'artist' ? 'Artist' : 'Artwork')}</div>
+              </div>
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
 
     <div class="filter-controls">
@@ -313,6 +390,66 @@
   .search-bar input:focus {
     outline: none;
     box-shadow: none;
+  }
+
+  .suggestions-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .suggestion-item:last-child {
+    border-bottom: none;
+  }
+
+  .suggestion-item:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .suggestion-icon {
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+  }
+
+  .suggestion-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .suggestion-text {
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .suggestion-subtext {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
   }
 
   .filter-controls {
