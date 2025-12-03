@@ -1609,7 +1609,7 @@ def list_artists_catalog():
                 'id': artist.artist_id,
                 'first_name': artist.artist_fname,
                 'last_name': artist.artist_lname,
-                'email': artist.artist_email,
+                'email': _get_artist_display_email(artist),
                 'user_id': artist.user_id,
                 'photo': artist.profile_photo_thumb_url or artist.profile_photo_url
             })
@@ -1685,7 +1685,7 @@ def get_artist_details(artist_id):
         'user_id': artist.user_id,
         'mediums': mediums,
         'storage_locations': storage_locations,
-        'email': artist.artist_email,
+        'email': _get_artist_display_email(artist),
         'artist_site': artist.artist_site,
         'artist_phone': artist.artist_phone,
         'photo_thumbnail': artist.profile_photo_thumb_url or artist.profile_photo_url,
@@ -3184,9 +3184,8 @@ def admin_console_artists():
             artist_data.append({
                 'id': artist.artist_id,
                 'name': f"{artist.artist_fname} {artist.artist_lname}".strip(),
-                'email': artist.artist_email,
-                'user_id': artist.user_id,
-                'user_email': user.email if user else None
+                'email': _get_artist_display_email(artist, user),
+                'user_id': artist.user_id
             })
         return jsonify({'artists': artist_data}), 200
     except Exception:
@@ -3552,6 +3551,22 @@ def _serialize_user_with_last_login(user):
         'last_login': last_login.created_at.isoformat() if last_login and last_login.created_at else None,
         'is_bootstrap_admin': _is_bootstrap_admin(user)
     }
+
+
+def _get_artist_display_email(artist, user=None):
+    """Return User email if artist is linked to a user, otherwise artist_email.
+
+    This consolidates the two email fields into a single display value:
+    - If artist has a linked User account, return User.email
+    - Otherwise, return artist.artist_email as fallback
+    """
+    if user and user.email:
+        return user.email
+    if artist.user_id and not user:
+        linked_user = User.query.get(artist.user_id)
+        if linked_user and linked_user.email:
+            return linked_user.email
+    return artist.artist_email
 
 
 def _update_expired_password_resets():
