@@ -1,7 +1,6 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { auth } from '$lib/stores/auth';
-  import { goto, invalidateAll } from '$app/navigation';
   import { onMount } from 'svelte';
   import ArtistDeleteModal from '$lib/components/ArtistDeleteModal.svelte';
 
@@ -25,10 +24,10 @@
     showDeleteModal = false;
   };
 
-  const handleDeleteSuccess = async () => {
+  const handleDeleteSuccess = () => {
     showDeleteModal = false;
-    await invalidateAll();
-    goto('/artists');
+    // Use hard navigation to force fresh data load
+    window.location.href = '/artists';
   };
 
   const closePhotoModal = () => {
