@@ -12,6 +12,33 @@
 </script>
 
 <div class="home-container">
+  <section class="hero">
+    <h1>Canvas and Clay</h1>
+    <p class="subtitle">Art Collection Management System</p>
+    <p class="description">
+      Manage your art collection with ease. Track artworks, artists, storage locations, and photos all in one place.
+    </p>
+    <div class="hero-actions">
+      <a href="/artworks" class="btn-primary">Browse Artworks</a>
+      <a href="/artists" class="btn-secondary">Browse Artists</a>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="stat-card">
+      <div class="stat-value">{data.stats.totalArtworks}</div>
+      <div class="stat-label">Artworks</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{data.stats.artistUsers ?? data.stats.totalArtists ?? 0}</div>
+      <div class="stat-label">Artists</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{data.stats.totalPhotos}</div>
+      <div class="stat-label">Photos</div>
+    </div>
+  </section>
+
   <section class="quick-actions">
     <h2>Quick Actions</h2>
     <div class="actions-grid">
@@ -45,33 +72,6 @@
           <p>Sign in to manage your collection</p>
         </a>
       {/if}
-    </div>
-  </section>
-
-  <section class="hero">
-    <h1>Canvas and Clay</h1>
-    <p class="subtitle">Art Collection Management System</p>
-    <p class="description">
-      Manage your art collection with ease. Track artworks, artists, storage locations, and photos all in one place.
-    </p>
-    <div class="hero-actions">
-      <a href="/artworks" class="btn-primary">Browse Artworks</a>
-      <a href="/artists" class="btn-secondary">Browse Artists</a>
-    </div>
-  </section>
-
-  <section class="stats">
-    <div class="stat-card">
-      <div class="stat-value">{data.stats.totalArtworks}</div>
-      <div class="stat-label">Artworks</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value">{data.stats.artistUsers ?? data.stats.totalArtists ?? 0}</div>
-      <div class="stat-label">Artists</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value">{data.stats.totalPhotos}</div>
-      <div class="stat-label">Photos</div>
     </div>
   </section>
 
