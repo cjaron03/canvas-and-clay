@@ -1,6 +1,5 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
-  import { auth } from '$lib/stores/auth';
 
   export let data;
 
@@ -36,52 +35,6 @@
     <div class="stat-card">
       <div class="stat-value">{data.stats.totalPhotos}</div>
       <div class="stat-label">Photos</div>
-    </div>
-  </section>
-
-  <section class="quick-actions">
-    <h2>Quick Actions</h2>
-    <div class="actions-grid">
-      <a href="/artworks" class="action-card">
-        <div class="action-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-        </div>
-        <h3>Browse Artworks</h3>
-        <p>View and manage your art collection</p>
-      </a>
-      <a href="/artists" class="action-card">
-        <div class="action-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-        </div>
-        <h3>Artists</h3>
-        <p>Find and manage artists.</p>
-      </a>
-      {#if $auth.isAuthenticated}
-        {#if $auth.user?.role === 'admin'}
-          <a href="/uploads" class="action-card">
-            <div class="action-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            </div>
-            <h3>Upload Photos</h3>
-            <p>Add photos to your artworks</p>
-          </a>
-          <a href="/artworks/new" class="action-card">
-            <div class="action-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
-            </div>
-            <h3>Add Artwork</h3>
-            <p>Create a new artwork entry</p>
-          </a>
-        {/if}
-      {:else}
-        <a href="/login" class="action-card">
-          <div class="action-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
-          </div>
-          <h3>Login</h3>
-          <p>Sign in to manage your collection</p>
-        </a>
-      {/if}
     </div>
   </section>
 
@@ -194,7 +147,7 @@
   }
 
   .btn-secondary {
-    background: white;
+    background: transparent;
     color: var(--text-primary);
     border: 1px solid var(--border-color);
   }
