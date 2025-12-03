@@ -1,10 +1,23 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { auth } from '$lib/stores/auth';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
 
   export let data;
 
   let imageErrors = new Set();
+  
+  // Reactive filter state initialized from URL data
+  let filters = {
+    search: data.filters.search || '',
+    artistId: data.filters.artistId || '',
+    medium: data.filters.medium || '',
+    storageId: data.filters.storageId || '',
+    ordering: data.filters.ordering || 'title_asc'
+  };
+
+  let debounceTimer;
 
   // Helper to get full thumbnail URL
   const getThumbnailUrl = (thumbnail) => {
@@ -26,20 +39,62 @@
     return imageErrors.has(artworkId);
   };
 
-  // Pagination helper
-  const getPaginationUrl = (page) => {
-    const params = new URLSearchParams();
-    params.set('page', page.toString());
-    if (data.filters.search) params.set('search', data.filters.search);
-    if (data.filters.artistId) params.set('artist_id', data.filters.artistId);
-    if (data.filters.medium) params.set('medium', data.filters.medium);
-    if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
-    if (data.filters.ordering) params.set('ordering', data.filters.ordering);
-    return `/artworks?${params.toString()}`;
+  // Update filters when URL changes (e.g. browser back button)
+  $: {
+    filters.search = $page.url.searchParams.get('search') || '';
+    filters.artistId = $page.url.searchParams.get('artist_id') || '';
+    filters.medium = $page.url.searchParams.get('medium') || '';
+    filters.storageId = $page.url.searchParams.get('storage_id') || '';
+    filters.ordering = $page.url.searchParams.get('ordering') || 'title_asc';
+  }
+
+  // Client-side navigation helper
+  const updateFilters = (newFilters = {}, resetPage = true) => {
+    const params = new URLSearchParams($page.url.searchParams);
+    
+    // Update params with current state + new changes
+    const nextState = { ...filters, ...newFilters };
+    
+    if (nextState.search) params.set('search', nextState.search); else params.delete('search');
+    if (nextState.artistId) params.set('artist_id', nextState.artistId); else params.delete('artist_id');
+    if (nextState.medium) params.set('medium', nextState.medium); else params.delete('medium');
+    if (nextState.storageId) params.set('storage_id', nextState.storageId); else params.delete('storage_id');
+    if (nextState.ordering) params.set('ordering', nextState.ordering);
+    
+    if (resetPage) params.set('page', '1');
+
+    goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
   };
 
-  const handleSelectChange = (event) => {
-    event.currentTarget.form?.submit();
+  const handleSearchInput = (e) => {
+    filters.search = e.target.value;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      updateFilters({ search: filters.search });
+    }, 300);
+  };
+
+  const clearFilters = () => {
+    filters = {
+      search: '',
+      artistId: '',
+      medium: '',
+      storageId: '',
+      ordering: 'title_asc'
+    };
+    goto('/artworks', { noScroll: true });
+  };
+
+  // Pagination helper
+  const getPaginationUrl = (pageNumber) => {
+    const params = new URLSearchParams();
+    params.set('page', pageNumber.toString());
+    if (filters.search) params.set('search', filters.search);
+    if (filters.artistId) params.set('artist_id', filters.artistId);
+    if (filters.medium) params.set('medium', filters.medium);
+    if (filters.storageId) params.set('storage_id', filters.storageId);
+    if (filters.ordering) params.set('ordering', filters.ordering);
+    return `/artworks?${params.toString()}`;
   };
 </script>
 
@@ -51,90 +106,70 @@
     {/if}
   </header>
 
-  <form method="GET" class="filters">
-    <div class="filter-group">
-      <label for="search">Search</label>
+  <div class="filters-container">
+    <div class="search-bar">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
       <input
-        id="search"
-        name="search"
-        type="search"
-        value={data.filters.search}
-        placeholder="Search by title, artist, or medium..."
-        autocomplete="off"
-      />
-    </div>
-
-    <div class="filter-group">
-      <label for="ordering">Order</label>
-      <select id="ordering" name="ordering" on:change={handleSelectChange}>
-        <option value="title_asc" selected={data.filters.ordering === 'title_asc'}>
-          A-Z
-        </option>
-        <option value="title_desc" selected={data.filters.ordering === 'title_desc'}>
-          Z-A
-        </option>
-      </select>
-    </div>
-
-    <div class="filter-group">
-      <label for="artist_id">Artist</label>
-      <select id="artist_id" name="artist_id" on:change={handleSelectChange}>
-        <option value="" selected={!data.filters.artistId}>
-          All artists
-        </option>
-        {#each data.artists as artist}
-          <option
-            value={artist.id}
-            selected={data.filters.artistId === artist.id}
-          >
-            {artist.name} ({artist.id})
-          </option>
-        {/each}
-      </select>
-      {#if data.artistsError}
-        <p class="filter-hint">Unable to load artists: {data.artistsError}</p>
-      {/if}
-    </div>
-
-    <div class="filter-group">
-      <label for="storage_id">Location</label>
-      <select id="storage_id" name="storage_id" on:change={handleSelectChange}>
-        <option value="" selected={!data.filters.storageId}>
-          All locations
-        </option>
-        {#each data.storage as location}
-          <option
-            value={location.id}
-            selected={data.filters.storageId === location.id}
-          >
-            {location.location} ({location.id})
-          </option>
-        {/each}
-      </select>
-      {#if data.storageError}
-        <p class="filter-hint">Unable to load locations: {data.storageError}</p>
-      {/if}
-    </div>
-
-    <div class="filter-group">
-      <label for="medium">Medium</label>
-      <input
-        id="medium"
-        name="medium"
         type="text"
-        value={data.filters.medium}
-        placeholder="e.g. Oil, Watercolor"
+        placeholder="Search by title, artist, or medium..."
+        value={filters.search}
+        on:input={handleSearchInput}
+        aria-label="Search artworks"
       />
     </div>
 
-    <button type="submit" class="btn-primary">Filter</button>
-    <a href="/artworks" class="btn-secondary">Clear</a>
-  </form>
+    <div class="filter-controls">
+      <div class="select-wrapper">
+        <select 
+          value={filters.artistId} 
+          on:change={(e) => updateFilters({ artistId: e.target.value })}
+          aria-label="Filter by artist"
+        >
+          <option value="">All Artists</option>
+          {#each data.artists as artist}
+            <option value={artist.id}>{artist.name}</option>
+          {/each}
+        </select>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+
+      <div class="select-wrapper">
+        <select 
+          value={filters.storageId} 
+          on:change={(e) => updateFilters({ storageId: e.target.value })}
+          aria-label="Filter by location"
+        >
+          <option value="">All Locations</option>
+          {#each data.storage as location}
+            <option value={location.id}>{location.location}</option>
+          {/each}
+        </select>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+
+      <div class="select-wrapper">
+        <select 
+          value={filters.ordering} 
+          on:change={(e) => updateFilters({ ordering: e.target.value })}
+          aria-label="Sort order"
+        >
+          <option value="title_asc">Title (A-Z)</option>
+          <option value="title_desc">Title (Z-A)</option>
+        </select>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+
+      <button class="btn-reset" on:click={clearFilters} aria-label="Clear filters">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        Reset
+      </button>
+    </div>
+  </div>
 
   {#if data.error}
     <div class="error">{data.error}</div>
   {:else if data.artworks.length === 0}
-    <p class="no-results">No artworks found.</p>
+    <p class="no-results">No artworks found matching your filters.</p>
   {:else}
     <div class="artwork-grid">
       {#each data.artworks as artwork}
@@ -231,49 +266,113 @@
     color: var(--text-primary);
   }
 
-  .filters {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 2rem;
-    padding: 1.5rem;
+  /* Modern Filters Layout */
+  .filters-container {
     background: var(--bg-tertiary);
+    padding: 1.25rem;
     border-radius: 8px;
-    flex-wrap: wrap;
-    align-items: flex-end;
-  }
-
-  .filter-group {
+    margin-bottom: 2rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .filter-group label {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-  }
-
-  .filter-group input,
-  .filter-group select {
-    padding: 0.5rem;
-    background: var(--bg-secondary);
+    gap: 1rem;
     border: 1px solid var(--border-color);
-    border-radius: 4px;
-    color: var(--text-primary);
   }
 
-  .filter-group input:focus,
-  .filter-group select:focus {
+  .search-bar {
+    position: relative;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    transition: all 0.2s;
+  }
+
+  .search-bar:focus-within {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.1);
+  }
+
+  .search-icon {
+    justify-self: center;
+    color: var(--text-secondary);
+    pointer-events: none;
+  }
+
+  .search-bar input {
+    width: 100%;
+    padding: 0.75rem 1rem 0.75rem 0;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+  }
+
+  .search-bar input:focus {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .filter-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    align-items: center;
+  }
+
+  /* Custom Select Styles */
+  .select-wrapper {
+    position: relative;
+  }
+
+  .select-wrapper select {
+    width: 100%;
+    padding: 0.75rem 2.5rem 0.75rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    appearance: none; /* Hides default arrow */
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+
+  .select-wrapper select:focus {
     outline: none;
     border-color: var(--accent-color);
   }
 
-  .filter-hint {
-    margin: 0;
-    font-size: 0.75rem;
-    color: var(--danger-color);
+  .chevron {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-secondary);
+    pointer-events: none;
+  }
+
+  .btn-reset {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+
+  .btn-reset:hover {
+    background: var(--bg-secondary);
+    color: var(--error-color);
+    border-color: var(--error-color);
   }
 
   .btn-primary {
@@ -330,7 +429,7 @@
 
   .artwork-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 350px));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 1.5rem;
     margin-bottom: 2rem;
     justify-content: center;
@@ -347,11 +446,13 @@
     flex-direction: column;
     width: 100%;
     height: 100%;
+    border: 1px solid var(--border-color);
   }
 
   .artwork-card:hover {
     transform: translateY(-4px);
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+    border-color: var(--accent-color);
   }
 
   .artwork-thumbnail {
@@ -443,13 +544,12 @@
   }
 
   @media (max-width: 768px) {
-    .filters {
-      flex-direction: column;
-      align-items: stretch;
+    .filters-container {
+      padding: 1rem;
     }
-
-    .filter-group {
-      min-width: 100%;
+    
+    .filter-controls {
+      grid-template-columns: 1fr;
     }
 
     .pagination {
