@@ -185,7 +185,11 @@
     {#if data.pagination}
       <div class="pagination">
         <div class="pagination-info">
-          Showing {data.pagination.total > 0 ? ((data.pagination.page - 1) * data.pagination.per_page) + 1 : 0}–{Math.min(data.pagination.page * data.pagination.per_page, data.pagination.total)} of {data.pagination.total}
+          {#if data.pagination.total_pages <= 1}
+            Showing {data.pagination.total} result{data.pagination.total === 1 ? '' : 's'}
+          {:else}
+            Showing {((data.pagination.page - 1) * data.pagination.per_page) + 1}–{Math.min(data.pagination.page * data.pagination.per_page, data.pagination.total)} of {data.pagination.total} results
+          {/if}
         </div>
 
         <div class="pagination-controls">

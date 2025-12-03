@@ -141,9 +141,11 @@
     {#if data.pagination}
       <div class="pagination">
         <div class="pagination-info">
-          <!-- Example: if total_filtered_artists = 54, page = 2, and per_page = 20,
-            bottom of the page would display "Showing 21–40 of 54" -->
-          Showing {pageStart}–{pageEnd} of {data.pagination.total_filtered_artists}
+          {#if data.pagination.total_pages <= 1}
+            Showing {data.pagination.total_filtered_artists} result{data.pagination.total_filtered_artists === 1 ? '' : 's'}
+          {:else}
+            Showing {pageStart}–{pageEnd} of {data.pagination.total_filtered_artists} results
+          {/if}
         </div>
 
         <div class="pagination-controls">
