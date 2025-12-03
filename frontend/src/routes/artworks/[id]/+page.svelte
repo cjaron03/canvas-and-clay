@@ -3,12 +3,12 @@
   import { auth } from '$lib/stores/auth';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import ArtworkDeleteModal from '$lib/components/ArtworkDeleteModal.svelte';
+  import ArtworkRestoreButton from '$lib/components/ArtworkRestoreButton.svelte';
 
   export let data;
 
-  let deleteConfirm = false;
-  let deleteError = null;
-  let isDeleting = false;
+  let showDeleteModal = false;
   let selectedPhoto = null;
   let modalElement;
   let imageErrors = new Set();
@@ -38,80 +38,28 @@
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
-  const handleDelete = async () => {
-    if (!deleteConfirm) {
-      deleteConfirm = true;
-      return;
-    }
+  const openDeleteModal = () => {
+    showDeleteModal = true;
+  };
 
-    isDeleting = true;
-    deleteError = null;
+  const closeDeleteModal = () => {
+    showDeleteModal = false;
+  };
 
-    try {
-      // Ensure we have a CSRF token
-      let csrfToken = $auth.csrfToken;
-      if (!csrfToken) {
-        // Fetch CSRF token if we don't have one
-        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
-          credentials: 'include'
-        });
-        if (csrfResponse.ok) {
-          const csrfData = await csrfResponse.json();
-          csrfToken = csrfData.csrf_token;
-        }
-      }
-
-      const response = await fetch(
-        `${PUBLIC_API_BASE_URL}/api/artworks/${encodeURIComponent(data.artwork.id)}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'X-CSRFToken': csrfToken || '',
-            'Content-Type': 'application/json'
-          },
-          credentials: 'include'
-        }
-      );
-
-      if (!response.ok) {
-        // Check if response is JSON
-        const contentType = response.headers.get('content-type') || '';
-        let errorMessage = 'Failed to delete artwork';
-        
-        if (contentType.includes('application/json')) {
-          try {
-            const errorData = await response.json();
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            // JSON parsing failed, use default message
-          }
-        } else {
-          // Non-JSON response (likely HTML error page)
-          if (response.status === 400) {
-            errorMessage = 'Bad request. The artwork may have associated photos that cannot be deleted, or the request is invalid.';
-          } else if (response.status === 403) {
-            errorMessage = 'Permission denied. You do not have permission to delete artworks.';
-          } else if (response.status === 404) {
-            errorMessage = 'Artwork not found. It may have already been deleted.';
-          } else {
-            errorMessage = `Failed to delete artwork (HTTP ${response.status}). Please try again.`;
-          }
-        }
-        
-        throw new Error(errorMessage);
-      }
-
-      // Redirect to artworks list after successful deletion
+  const handleDeleteSuccess = (result) => {
+    // Redirect based on deletion type
+    if (result.deletion_type === 'Soft-deleted') {
+      // For soft delete, reload the page to show restore button
+      window.location.reload();
+    } else {
+      // For hard delete or force delete, redirect to artworks list
       goto('/artworks');
-    } catch (err) {
-      deleteError = err.message || 'An unexpected error occurred while deleting the artwork.';
-      isDeleting = false;
-      deleteConfirm = false;
     }
   };
 
-  const cancelDelete = () => {
-    deleteConfirm = false;
+  const handleRestoreSuccess = () => {
+    // Reload page to show updated artwork state
+    window.location.reload();
   };
 
   const openPhotoModal = (photo) => {
@@ -155,6 +103,9 @@
     $auth.isAuthenticated &&
     ($auth.user?.role === 'admin' ||
       ($auth.user?.role === 'artist' && artistOwnerId && String(artistOwnerId) === String($auth.user?.id)));
+  $: isSoftDeleted = data.artwork?.is_deleted === true;
+  $: canDelete = canEditArtwork && !isSoftDeleted;
+  $: canRestore = canEditArtwork && isSoftDeleted;
 
   onMount(() => {
     // Add global keydown listener for ESC key
@@ -171,26 +122,19 @@
       {#if canEditArtwork}
         <div class="actions">
           <a href="/artworks/{data.artwork.id}/edit" class="btn-secondary">Edit</a>
-          {#if $auth.user?.role === 'admin'}
-            {#if !deleteConfirm}
-              <button on:click={handleDelete} class="btn-danger">Delete</button>
-            {:else}
-              <div class="delete-confirm">
-                <span>Are you sure?</span>
-                <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
-                  {isDeleting ? 'Deleting...' : 'Confirm'}
-                </button>
-                <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
-              </div>
-            {/if}
+          {#if canDelete}
+            <button on:click={openDeleteModal} class="btn-danger">Delete</button>
+          {/if}
+          {#if canRestore}
+            <ArtworkRestoreButton
+              artworkId={data.artwork.id}
+              artworkTitle={data.artwork.title}
+              onSuccess={handleRestoreSuccess}
+            />
           {/if}
         </div>
       {/if}
     </div>
-
-  {#if deleteError}
-    <div class="error">{deleteError}</div>
-  {/if}
 
   <div class="artwork-detail">
     <div class="photos-section">
@@ -366,6 +310,16 @@
   </div>
 {/if}
 
+<!-- Delete Modal -->
+{#if showDeleteModal}
+  <ArtworkDeleteModal
+    artworkId={data.artwork.id}
+    artworkTitle={data.artwork.title}
+    onSuccess={handleDeleteSuccess}
+    onCancel={closeDeleteModal}
+  />
+{/if}
+
 <style>
   .container {
     max-width: 1400px;
@@ -394,21 +348,6 @@
     display: flex;
     gap: 1rem;
     align-items: center;
-  }
-
-  .delete-confirm {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    padding: 0.5rem 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
-  }
-
-  .delete-confirm span {
-    color: var(--error-color);
-    font-size: 0.875rem;
-    font-weight: 500;
   }
 
   .btn-primary {
@@ -464,14 +403,6 @@
   .btn-danger:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .error {
-    padding: 1rem;
-    background: var(--error-color);
-    color: white;
-    border-radius: 4px;
-    margin-bottom: 1rem;
   }
 
   .artwork-detail {
