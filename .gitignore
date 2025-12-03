@@ -31,7 +31,19 @@ infra/test-api.sh
 .env.development.local
 .env.test.local
 .env.production.local
+.env.users
+.env.admins
 !.env.example
+
+# User export files (contain decrypted emails - sensitive!)
+users.json
+users_export*.json
+infra/users.json
+
+# Image export files
+images.zip
+images_export*.zip
+infra/images.zip
 
 # IDE files
 .vscode/

@@ -5,6 +5,8 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
   import { validateImageFile } from '$lib/utils/fileValidation';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
 
   let activeTab = 'existing'; // 'existing' or 'new'
   let csrfToken = '';
@@ -32,11 +34,31 @@
 
   // Auth check
   $: isAdmin = $auth.user?.role === 'admin';
+  let loadError = '';
 
   // Fetch CSRF token on mount
   onMount(async () => {
     try {
       await auth.init();
+
+      // Check if user is authenticated
+      if (!$auth.isAuthenticated) {
+        if ($page.url.pathname.startsWith('/uploads')) {
+          loadError = 'Authentication required. Please log in.';
+          goto('/login');
+        }
+        return;
+      }
+
+      // Check if user is artist or admin (both roles can upload)
+      if ($auth.user?.role !== 'artist' && $auth.user?.role !== 'admin') {
+        if ($page.url.pathname.startsWith('/uploads')) {
+          loadError = 'You need to be an artist to access this page.';
+          goto('/');
+        }
+        return;
+      }
+
       const response = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
         credentials: 'include'
       });
@@ -509,6 +531,10 @@
 </script>
 
 <h1>Upload Photos</h1>
+
+{#if loadError}
+  <div class="status-message error">{loadError}</div>
+{/if}
 
 {#if isAdmin}
   <div class="tabs">

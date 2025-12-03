@@ -1,14 +1,12 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { auth } from '$lib/stores/auth';
-  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import ArtistDeleteModal from '$lib/components/ArtistDeleteModal.svelte';
 
   export let data;
 
-  let deleteConfirm = false;
-  let deleteError = null;
-  let isDeleting = false;
+  let showDeleteModal = false;
   let selectedPhoto = null;
   let modalElement;
 
@@ -18,76 +16,18 @@
     return `${PUBLIC_API_BASE_URL}${path}`;
   };
 
-  const handleDelete = async () => {
-    if (!deleteConfirm) {
-      deleteConfirm = true;
-      return;
-    }
-
-    isDeleting = true;
-    deleteError = null;
-
-    try {
-      let csrfToken = $auth.csrfToken;
-      if (!csrfToken) {
-        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
-          credentials: 'include'
-        });
-        if (csrfResponse.ok) {
-          const csrfData = await csrfResponse.json();
-          csrfToken = csrfData.csrf_token;
-        }
-      }
-
-      const response = await fetch(
-        `${PUBLIC_API_BASE_URL}/api/artists/${encodeURIComponent(data.artist.artist_id)}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'X-CSRFToken': csrfToken || '',
-            'Content-Type': 'application/json'
-          },
-          credentials: 'include'
-        }
-      );
-
-      if (!response.ok) {
-        const contentType = response.headers.get('content-type') || '';
-        let errorMessage = 'Failed to delete artist';
-
-        if (contentType.includes('application/json')) {
-          try {
-            const errorData = await response.json();
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            // default handled below
-          }
-        } else {
-          if (response.status === 400) {
-            errorMessage =
-              'Bad request. The artist may still have artworks that must be removed before deletion.';
-          } else if (response.status === 403) {
-            errorMessage = 'Permission denied. You do not have permission to delete artists.';
-          } else if (response.status === 404) {
-            errorMessage = 'Artist not found. It may have already been deleted.';
-          } else {
-            errorMessage = `Failed to delete artist (HTTP ${response.status}). Please try again.`;
-          }
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      goto('/artists');
-    } catch (err) {
-      deleteError = err.message || 'An unexpected error occurred while deleting the artist.';
-      isDeleting = false;
-      deleteConfirm = false;
-    }
+  const openDeleteModal = () => {
+    showDeleteModal = true;
   };
 
-  const cancelDelete = () => {
-    deleteConfirm = false;
+  const closeDeleteModal = () => {
+    showDeleteModal = false;
+  };
+
+  const handleDeleteSuccess = () => {
+    showDeleteModal = false;
+    // Use hard navigation to force fresh data load
+    window.location.href = '/artists';
   };
 
   const closePhotoModal = () => {
@@ -131,25 +71,11 @@
       <div class="actions">
         <a href="/artists/{data.artist.artist_id}/edit" class="btn-secondary">Edit</a>
         {#if canDeleteArtist}
-          {#if !deleteConfirm}
-            <button on:click={handleDelete} class="btn-danger">Delete</button>
-          {:else}
-            <div class="delete-confirm">
-              <span>Are you sure?</span>
-              <button on:click={handleDelete} class="btn-danger" disabled={isDeleting}>
-                {isDeleting ? 'Deleting...' : 'Confirm'}
-              </button>
-              <button on:click={cancelDelete} class="btn-secondary" disabled={isDeleting}>Cancel</button>
-            </div>
-          {/if}
+          <button on:click={openDeleteModal} class="btn-danger">Delete</button>
         {/if}
       </div>
     {/if}
   </div>
-
-  {#if deleteError}
-    <div class="error">{deleteError}</div>
-  {/if}
 
   <div class="artist-detail">
     <div class="artworks-section">
@@ -317,6 +243,15 @@
   </div>
 {/if}
 
+{#if showDeleteModal}
+  <ArtistDeleteModal
+    artistId={data.artist.artist_id}
+    artistName={`${data.artist.artist_fname || ''} ${data.artist.artist_lname || ''}`.trim() || 'Unknown Artist'}
+    onSuccess={handleDeleteSuccess}
+    onCancel={closeDeleteModal}
+  />
+{/if}
+
 <style>
   .container {
     max-width: 1400px;
@@ -345,21 +280,6 @@
     display: flex;
     gap: 1rem;
     align-items: center;
-  }
-
-  .delete-confirm {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    padding: 0.5rem 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
-  }
-
-  .delete-confirm span {
-    color: var(--error-color);
-    font-size: 0.875rem;
-    font-weight: 500;
   }
 
   .btn-primary {

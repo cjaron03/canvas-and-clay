@@ -3,12 +3,14 @@
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { goto } from '$app/navigation';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
+  import ArtworkDeleteModal from '$lib/components/ArtworkDeleteModal.svelte';
 
   export let data;
 
   let csrfToken = '';
   let isSubmitting = false;
   let submitError = '';
+  let showDeleteModal = false;
 
   // Form fields - pre-populate from artwork data
   let title = data.artwork.title || '';
@@ -93,6 +95,25 @@
     // Clear selection if search doesn't match
     if (storageId && !data.storage.find(s => s.id === storageId)) {
       storageId = '';
+    }
+  };
+
+  const openDeleteModal = () => {
+    showDeleteModal = true;
+  };
+
+  const closeDeleteModal = () => {
+    showDeleteModal = false;
+  };
+
+  const handleDeleteSuccess = (result) => {
+    // Redirect based on deletion type
+    if (result.deletion_type === 'Soft-deleted') {
+      // For soft delete, go back to artwork detail page
+      goto(`/artworks/${data.artwork.id}`);
+    } else {
+      // For hard delete or force delete, redirect to artworks list
+      goto('/artworks');
     }
   };
 
@@ -308,10 +329,23 @@
           {isSubmitting ? 'Updating...' : 'Update Artwork'}
         </button>
         <a href="/artworks/{data.artwork.id}" class="btn-secondary">Cancel</a>
+        {#if !data.artwork.is_deleted}
+          <button type="button" on:click={openDeleteModal} class="btn-danger">Delete Artwork</button>
+        {/if}
       </div>
     </form>
   </div>
 </div>
+
+<!-- Delete Modal -->
+{#if showDeleteModal}
+  <ArtworkDeleteModal
+    artworkId={data.artwork.id}
+    artworkTitle={data.artwork.title}
+    onSuccess={handleDeleteSuccess}
+    onCancel={closeDeleteModal}
+  />
+{/if}
 
 <style>
   .container {
@@ -521,6 +555,29 @@
     border-color: var(--accent-color);
   }
 
+  .btn-danger {
+    padding: 0.75rem 1.5rem;
+    background: var(--error-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+    transition: background 0.2s;
+    text-decoration: none;
+    display: inline-block;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: #b71c1c;
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .error-message {
     padding: 1rem;
     margin-bottom: 1rem;
@@ -545,7 +602,8 @@
     }
 
     .btn-primary,
-    .btn-secondary {
+    .btn-secondary,
+    .btn-danger {
       width: 100%;
       text-align: center;
     }

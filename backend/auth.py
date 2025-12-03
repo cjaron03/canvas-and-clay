@@ -19,7 +19,8 @@ BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-cla
 def get_dependencies():
     """Get dependencies from app context to avoid circular imports."""
     from app import db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter
-    return db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter
+    from create_tbls import init_tables
+    return db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter, init_tables
 
 
 def find_user_by_email(email):
@@ -38,7 +39,7 @@ def find_user_by_email(email):
     Returns:
         User object if found, None otherwise
     """
-    db, _, User, _, _, _, _ = get_dependencies()
+    db, _, User, _, _, _, _, _ = get_dependencies()
 
     # Normalize email for comparison (encryption normalizes too)
     normalized_email = email.strip().lower()
@@ -299,7 +300,7 @@ def register():
         400: Validation error or duplicate email
         415: Unsupported media type (missing Content-Type: application/json)
     """
-    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter, _ = get_dependencies()
     
     data = request.get_json()
     
@@ -376,7 +377,7 @@ def log_audit_event(event_type, user_id=None, email=None, details=None):
         email: Email address associated with the event (optional)
         details: Additional details as dict (will be JSON serialized)
     """
-    db, _, _, _, AuditLog, _, _ = get_dependencies()
+    db, _, _, _, AuditLog, _, _, _ = get_dependencies()
     
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
@@ -409,7 +410,7 @@ def check_account_locked(email):
     Returns:
         tuple: (is_locked: bool, lockout_expires_at: datetime or None)
     """
-    db, _, _, FailedLoginAttempt, _, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _, _ = get_dependencies()
     
     # check failed attempts in last 15 minutes
     lockout_window = datetime.now(timezone.utc) - timedelta(minutes=15)
@@ -433,7 +434,7 @@ def record_failed_login(email):
     Args:
         email: Email address that failed login
     """
-    db, _, _, FailedLoginAttempt, _, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _, _ = get_dependencies()
     
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
@@ -459,7 +460,8 @@ def _maybe_alert_failed_login_spike(email):
     Threshold: >= 3 failures in the last 10 minutes by email or IP.
     """
     from models import init_models
-    FailedLoginAttempt = init_models(get_dependencies()[0])[1]
+    db, _, _, _, _, _, _, _ = get_dependencies()
+    FailedLoginAttempt = init_models(db)[1]
 
     if not request:
         return
@@ -508,7 +510,7 @@ def clear_failed_login_attempts(email):
     Args:
         email: Email address to clear attempts for
     """
-    db, _, _, FailedLoginAttempt, _, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _, _ = get_dependencies()
     
     try:
         FailedLoginAttempt.query.filter_by(email=email).delete()
@@ -540,7 +542,7 @@ def login():
         401: Invalid credentials
         403: Account disabled or locked
     """
-    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter, _ = get_dependencies()
     
     data = request.get_json()
     
@@ -676,7 +678,7 @@ def logout():
 @login_required
 def delete_account():
     """Self-service soft delete for the current user."""
-    db, _, User, _, AuditLog, _, _ = get_dependencies()
+    db, _, User, _, AuditLog, _, _, _ = get_dependencies()
 
     if is_bootstrap_email(current_user.email):
         return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
@@ -708,17 +710,29 @@ def get_current_user():
     """Get current authenticated user information.
 
     Returns:
-        200: User info
+        200: User info (includes linked artist for artist role)
         401: Not authenticated
     """
-    return jsonify({
-        'user': {
-            'id': current_user.id,
-            'email': current_user.email,
-            'role': current_user.normalized_role,
-            'created_at': current_user.created_at.isoformat()
-        }
-    }), 200
+    db, _, _, _, _, _, _, init_tables = get_dependencies()
+
+    user_data = {
+        'id': current_user.id,
+        'email': current_user.email,
+        'role': current_user.normalized_role,
+        'created_at': current_user.created_at.isoformat()
+    }
+
+    # If user is an artist, include their linked artist info
+    if current_user.normalized_role == 'artist':
+        Artist, _, _, _, _, _, _ = init_tables(db)
+        linked_artist = Artist.query.filter_by(user_id=current_user.id, is_deleted=False).first()
+        if linked_artist:
+            user_data['artist'] = {
+                'id': linked_artist.artist_id,
+                'name': f"{linked_artist.artist_fname} {linked_artist.artist_lname}"
+            }
+
+    return jsonify({'user': user_data}), 200
 
 
 @auth_bp.route('/protected', methods=['GET'])
@@ -757,7 +771,7 @@ def admin_only_route():
 @rate_limit("5 per hour")
 def request_password_reset():
     """Allow users to file a manual password reset request for admin review."""
-    db, _, User, _, _, PasswordResetRequest, _ = get_dependencies()
+    db, _, User, _, _, PasswordResetRequest, _, _ = get_dependencies()
 
     data = request.get_json()
     if data is None:
@@ -823,7 +837,7 @@ def request_password_reset():
 @rate_limit("20 per hour")
 def verify_reset_code():
     """Verify a reset code without changing the password."""
-    db, bcrypt, User, _, _, PasswordResetRequest, _ = get_dependencies()
+    db, bcrypt, User, _, _, PasswordResetRequest, _, _ = get_dependencies()
 
     data = request.get_json()
     if data is None:
@@ -896,7 +910,7 @@ def verify_reset_code():
 @rate_limit("10 per hour")
 def confirm_password_reset():
     """Redeem an admin-issued reset code and set a new password."""
-    db, bcrypt, User, _, _, PasswordResetRequest, _ = get_dependencies()
+    db, bcrypt, User, _, _, PasswordResetRequest, _, _ = get_dependencies()
 
     data = request.get_json()
     if data is None:
@@ -1007,7 +1021,7 @@ def change_password():
     if not current_user.is_authenticated:
         return jsonify({'error': 'Authentication required'}), 401
     
-    db, bcrypt, User, _, _, _, _ = get_dependencies()
+    db, bcrypt, User, _, _, _, _, _ = get_dependencies()
     
     data = request.get_json(silent=True) or {}
     current_password = data.get('current_password', '').strip()
@@ -1069,7 +1083,7 @@ def change_email():
     if not current_user.is_authenticated:
         return jsonify({'error': 'Authentication required'}), 401
     
-    db, bcrypt, User, _, _, _, _ = get_dependencies()
+    db, bcrypt, User, _, _, _, _, _ = get_dependencies()
     
     data = request.get_json(silent=True) or {}
     new_email = data.get('new_email', '').strip().lower()

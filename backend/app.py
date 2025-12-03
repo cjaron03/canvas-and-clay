@@ -1142,10 +1142,11 @@ def list_artworks():
     storage_id = request.args.get('storage_id', '').strip()
     ordering = request.args.get('ordering', 'title_asc').strip().lower()
     owned_only = request.args.get('owned', 'false').lower() == 'true'
+    include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
 
     try:
         # Log all query parameters for debugging
-        app.logger.info(f"list_artworks called with: owned_only={owned_only}, page={page}, per_page={per_page}, search={search}, artist_id={artist_id}")
+        app.logger.info(f"list_artworks called with: owned_only={owned_only}, include_deleted={include_deleted}, page={page}, per_page={per_page}, search={search}, artist_id={artist_id}")
         app.logger.info(f"current_user.is_authenticated={current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'N/A'}")
         
         # Build base query. Use inner join when filtering by ownership to ensure artist exists
@@ -1163,9 +1164,11 @@ def list_artworks():
                 Artist, Artwork.artist_id == Artist.artist_id
             ).filter(
                 Artist.user_id.isnot(None),
-                Artist.user_id == current_user_id,
-                Artwork.is_deleted == False
+                Artist.user_id == current_user_id
             )
+            # Only exclude deleted if not explicitly requesting to include them
+            if not include_deleted:
+                query = query.filter(Artwork.is_deleted == False)
             # Log for debugging
             app.logger.info(f"Filtering artworks for user_id={current_user_id}, email={current_user.email}, owned_only={owned_only}")
             # Also log what artists are assigned to this user
@@ -1301,6 +1304,8 @@ def list_artworks():
                 'medium': artwork.artwork_medium,
                 'size': artwork.artwork_size,
                 'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
+                'is_deleted': artwork.is_deleted,
+                'date_deleted': artwork.date_deleted.isoformat() if artwork.date_deleted else None,
                 'artist': artist_info,
                 'is_viewable': artwork.is_viewable,
                 'storage': {
@@ -1521,6 +1526,8 @@ def list_artists_catalog():
 
         # Helper function to apply search filters to the base query
         def apply_filters(query):
+            # Exclude soft-deleted artists
+            query = query.filter(Artist.is_deleted == False)
             # if the user is an artist, only shows that artist's entry
             if current_user_id is not None:
                 query = query.filter(
@@ -2135,26 +2142,30 @@ def update_artwork(artwork_id):
 
 @app.route('/api/artworks/<artwork_id>/restore', methods=['PUT'])
 @login_required
-@admin_required
 def restore_deleted_artwork(artwork_id):
     """ Restores a SOFT deleted artwork
         - hard deletions will not be able to be restored
         - will change date_deleted back to None
     Security:
         - Requires authentication
-        - Requires admin role
+        - Requires admin role OR artwork ownership
         - Audit logged
     Args:
         - artwork_id: The artwork ID to be restored
     Returns:
         200: Artwork restored successfully
-        403: Permisison denied
+        403: Permission denied
         404: Artwork not found, artwork is not deleted
     """
     # Verify artwork exists
     artwork = Artwork.query.get(artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
+
+    # Check permissions: admin or artwork owner
+    if not current_user.is_admin and not is_artwork_owner(artwork):
+        log_rbac_denial('artwork', artwork_id, 'not_owner')
+        return jsonify({'error': 'Permission denied'}), 403
 
     # Verify artwork is currently deleted
     if not artwork.is_deleted:
@@ -2242,14 +2253,33 @@ def delete_artwork(artwork_id):
     photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).all()
     photo_count = len(photos)
 
+    # Extract force delete parameter
+    force_delete = request.args.get('force', 'false').lower() == 'true'
+
     try:
         deletion_type = None # specifying hard/soft delete
         deletion_date = date.today() # date of deletion
         artwork_title = artwork.artwork_ttl
         artist_id = artwork.artist_id
 
-        # hard deletion - also deletes photos
-        if artwork.is_deleted:
+        # Force hard delete (immediate permanent deletion)
+        if force_delete:
+            # Delete photo files from filesystem
+            for photo in photos:
+                try:
+                    delete_photo_files(photo.file_path, photo.thumbnail_path)
+                except Exception as e:
+                    app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
+
+            # Delete photo database records
+            ArtworkPhoto.query.filter_by(artwork_num=artwork_id).delete()
+
+            # Delete artwork
+            db.session.delete(artwork)
+            deletion_type = "Force-hard-deleted"
+
+        # hard deletion - also deletes photos (second delete on soft-deleted)
+        elif artwork.is_deleted:
             # Delete photo files from filesystem
             for photo in photos:
                 try:
@@ -2286,7 +2316,8 @@ def delete_artwork(artwork_id):
                 'artist_id': artist_id,
                 'photos_deleted': photo_count,
                 'deletion_type': deletion_type,
-                'deletion_date': deletion_date.isoformat()
+                'deletion_date': deletion_date.isoformat(),
+                'force_delete': force_delete
             })
         )
         db.session.add(audit_log)
@@ -2299,7 +2330,8 @@ def delete_artwork(artwork_id):
             'deleted': {
                 'artwork_id': artwork_id,
                 'title': artwork_title,
-                'photos_deleted': photo_count
+                'photos_deleted': photo_count,
+                'deletion_type': deletion_type
             }
         }), 200
 

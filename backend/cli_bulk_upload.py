@@ -113,6 +113,30 @@ def list_artworks_by_artist_storage(session: requests.Session, base_url: str, ar
     return resp.json().get('artworks', [])
 
 
+def check_user_exists(session, base_url, email):
+    """Check if a user email already exists. Returns user dict if found, None otherwise."""
+    try:
+        resp = session.get(f"{base_url}/api/admin/console/users", timeout=20)
+        if resp.status_code == 200:
+            users = resp.json().get('users', [])
+            for u in users:
+                if u.get('email', '').lower() == email.lower():
+                    return u  # Return full user dict
+            return None
+    except Exception:
+        pass
+    return None
+
+
+def is_user_linked_to_artist(artists, user_email):
+    """Check if a user email is already linked to an artist."""
+    for artist in artists:
+        linked_user = artist.get('linked_user_email')
+        if linked_user and linked_user.lower() == user_email.lower():
+            return artist
+    return None
+
+
 def register_user(session, base_url, email, password):
     step(f"Registering user {email} ...")
     csrf_token = get_csrf_token(session, base_url)
@@ -153,7 +177,10 @@ def create_artist(session, base_url, payload):
     if resp.status_code != 201:
         raise RuntimeError(f"Create artist failed ({resp.status_code}): {resp.text}")
     step_done("Artist created")
-    return resp.json()['artist']['artist_id']
+    try:
+        return resp.json()['artist']['id']
+    except KeyError as e:
+        raise RuntimeError(f"Unexpected API response format: missing {e}. Response: {resp.text[:200]}")
 
 
 def assign_artist_user(session, base_url, artist_id, user_id):
@@ -171,7 +198,8 @@ def assign_artist_user(session, base_url, artist_id, user_id):
 
 
 def bulk_upload(session: requests.Session, base_url: str, zip_path: str) -> dict:
-    step("Uploading bulk zip...")
+    file_size = os.path.getsize(zip_path)
+    step(f"Uploading bulk zip ({file_size / 1024 / 1024:.2f} MB)...")
     csrf_token = get_csrf_token(session, base_url)
     with open(zip_path, 'rb') as fh:
         files = {'file': (os.path.basename(zip_path), fh, 'application/zip')}
@@ -446,15 +474,40 @@ def main():
                     else:
                         print("No matching artist found. Try again.")
         else:
-            # Create new user
+            # Create new artist (with new or existing user)
             new_email = prompt("New artist user email:")
-            new_password = prompt("Artist user password (leave blank to auto-generate):", secret=True, allow_empty=True)
-            if not new_password:
-                new_password = generate_password()
-                print(f"Generated password: {new_password}")
 
-            user_id = register_user(session, base_url, new_email, new_password)
-            promote_to_artist(session, base_url, user_id)
+            # Check if user already exists
+            existing_user = check_user_exists(session, base_url, new_email)
+            user_id = None
+
+            if existing_user:
+                # User exists - check if they're already linked to an artist
+                linked_artist = is_user_linked_to_artist(artists, new_email)
+                if linked_artist:
+                    step_fail(f"User {new_email} is already linked to artist {linked_artist['id']} ({linked_artist.get('name', 'Unknown')})")
+                    print("Please use 'Use existing artist' flow instead.")
+                    raise RuntimeError(f"User {new_email} already linked to an artist.")
+
+                # User exists but not linked to artist - offer to create artist for them
+                print(f"User {new_email} exists but has no artist profile.")
+                create_for_existing = prompt("Create artist profile for this existing user? [y/n]:", default="y").lower().startswith('y')
+                if not create_for_existing:
+                    raise RuntimeError("Cancelled by user.")
+
+                user_id = existing_user.get('id')
+                print(f"[✓] Using existing user {new_email} (id: {user_id})")
+                # Ensure user has artist role
+                promote_to_artist(session, base_url, user_id)
+            else:
+                # Create new user
+                new_password = prompt("Artist user password (leave blank to auto-generate):", secret=True, allow_empty=True)
+                if not new_password:
+                    new_password = generate_password()
+                    print(f"Generated password: {new_password}")
+
+                user_id = register_user(session, base_url, new_email, new_password)
+                promote_to_artist(session, base_url, user_id)
 
             first_name = prompt("Artist first name:")
             last_name = prompt("Artist last name:")
@@ -465,7 +518,7 @@ def main():
             artist_payload = {
                 "artist_fname": first_name,
                 "artist_lname": last_name,
-                "artist_email": new_email,
+                "email": new_email,
                 "artist_site": site or None,
                 "artist_bio": bio or None,
                 "artist_phone": phone or None,
