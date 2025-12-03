@@ -1525,6 +1525,8 @@ def list_artists_catalog():
 
         # Helper function to apply search filters to the base query
         def apply_filters(query):
+            # Exclude soft-deleted artists
+            query = query.filter(Artist.is_deleted == False)
             # if the user is an artist, only shows that artist's entry
             if current_user_id is not None:
                 query = query.filter(

@@ -114,15 +114,27 @@ def list_artworks_by_artist_storage(session: requests.Session, base_url: str, ar
 
 
 def check_user_exists(session, base_url, email):
-    """Check if a user email already exists."""
+    """Check if a user email already exists. Returns user dict if found, None otherwise."""
     try:
         resp = session.get(f"{base_url}/api/admin/console/users", timeout=20)
         if resp.status_code == 200:
             users = resp.json().get('users', [])
-            return any(u.get('email', '').lower() == email.lower() for u in users)
+            for u in users:
+                if u.get('email', '').lower() == email.lower():
+                    return u  # Return full user dict
+            return None
     except Exception:
         pass
-    return False
+    return None
+
+
+def is_user_linked_to_artist(artists, user_email):
+    """Check if a user email is already linked to an artist."""
+    for artist in artists:
+        linked_user = artist.get('linked_user_email')
+        if linked_user and linked_user.lower() == user_email.lower():
+            return artist
+    return None
 
 
 def register_user(session, base_url, email, password):
@@ -462,22 +474,40 @@ def main():
                     else:
                         print("No matching artist found. Try again.")
         else:
-            # Create new user
+            # Create new artist (with new or existing user)
             new_email = prompt("New artist user email:")
 
             # Check if user already exists
-            if check_user_exists(session, base_url, new_email):
-                step_fail(f"User {new_email} already exists!")
-                print("Please use 'Use existing artist' flow or choose a different email.")
-                raise RuntimeError(f"User {new_email} already exists. Cannot create duplicate.")
+            existing_user = check_user_exists(session, base_url, new_email)
+            user_id = None
 
-            new_password = prompt("Artist user password (leave blank to auto-generate):", secret=True, allow_empty=True)
-            if not new_password:
-                new_password = generate_password()
-                print(f"Generated password: {new_password}")
+            if existing_user:
+                # User exists - check if they're already linked to an artist
+                linked_artist = is_user_linked_to_artist(artists, new_email)
+                if linked_artist:
+                    step_fail(f"User {new_email} is already linked to artist {linked_artist['id']} ({linked_artist.get('name', 'Unknown')})")
+                    print("Please use 'Use existing artist' flow instead.")
+                    raise RuntimeError(f"User {new_email} already linked to an artist.")
 
-            user_id = register_user(session, base_url, new_email, new_password)
-            promote_to_artist(session, base_url, user_id)
+                # User exists but not linked to artist - offer to create artist for them
+                print(f"User {new_email} exists but has no artist profile.")
+                create_for_existing = prompt("Create artist profile for this existing user? [y/n]:", default="y").lower().startswith('y')
+                if not create_for_existing:
+                    raise RuntimeError("Cancelled by user.")
+
+                user_id = existing_user.get('id')
+                step_ok(f"Using existing user {new_email} (id: {user_id})")
+                # Ensure user has artist role
+                promote_to_artist(session, base_url, user_id)
+            else:
+                # Create new user
+                new_password = prompt("Artist user password (leave blank to auto-generate):", secret=True, allow_empty=True)
+                if not new_password:
+                    new_password = generate_password()
+                    print(f"Generated password: {new_password}")
+
+                user_id = register_user(session, base_url, new_email, new_password)
+                promote_to_artist(session, base_url, user_id)
 
             first_name = prompt("Artist first name:")
             last_name = prompt("Artist last name:")
