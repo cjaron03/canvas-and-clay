@@ -26,7 +26,6 @@
     const params = new URLSearchParams();
     params.set('page', page.toString());
     if (data.filters.search) params.set('search', data.filters.search);
-    if (data.filters.medium) params.set('medium', data.filters.medium);
     if (data.filters.storageId) params.set('storage_id', data.filters.storageId);
     if (data.filters.ordering) params.set('ordering', data.filters.ordering);
     return `/artists?${params.toString()}`;
@@ -90,17 +89,6 @@
       {#if data.storageError}
         <p class="filter-hint">Unable to load locations: {data.storageError}</p>
       {/if}
-    </div>
-
-    <div class="filter-group">
-      <label for="medium">Medium</label>
-      <input
-        id="medium"
-        name="medium"
-        type="text"
-        value={data.filters.medium}
-        placeholder="e.g. Oil, Watercolor"
-      />
     </div>
 
     <button type="submit" class="btn-primary">Filter</button>
