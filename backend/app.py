@@ -1302,6 +1302,7 @@ def list_artworks():
                 'size': artwork.artwork_size,
                 'date_created': artwork.date_created.isoformat() if artwork.date_created else None,
                 'artist': artist_info,
+                'is_viewable': artwork.is_viewable,
                 'storage': {
                     'id': storage.storage_id,
                     'location': storage.storage_loc or '',
@@ -2145,7 +2146,6 @@ def restore_deleted_artwork(artwork_id):
         - Audit logged
     Args:
         - artwork_id: The artwork ID to be restored
-
     Returns:
         200: Artwork restored successfully
         403: Permisison denied
@@ -2155,11 +2155,11 @@ def restore_deleted_artwork(artwork_id):
     artwork = Artwork.query.get(artwork_id)
     if not artwork:
         return jsonify({'error': 'Artwork not found'}), 404
-    
+
     # Verify artwork is currently deleted
     if not artwork.is_deleted:
         return jsonify({'error': 'Artwork is not deleted'}), 404
-    
+
     try:
         # restoring soft deleted artwork
         artwork.is_deleted = False
