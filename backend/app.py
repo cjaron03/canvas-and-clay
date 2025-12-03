@@ -1193,12 +1193,14 @@ def list_artworks():
             # Build search conditions - handle NULL artists gracefully
             search_conditions = [
                 Artwork.artwork_ttl.ilike(search_pattern),
-                Artwork.artwork_medium.ilike(search_pattern)
+                Artwork.artwork_medium.ilike(search_pattern),
+                Artwork.artwork_num.ilike(search_pattern)
             ]
             # Add artist search conditions (will be NULL-safe with outerjoin)
             search_conditions.extend([
                 Artist.artist_fname.ilike(search_pattern),
-                Artist.artist_lname.ilike(search_pattern)
+                Artist.artist_lname.ilike(search_pattern),
+                Artist.artist_id.ilike(search_pattern)
             ])
             query = query.filter(db.or_(*search_conditions))
 
