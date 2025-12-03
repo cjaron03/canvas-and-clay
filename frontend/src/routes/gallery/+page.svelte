@@ -34,7 +34,9 @@
         {/if}
         <div class="artist_info">
             <p>Artist name: {data.artworks[currArtIndex].artist.name}</p>
-            <p>Artist email: {data.artworks[currArtIndex].artist.email}</p>
+            {#if $auth.isAuthenticated}
+                <p>Artist email: {data.artworks[currArtIndex].artist.email || 'No Email Available'}</p>
+            {/if}
         </div>
         <div class="button_container">
             <button class="gallery_button" on:click={prevArtwork}>Previous</button>
@@ -49,7 +51,7 @@
         {/if}
     {/if}  
 {:else}
-    <p>No artworks available for display: {data.error}</p>
+    <p>No artworks available for display{data.error ? `: ${data.error}` : ''}</p>
 {/if}
 
 <style>

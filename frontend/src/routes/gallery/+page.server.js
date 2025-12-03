@@ -2,12 +2,12 @@ import { env as privateEnv } from '$env/dynamic/private';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { extractErrorMessage } from '$lib/utils/errorMessages';
 
-const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5000';
+const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://localhost:5001';
 
 export const load = async ({ fetch }) => {
     try {
         const response = await fetch(
-            `${API_BASE_URL}/api/artworks?per_page=100page=20`,
+            `${API_BASE_URL}/api/artworks?per_page=1000`,
             {
                 headers: {
                     accept: 'application/json'
@@ -19,9 +19,7 @@ export const load = async ({ fetch }) => {
             const data = await response.json();
             const viewableArt = [];
 
-            const artworksArray = Array.isArray(data.artworks)
-                ? data.artworks
-                : (Array.isArray(data.artworks?.array) ? data.artworks.array : []);
+            const artworksArray = data.artworks || [];
 
             artworksArray.forEach(artwork => {
                 if (artwork?.is_viewable === true) {
@@ -30,7 +28,6 @@ export const load = async ({ fetch }) => {
             });
             return {
                 artworks: viewableArt,
-                pagination: data.pagination,
                 error: null
             };
         }
@@ -38,7 +35,6 @@ export const load = async ({ fetch }) => {
             const errorMessage = await extractErrorMessage(response, 'load artworks')
             return {
                 artworks: [],
-                pagination: null,
                 error: errorMessage
             };
         }
@@ -50,7 +46,6 @@ export const load = async ({ fetch }) => {
       : 'Unexpected error while loading artworks. Suggestion: Refresh the page or try again later.';
         return {
             artworks: [],
-            pagination: null,
             error: message
         };
     }
