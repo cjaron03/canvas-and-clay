@@ -266,10 +266,16 @@
                   }}
                 />
               {:else}
-                <div class="no-image">No Image</div>
+                <div class="no-image-placeholder">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                  <span>No Image</span>
+                </div>
               {/if}
             {:else}
-              <div class="no-image">No Image</div>
+              <div class="no-image-placeholder">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                <span>No Image</span>
+              </div>
             {/if}
           </div>
 
@@ -608,9 +614,23 @@
     object-fit: cover;
   }
 
-  .no-image {
+  .no-image-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    background: var(--bg-secondary);
     color: var(--text-tertiary);
     font-size: 0.875rem;
+    text-align: center;
+    gap: 0.5rem;
+  }
+
+  .no-image-placeholder svg {
+    color: var(--text-tertiary);
+    opacity: 0.7;
   }
 
   .artwork-info {
