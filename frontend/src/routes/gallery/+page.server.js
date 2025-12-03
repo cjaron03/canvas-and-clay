@@ -7,7 +7,7 @@ const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://l
 export const load = async ({ fetch }) => {
     try {
         const response = await fetch(
-            `${API_BASE_URL}/api/artworks?`,
+            `${API_BASE_URL}/api/artworks?per_page=100page=20`,
             {
                 headers: {
                     accept: 'application/json'
