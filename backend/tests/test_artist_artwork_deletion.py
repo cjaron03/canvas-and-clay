@@ -116,7 +116,7 @@ def artwork_for_artist_1(artist_user_1):
     user, artist = artist_user_1
 
     # Cleanup
-    Artwork.query.filter_by(artwork_num='AW-TEST-001').delete()
+    Artwork.query.filter_by(artwork_num='AWTEST01').delete()
     Storage.query.filter_by(storage_id='STTEST1').delete()
     db.session.commit()
 
@@ -131,7 +131,7 @@ def artwork_for_artist_1(artist_user_1):
 
     # Create artwork
     artwork = Artwork(
-        artwork_num='AW-TEST-001',
+        artwork_num='AWTEST01',
         artwork_ttl='Test Artwork 1',
         artist_id='ART001',
         storage_id='STTEST1',
@@ -152,7 +152,7 @@ def soft_deleted_artwork(artist_user_1):
     user, artist = artist_user_1
 
     # Cleanup
-    Artwork.query.filter_by(artwork_num='AW-TEST-002').delete()
+    Artwork.query.filter_by(artwork_num='AWTEST02').delete()
     Storage.query.filter_by(storage_id='STTEST2').delete()
     db.session.commit()
 
@@ -167,7 +167,7 @@ def soft_deleted_artwork(artist_user_1):
 
     # Create soft-deleted artwork
     artwork = Artwork(
-        artwork_num='AW-TEST-002',
+        artwork_num='AWTEST02',
         artwork_ttl='Test Artwork 2',
         artist_id='ART001',
         storage_id='STTEST2',
