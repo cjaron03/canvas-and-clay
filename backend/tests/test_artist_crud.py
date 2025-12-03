@@ -160,7 +160,7 @@ class TestListArtists:
         """ Testing listing artists with default pagination"""
         response = client.get('/api/artists')
         assert response.status_code == 200
-        data = response.json
+        data = response.get_json()
         assert 'artists' in data
         assert 'pagination' in data
         assert len(data['artists']) == 2
@@ -170,7 +170,7 @@ class TestListArtists:
         """Test pagination works correctly."""
         response = client.get('/api/artists?page=1&per_page=1')
         assert response.status_code == 200
-        data = response.json
+        data = response.get_json()
         assert len(data['artists']) == 1
         assert data['pagination']['per_page'] == 1
         assert data['pagination']['total_pages'] == 2
@@ -181,7 +181,7 @@ class TestListArtists:
         response = client.get('/api/artists?search=Testy')
 
         assert response.status_code == 200
-        data = response.json
+        data = response.get_json()
         assert len(data['artists']) == 1
         assert data['artists'][0]['first_name'] == 'Test'
         assert data['artists'][0]['last_name'] == 'Testy'
@@ -189,7 +189,7 @@ class TestListArtists:
     def test_list_artists_sort_by_last_name(self, client, test_data):
         """Sort artists alphabetically using ordering parameter."""
         response = client.get('/api/artists?ordering=name_asc')
-        data = response.json
+        data = response.get_json()
         names = [f"{a['first_name']} {a['last_name']}".strip() for a in data['artists']]
         assert names == ['Another Artist', 'Test Testy']
 
@@ -206,7 +206,7 @@ class TestCreateArtist:
         })
 
         assert response.status_code == 201
-        data = response.json
+        data = response.get_json()
         assert 'artist' in data
         assert data['artist']['id'].startswith('A')  # Auto-generated ID
         assert len(data['artist']['id']) == 8  # Format: A0000001
@@ -225,7 +225,8 @@ class TestCreateArtist:
         })
 
         assert response.status_code == 400
-        assert 'Missing required fields' in response.json['error']
+        assert 'Missing required fields' in response.get_json()['error']
+
    
     def test_create_artist_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot create artists."""
@@ -257,7 +258,7 @@ class TestUpdateArtist:
         })
 
         assert response.status_code == 200
-        data = response.json
+        data = response.get_json()
         assert data['artist']['artist_fname'] == 'Updated'
         assert data['artist']['artist_phone'] == '(098)-765-4321'
 
@@ -284,7 +285,7 @@ class TestUpdateArtist:
         })
 
         assert response.status_code == 200
-        assert 'No changes detected' in response.json['message']
+        assert 'No changes detected' in response.get_json()['message']
    
     def test_update_artist_regular_user_forbidden(self, client, regular_user, test_data):
         """Test that regular users cannot update artists."""
@@ -301,7 +302,7 @@ class TestUpdateArtist:
         })
 
         assert response.status_code == 200
-        assert response.json['artist']['artist_bio'] == 'Owner updated bio'
+        assert response.get_json()['artist']['artist_bio'] == 'Owner updated bio'
 
     def test_update_artist_unassigned_artist_forbidden(self, client, artist_user_unassigned, test_data):
         """Artist users cannot update records they do not own."""
@@ -327,7 +328,7 @@ class TestRestoreArtist:
         response = client.put(f'/api/artists/{artist.artist_id}/restore')
         assert response.status_code == 200
 
-        data = response.json
+        data = response.get_json()
         assert data['restored']['artist_id'] == artist.artist_id
         assert data['restored']['artist_name'] == f"{artist.artist_fname} {artist.artist_lname}"
         assert data['restored']['is_deleted'] is False
@@ -350,13 +351,13 @@ class TestRestoreArtist:
 
         response = client.put(f'/api/artists/{artist.artist_id}/restore')
         assert response.status_code == 404
-        assert 'not deleted' in response.json['error'] or 'not found' in response.json['error']
+        assert 'not deleted' in response.get_json()['error'] or 'not found' in response.get_json()['error']
 
     def test_restore_artist_not_found(self, client, admin_user):
         """Restore a non-existent artist."""
         response = client.put('/api/artists/NONEXIST/restore')
         assert response.status_code == 404
-        assert 'not found' in response.json['error']
+        assert 'not found' in response.get_json()['error']
 
 
 class TestDeleteArtist:
@@ -365,7 +366,7 @@ class TestDeleteArtist:
         """Deleting artist with no artworks."""
         response = client.delete('/api/artists/ARTIST02')
         assert response.status_code == 200
-        data = response.json
+        data = response.get_json()
         assert data['deleted']['artist_id'] == 'ARTIST02'
 
         # Verify artist is deleted

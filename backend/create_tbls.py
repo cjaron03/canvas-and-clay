@@ -24,6 +24,9 @@ def init_tables(db):
             artist_email - artist email nullable=True
             artist_site  - artist website or social media
             profile_photo_url - url for the artist's profile photo
+            profile_photo_thumb_url - url for the artist's profile thumbnail
+            profile_photo_object_key - storage key for the full size profile photo
+            profile_photo_thumb_object_key - storage key for the thumbnail photo
             artist_bio - artist biography/description
             artist_phone - artist phone number
             is_deleted - boolean for soft delete (set to false by default, required)
@@ -37,6 +40,9 @@ def init_tables(db):
         artist_email =  db.Column(EncryptedString(255, normalizer=normalize_email), nullable=True)
         artist_site = db.Column(db.String(100), nullable=True)
         profile_photo_url = db.Column(db.String(512), nullable=True)
+        profile_photo_thumb_url = db.Column(db.String(512), nullable=True)
+        profile_photo_object_key = db.Column(db.String(512), nullable=True)
+        profile_photo_thumb_object_key = db.Column(db.String(512), nullable=True)
         artist_bio = db.Column(db.String(800), nullable=True)
         artist_phone = db.Column(EncryptedString(100), nullable=True)
         is_deleted = db.Column(db.Boolean, default=False, server_default='FALSE', nullable=False)

@@ -1,5 +1,6 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
+  import { auth } from '$lib/stores/auth';
 
   // This line is how SvelteKit injects data from the load function in +page.server.js
   export let data;
@@ -41,6 +42,9 @@
 <div class="container">
   <header>
     <h1>Artists</h1>
+    {#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
+      <a href="/artists/new" class="btn-primary">Add a new artist</a>
+    {/if}
   </header>
 
   <!-- Search form for the Artists page -->

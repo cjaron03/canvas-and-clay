@@ -220,6 +220,14 @@ function createAuthStore() {
 			goto('/login?logout=success');
 		},
 
+		// Update user data (e.g., after email change)
+		updateUser(userData) {
+			update((state) => ({
+				...state,
+				user: { ...state.user, ...userData }
+			}));
+		},
+
 		// Clear state (for use after 401 errors)
 		clear() {
 			update((state) => ({

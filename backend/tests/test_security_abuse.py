@@ -233,13 +233,13 @@ class TestRateLimiting:
     """Ensure brute-force protection trips correctly."""
 
     def test_login_rate_limit_enforced(self, client):
-        """21st login attempt from same IP should receive 429 (rate limit is 20 per 15 minutes)."""
+        """11th login attempt from same IP should receive 429 (rate limit is 10 per minute)."""
         limiter.enabled = True
         try:
             _register_and_login(client, 'rate@test.com', 'RatePass123!')
 
-            # Make 20 successful login attempts (within rate limit)
-            for _ in range(20):
+            # Make 10 successful login attempts (within rate limit)
+            for _ in range(10):
                 resp = client.post(
                     '/auth/login',
                     json={'email': 'rate@test.com', 'password': 'RatePass123!'},
@@ -247,23 +247,23 @@ class TestRateLimiting:
                 )
                 assert resp.status_code == 200
 
-            # 21st attempt should be rate limited
-            twenty_first = client.post(
+            # 11th attempt should be rate limited
+            eleventh = client.post(
                 '/auth/login',
                 json={'email': 'rate@test.com', 'password': 'RatePass123!'},
                 environ_base={'REMOTE_ADDR': '203.0.113.10'}
             )
-            assert twenty_first.status_code == 429
+            assert eleventh.status_code == 429
         finally:
             limiter.enabled = False
 
     def test_registration_rate_limit_enforced(self, client):
-        """Fourth registration attempt from same IP should be blocked."""
+        """11th registration attempt from same IP should be blocked (rate limit is 10 per minute)."""
         limiter.enabled = True
         try:
             base_payload = {'password': 'SecurePass123!'}
 
-            for attempt in range(3):
+            for attempt in range(10):
                 resp = client.post(
                     '/auth/register',
                     json={'email': f'user{attempt}@example.com', **base_payload},

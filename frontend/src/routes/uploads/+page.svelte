@@ -4,6 +4,7 @@
   import { get } from 'svelte/store';
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
+  import { validateImageFile } from '$lib/utils/fileValidation';
 
   let activeTab = 'existing'; // 'existing' or 'new'
   let csrfToken = '';
@@ -28,6 +29,9 @@
   let orphanedError = '';
   let orphanedProgress = [];
   let uploadedPhotoIds = [];
+
+  // Auth check
+  $: isAdmin = $auth.user?.role === 'admin';
 
   // Fetch CSRF token on mount
   onMount(async () => {
@@ -105,29 +109,6 @@
     }
   };
 
-  // Validate file
-  const validateFile = (file) => {
-    const maxSize = 10 * 1024 * 1024; // 10MB in bytes
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
-    
-    if (!file.type || !allowedTypes.includes(file.type)) {
-      return {
-        valid: false,
-        error: `"${file.name}" is not a supported image format. Accepted formats: JPG, PNG, WebP, AVIF.`
-      };
-    }
-    
-    if (file.size > maxSize) {
-      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      return {
-        valid: false,
-        error: `"${file.name}" is too large (${sizeMB}MB). Maximum file size is 10MB.`
-      };
-    }
-    
-    return { valid: true };
-  };
-
   // Handle file selection for existing artwork
   const handleFileSelect = (event) => {
     const files = event.target.files || event.dataTransfer?.files;
@@ -137,7 +118,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -210,7 +191,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -263,7 +244,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -337,7 +318,7 @@
       const validFiles = [];
       
       fileArray.forEach(file => {
-        const validation = validateFile(file);
+        const validation = validateImageFile(file);
         if (validation.valid) {
           validFiles.push(file);
         } else {
@@ -529,26 +510,30 @@
 
 <h1>Upload Photos</h1>
 
-<div class="tabs">
-  <button
-    class:active={activeTab === 'existing'}
-    class:tab-existing={activeTab === 'existing'}
-    on:click={() => activeTab = 'existing'}
-  >
-    <span class="tab-icon">Link</span>
-    <span class="tab-label">Upload to Existing Artwork</span>
-    <span class="tab-description">Add photos to artworks already in the database</span>
-  </button>
-  <button
-    class:active={activeTab === 'new'}
-    class:tab-new={activeTab === 'new'}
-    on:click={() => activeTab = 'new'}
-  >
-    <span class="tab-icon">Upload</span>
-    <span class="tab-label">Upload New Photos</span>
-    <span class="tab-description">Upload photos to associate with artworks later</span>
-  </button>
-</div>
+{#if isAdmin}
+  <div class="tabs">
+    <button
+      class:active={activeTab === 'existing'}
+      class:tab-existing={activeTab === 'existing'}
+      on:click={() => activeTab = 'existing'}
+    >
+      <span class="tab-icon">Link</span>
+      <span class="tab-label">Upload to Existing Artwork</span>
+      <span class="tab-description">Add photos to artworks already in the database</span>
+    </button>
+    <button
+      class:active={activeTab === 'new'}
+      class:tab-new={activeTab === 'new'}
+      on:click={() => activeTab = 'new'}
+    >
+      <span class="tab-icon">Upload</span>
+      <span class="tab-label">Upload New Photos</span>
+      <span class="tab-description">Upload photos to associate with artworks later</span>
+    </button>
+  </div>
+{:else}
+  <!-- Artist view header logic simplified -->
+{/if}
 
 {#if activeTab === 'existing'}
   <div class="tab-content tab-content-existing">
@@ -700,7 +685,7 @@
     {/if}
   </div>
 
-{:else if activeTab === 'new'}
+{:else if activeTab === 'new' && isAdmin}
   <div class="tab-content tab-content-new">
     <div class="tab-header">
       <h2>Upload New Photos</h2>
