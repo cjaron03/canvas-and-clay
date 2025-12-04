@@ -375,9 +375,9 @@
     width: 56px; /* Increased size */
     height: 56px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.8); /* Slightly more transparent base */
+    background: var(--nav-arrow-bg, rgba(255, 255, 255, 0.8)); /* Theme-aware background */
+    color: var(--nav-arrow-color, var(--text-primary)); /* Theme-aware color */
     backdrop-filter: blur(8px); /* Frosted glass effect */
-    color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -385,14 +385,25 @@
     transition: all 0.2s ease;
     z-index: 20;
     opacity: 0.7;
-    border: 1px solid rgba(0,0,0,0.05);
+    border: 1px solid var(--nav-arrow-border, rgba(0,0,0,0.05)); /* Theme-aware border */
   }
 
   .nav-arrow:hover {
     transform: translateY(-50%) scale(1.1);
-    background: white;
+    background: var(--nav-arrow-hover-bg, white); /* Theme-aware hover background */
     opacity: 1;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Dark mode overrides (assuming [data-theme='dark'] on :root or html) */
+  :global([data-theme='dark']) .nav-arrow {
+    --nav-arrow-bg: rgba(30, 30, 30, 0.8);
+    --nav-arrow-color: white;
+    --nav-arrow-border: rgba(255, 255, 255, 0.1);
+  }
+
+  :global([data-theme='dark']) .nav-arrow:hover {
+    --nav-arrow-hover-bg: rgb(50, 50, 50);
   }
 
   .nav-arrow.prev { left: 0; }
