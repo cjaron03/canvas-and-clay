@@ -1,0 +1,51 @@
+name: Check Migration Heads
+
+on:
+  pull_request:
+    paths:
+      - 'backend/migrations/versions/*.py'
+  push:
+    branches: [main, feat/*]
+    paths:
+      - 'backend/migrations/versions/*.py'
+
+jobs:
+  check-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Check for multiple migration heads
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://test:test@localhost/test
+        run: |
+          # Use a dummy database URL for head checking (doesn't need real DB)
+          export FLASK_APP=app.py
+          heads_output=$(flask db heads 2>&1 || true)
+          head_count=$(echo "$heads_output" | grep -c "head" || echo "0")
+          
+          if [ "$head_count" -gt 1 ]; then
+            echo "::error::Multiple migration heads detected!"
+            echo "$heads_output"
+            echo ""
+            echo "To fix:"
+            echo "1. Create a merge migration: flask db merge -m 'merge branches' <head1> <head2>"
+            echo "2. Update any new migrations to point to the merge migration"
+            exit 1
+          fi
+          
+          echo "✓ Migration head check passed"
+
+
+
