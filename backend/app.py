@@ -4905,6 +4905,15 @@ def create_backup_endpoint():
             'error': None
         }
 
+        # Capture request context data before spawning thread
+        # (Flask request-local proxies won't work in background threads)
+        user_id = current_user.id
+        user_email = current_user.email
+        client_ip = request.remote_addr
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        include_thumbnails = data.get('include_thumbnails', False)
+        exclude_audit_logs = data.get('exclude_audit_logs', False)
+
         def run_backup():
             try:
                 from backup import create_backup
@@ -4915,9 +4924,9 @@ def create_backup_endpoint():
                     output_path=output_path,
                     db_only=db_only,
                     photos_only=photos_only,
-                    include_thumbnails=data.get('include_thumbnails', False),
-                    exclude_audit_logs=data.get('exclude_audit_logs', False),
-                    created_by=current_user.email
+                    include_thumbnails=include_thumbnails,
+                    exclude_audit_logs=exclude_audit_logs,
+                    created_by=user_email
                 )
 
                 if success:
@@ -4927,11 +4936,11 @@ def create_backup_endpoint():
 
                     # Add audit log
                     audit_log = AuditLog(
-                        user_id=current_user.id,
-                        email=current_user.email,
+                        user_id=user_id,
+                        email=user_email,
                         event_type='backup_created',
-                        ip_address=request.remote_addr,
-                        user_agent=request.headers.get('User-Agent', 'Unknown'),
+                        ip_address=client_ip,
+                        user_agent=user_agent,
                         details=json.dumps({
                             'filename': os.path.basename(output_path),
                             'type': backup_type
@@ -5190,13 +5199,21 @@ def start_restore_endpoint():
         'error': None
     }
 
+    # Capture request context data before spawning thread
+    # (Flask request-local proxies won't work in background threads)
+    user_id = current_user.id
+    user_email = current_user.email
+    client_ip = request.remote_addr
+    user_agent = request.headers.get('User-Agent', 'Unknown')
+    skip_pre_backup = data.get('skip_pre_backup', False)
+
     # Log restore start
     audit_log = AuditLog(
-        user_id=current_user.id,
-        email=current_user.email,
+        user_id=user_id,
+        email=user_email,
         event_type='restore_started',
-        ip_address=request.remote_addr,
-        user_agent=request.headers.get('User-Agent', 'Unknown'),
+        ip_address=client_ip,
+        user_agent=user_agent,
         details=json.dumps({
             'filename': filename,
             'restore_id': restore_id,
@@ -5218,7 +5235,7 @@ def start_restore_endpoint():
                 db_only=db_only,
                 photos_only=photos_only,
                 force=True,  # Already confirmed via API
-                no_pre_backup=data.get('skip_pre_backup', False)
+                no_pre_backup=skip_pre_backup
             )
 
             if success:
@@ -5229,11 +5246,11 @@ def start_restore_endpoint():
                 # Log success
                 with app.app_context():
                     audit_log = AuditLog(
-                        user_id=current_user.id,
-                        email=current_user.email,
+                        user_id=user_id,
+                        email=user_email,
                         event_type='restore_completed',
-                        ip_address=request.remote_addr,
-                        user_agent=request.headers.get('User-Agent', 'Unknown'),
+                        ip_address=client_ip,
+                        user_agent=user_agent,
                         details=json.dumps({
                             'filename': filename,
                             'restore_id': restore_id
@@ -5248,11 +5265,11 @@ def start_restore_endpoint():
                 # Log failure
                 with app.app_context():
                     audit_log = AuditLog(
-                        user_id=current_user.id,
-                        email=current_user.email,
+                        user_id=user_id,
+                        email=user_email,
                         event_type='restore_failed',
-                        ip_address=request.remote_addr,
-                        user_agent=request.headers.get('User-Agent', 'Unknown'),
+                        ip_address=client_ip,
+                        user_agent=user_agent,
                         details=json.dumps({
                             'filename': filename,
                             'restore_id': restore_id,
