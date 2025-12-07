@@ -86,7 +86,6 @@
   let backupProgress = null;
   let backupCurrentStep = '';
   let currentBackupId = null;
-  let backupIncludePhotos = true;
   let backupIncludeThumbnails = false;
   let backupExcludeAuditLogs = false;
   let backupDbOnly = false;
