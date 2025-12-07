@@ -79,6 +79,7 @@
 
   // Backup state
   let backups = [];
+  let backupsLoaded = false;
   let backupLoading = false;
   let backupError = '';
   let backupNotice = '';
@@ -1826,6 +1827,7 @@
       console.error('Failed to load backups:', err);
     } finally {
       backupLoading = false;
+      backupsLoaded = true;
     }
   };
 
@@ -2099,8 +2101,8 @@
     }
   };
 
-  // Load backups when backup tab is selected
-  $: if (activeTab === 'backup' && backups.length === 0 && !backupLoading) {
+  // Load backups when backup tab is selected (only once)
+  $: if (activeTab === 'backup' && !backupsLoaded && !backupLoading) {
     loadBackups();
   }
 
