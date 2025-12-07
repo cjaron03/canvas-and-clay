@@ -4812,6 +4812,488 @@ def admin_console_cli():
             }), 500
 
 
+# =============================================================================
+# Backup and Restore Endpoints
+# =============================================================================
+
+# In-memory tracking for backup/restore operations
+_backup_operations = {}
+_restore_operations = {}
+
+
+@app.route('/api/admin/console/backups', methods=['GET'])
+@login_required
+@admin_required
+def list_backups_endpoint():
+    """List available backup files.
+
+    Returns:
+        200: List of backups with metadata
+        500: Server error
+    """
+    try:
+        from backup_utils import list_backups
+        backups = list_backups()
+
+        # Format for frontend
+        formatted = []
+        for backup in backups:
+            manifest = backup.get('manifest') or {}
+            contents = manifest.get('contents', {})
+
+            formatted.append({
+                'filename': backup['filename'],
+                'size': backup['size'],
+                'created_at': backup['created_at'],
+                'type': manifest.get('type', 'unknown'),
+                'created_by': manifest.get('created_by', 'unknown'),
+                'has_database': contents.get('database', {}).get('included', False),
+                'has_photos': contents.get('photos', {}).get('included', False),
+                'photo_count': contents.get('photos', {}).get('count', 0)
+            })
+
+        return jsonify({'backups': formatted}), 200
+    except Exception as e:
+        app.logger.exception("Failed to list backups")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/console/backups/create', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("2 per minute")
+def create_backup_endpoint():
+    """Create a new backup.
+
+    Body:
+        include_photos: bool (default True)
+        include_thumbnails: bool (default False)
+        exclude_audit_logs: bool (default False)
+        db_only: bool (default False)
+        photos_only: bool (default False)
+
+    Returns:
+        200: Backup created successfully
+        400: Invalid options
+        500: Backup failed
+    """
+    try:
+        import threading
+        import uuid
+        from backup_utils import ensure_backups_dir, generate_backup_filename, BACKUPS_DIR
+
+        data = request.get_json() or {}
+
+        db_only = data.get('db_only', False)
+        photos_only = data.get('photos_only', False)
+
+        if db_only and photos_only:
+            return jsonify({'error': 'Cannot specify both db_only and photos_only'}), 400
+
+        # Generate backup ID and filename
+        backup_id = str(uuid.uuid4())[:8]
+        backup_type = 'db_only' if db_only else ('photos_only' if photos_only else 'full')
+        ensure_backups_dir()
+        output_path = os.path.join(BACKUPS_DIR, generate_backup_filename(backup_type))
+
+        # Initialize operation status
+        _backup_operations[backup_id] = {
+            'status': 'in_progress',
+            'progress': 0,
+            'current_step': 'Starting backup...',
+            'filename': os.path.basename(output_path),
+            'error': None
+        }
+
+        def run_backup():
+            try:
+                from backup import create_backup
+
+                _backup_operations[backup_id]['current_step'] = 'Creating backup...'
+
+                success, message = create_backup(
+                    output_path=output_path,
+                    db_only=db_only,
+                    photos_only=photos_only,
+                    include_thumbnails=data.get('include_thumbnails', False),
+                    exclude_audit_logs=data.get('exclude_audit_logs', False),
+                    created_by=current_user.email
+                )
+
+                if success:
+                    _backup_operations[backup_id]['status'] = 'completed'
+                    _backup_operations[backup_id]['progress'] = 100
+                    _backup_operations[backup_id]['current_step'] = 'Backup complete'
+
+                    # Add audit log
+                    audit_log = AuditLog(
+                        user_id=current_user.id,
+                        email=current_user.email,
+                        event_type='backup_created',
+                        ip_address=request.remote_addr,
+                        user_agent=request.headers.get('User-Agent', 'Unknown'),
+                        details=json.dumps({
+                            'filename': os.path.basename(output_path),
+                            'type': backup_type
+                        })
+                    )
+                    with app.app_context():
+                        db.session.add(audit_log)
+                        db.session.commit()
+                else:
+                    _backup_operations[backup_id]['status'] = 'failed'
+                    _backup_operations[backup_id]['error'] = message
+
+            except Exception as e:
+                _backup_operations[backup_id]['status'] = 'failed'
+                _backup_operations[backup_id]['error'] = str(e)
+
+        # Run backup in background thread
+        thread = threading.Thread(target=run_backup)
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({
+            'backup_id': backup_id,
+            'status': 'in_progress',
+            'filename': os.path.basename(output_path)
+        }), 200
+
+    except Exception as e:
+        app.logger.exception("Failed to start backup")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/console/backups/<backup_id>/status', methods=['GET'])
+@login_required
+@admin_required
+def get_backup_status(backup_id):
+    """Get status of a backup operation.
+
+    Returns:
+        200: Status data
+        404: Backup operation not found
+    """
+    if backup_id not in _backup_operations:
+        return jsonify({'error': 'Backup operation not found'}), 404
+
+    return jsonify(_backup_operations[backup_id]), 200
+
+
+@app.route('/api/admin/console/backups/<filename>/download', methods=['GET'])
+@login_required
+@admin_required
+def download_backup(filename):
+    """Download a backup file.
+
+    Returns:
+        200: File download
+        400: Invalid filename
+        404: File not found
+    """
+    from backup_utils import BACKUPS_DIR
+
+    # Security: prevent path traversal
+    if '/' in filename or '\\' in filename or '..' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+
+    filepath = os.path.join(BACKUPS_DIR, filename)
+
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Backup not found'}), 404
+
+    # Log the download
+    audit_log = AuditLog(
+        user_id=current_user.id,
+        email=current_user.email,
+        event_type='backup_downloaded',
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent', 'Unknown'),
+        details=json.dumps({'filename': filename})
+    )
+    db.session.add(audit_log)
+    db.session.commit()
+
+    return send_from_directory(
+        BACKUPS_DIR,
+        filename,
+        as_attachment=True,
+        download_name=filename
+    )
+
+
+@app.route('/api/admin/console/backups/<filename>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_backup_endpoint(filename):
+    """Delete a backup file.
+
+    Returns:
+        200: Deleted successfully
+        400: Invalid filename
+        404: File not found
+        500: Delete failed
+    """
+    from backup_utils import delete_backup
+
+    success, message = delete_backup(filename)
+
+    if not success:
+        if 'not found' in message.lower():
+            return jsonify({'error': message}), 404
+        if 'invalid' in message.lower():
+            return jsonify({'error': message}), 400
+        return jsonify({'error': message}), 500
+
+    # Log the deletion
+    audit_log = AuditLog(
+        user_id=current_user.id,
+        email=current_user.email,
+        event_type='backup_deleted',
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent', 'Unknown'),
+        details=json.dumps({'filename': filename})
+    )
+    db.session.add(audit_log)
+    db.session.commit()
+
+    return jsonify({'success': True, 'message': message}), 200
+
+
+@app.route('/api/admin/console/restore/validate', methods=['POST'])
+@login_required
+@admin_required
+def validate_restore_endpoint():
+    """Validate a backup before restore.
+
+    Body:
+        filename: str - Name of backup file to validate
+
+    Returns:
+        200: Validation result
+        400: Invalid request
+        404: Backup not found
+    """
+    import tarfile
+    from backup_utils import BACKUPS_DIR, validate_manifest, get_pii_key_fingerprint
+
+    data = request.get_json() or {}
+    filename = data.get('filename')
+
+    if not filename:
+        return jsonify({'error': 'filename is required'}), 400
+
+    # Security: prevent path traversal
+    if '/' in filename or '\\' in filename or '..' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+
+    filepath = os.path.join(BACKUPS_DIR, filename)
+
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Backup not found'}), 404
+
+    try:
+        # Read manifest
+        with tarfile.open(filepath, "r:gz") as tar:
+            manifest_member = tar.getmember("manifest.json")
+            f = tar.extractfile(manifest_member)
+            if not f:
+                return jsonify({'error': 'Cannot read manifest'}), 400
+            manifest = json.loads(f.read().decode('utf-8'))
+
+        # Validate
+        valid, warnings, errors = validate_manifest(manifest)
+
+        # Check PII key
+        source_fingerprint = manifest.get('source', {}).get('pii_key_fingerprint')
+        current_fingerprint = get_pii_key_fingerprint()
+        pii_key_match = source_fingerprint == current_fingerprint
+
+        return jsonify({
+            'valid': valid,
+            'warnings': warnings,
+            'errors': errors,
+            'manifest': {
+                'type': manifest.get('type'),
+                'created_at': manifest.get('created_at'),
+                'created_by': manifest.get('created_by'),
+                'contents': manifest.get('contents', {})
+            },
+            'pii_key_match': pii_key_match,
+            'source_fingerprint': source_fingerprint,
+            'current_fingerprint': current_fingerprint
+        }), 200
+
+    except Exception as e:
+        app.logger.exception("Failed to validate backup")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/console/restore', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("1 per 5 minutes")
+def start_restore_endpoint():
+    """Start a restore operation.
+
+    Body:
+        filename: str - Name of backup file to restore
+        db_only: bool - Only restore database
+        photos_only: bool - Only restore photos
+        skip_pre_backup: bool - Skip creating pre-restore backup
+        confirmation_token: str - Must be 'RESTORE' to confirm
+
+    Returns:
+        200: Restore started
+        400: Invalid request or confirmation
+        404: Backup not found
+        500: Restore failed
+    """
+    import threading
+    import uuid
+    from backup_utils import BACKUPS_DIR
+
+    data = request.get_json() or {}
+    filename = data.get('filename')
+    confirmation = data.get('confirmation_token')
+
+    if not filename:
+        return jsonify({'error': 'filename is required'}), 400
+
+    if confirmation != 'RESTORE':
+        return jsonify({'error': 'Invalid confirmation token. Send "RESTORE" to confirm.'}), 400
+
+    # Security: prevent path traversal
+    if '/' in filename or '\\' in filename or '..' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+
+    filepath = os.path.join(BACKUPS_DIR, filename)
+
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Backup not found'}), 404
+
+    db_only = data.get('db_only', False)
+    photos_only = data.get('photos_only', False)
+
+    if db_only and photos_only:
+        return jsonify({'error': 'Cannot specify both db_only and photos_only'}), 400
+
+    # Generate restore ID
+    restore_id = str(uuid.uuid4())[:8]
+
+    # Initialize operation status
+    _restore_operations[restore_id] = {
+        'status': 'in_progress',
+        'progress': 0,
+        'current_step': 'Starting restore...',
+        'filename': filename,
+        'error': None
+    }
+
+    # Log restore start
+    audit_log = AuditLog(
+        user_id=current_user.id,
+        email=current_user.email,
+        event_type='restore_started',
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get('User-Agent', 'Unknown'),
+        details=json.dumps({
+            'filename': filename,
+            'restore_id': restore_id,
+            'db_only': db_only,
+            'photos_only': photos_only
+        })
+    )
+    db.session.add(audit_log)
+    db.session.commit()
+
+    def run_restore():
+        try:
+            from restore import restore_backup
+
+            _restore_operations[restore_id]['current_step'] = 'Restoring...'
+
+            success, message = restore_backup(
+                input_path=filepath,
+                db_only=db_only,
+                photos_only=photos_only,
+                force=True,  # Already confirmed via API
+                no_pre_backup=data.get('skip_pre_backup', False)
+            )
+
+            if success:
+                _restore_operations[restore_id]['status'] = 'completed'
+                _restore_operations[restore_id]['progress'] = 100
+                _restore_operations[restore_id]['current_step'] = 'Restore complete'
+
+                # Log success
+                with app.app_context():
+                    audit_log = AuditLog(
+                        user_id=current_user.id,
+                        email=current_user.email,
+                        event_type='restore_completed',
+                        ip_address=request.remote_addr,
+                        user_agent=request.headers.get('User-Agent', 'Unknown'),
+                        details=json.dumps({
+                            'filename': filename,
+                            'restore_id': restore_id
+                        })
+                    )
+                    db.session.add(audit_log)
+                    db.session.commit()
+            else:
+                _restore_operations[restore_id]['status'] = 'failed'
+                _restore_operations[restore_id]['error'] = message
+
+                # Log failure
+                with app.app_context():
+                    audit_log = AuditLog(
+                        user_id=current_user.id,
+                        email=current_user.email,
+                        event_type='restore_failed',
+                        ip_address=request.remote_addr,
+                        user_agent=request.headers.get('User-Agent', 'Unknown'),
+                        details=json.dumps({
+                            'filename': filename,
+                            'restore_id': restore_id,
+                            'error': message
+                        })
+                    )
+                    db.session.add(audit_log)
+                    db.session.commit()
+
+        except Exception as e:
+            _restore_operations[restore_id]['status'] = 'failed'
+            _restore_operations[restore_id]['error'] = str(e)
+
+    # Run restore in background thread
+    thread = threading.Thread(target=run_restore)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({
+        'restore_id': restore_id,
+        'status': 'in_progress',
+        'filename': filename
+    }), 200
+
+
+@app.route('/api/admin/console/restore/<restore_id>/status', methods=['GET'])
+@login_required
+@admin_required
+def get_restore_status(restore_id):
+    """Get status of a restore operation.
+
+    Returns:
+        200: Status data
+        404: Restore operation not found
+    """
+    if restore_id not in _restore_operations:
+        return jsonify({'error': 'Restore operation not found'}), 404
+
+    return jsonify(_restore_operations[restore_id]), 200
+
+
 @app.route('/uploads/<path:filename>')
 @limiter.exempt
 def serve_upload(filename):
