@@ -175,9 +175,16 @@ def run_pg_restore(input_path, clean=True):
             timeout=600
         )
 
-        # pg_restore returns non-zero for warnings too, check stderr
-        if result.returncode != 0 and "error" in result.stderr.lower():
-            return False, f"pg_restore failed: {result.stderr}"
+        # pg_restore returns non-zero for warnings too, check stderr for real failures
+        # Look for fatal errors, not just warnings about existing objects
+        stderr_lower = result.stderr.lower()
+        fatal_indicators = ["fatal", "error", "failed", "could not connect", "password authentication"]
+
+        if result.returncode != 0:
+            # Check if it's a real failure or just warnings
+            if any(indicator in stderr_lower for indicator in fatal_indicators):
+                return False, f"pg_restore failed: {result.stderr}"
+            # Non-zero but no fatal indicators = likely just warnings (e.g., "table already exists")
 
         return True, "Database restored successfully"
 
