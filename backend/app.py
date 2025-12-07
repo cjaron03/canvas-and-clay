@@ -722,7 +722,7 @@ def create_artist():
                 'id': new_artistid,
                 'artist_fname': artist.artist_fname,
                 'artist_lname': artist.artist_lname,
-                'email': artist.artist_email,
+                'email': _get_artist_display_email(artist),
                 'artist_site': artist.artist_site,
                 'profile_photo_url': artist.profile_photo_url,
                 'profile_photo_thumb_url': artist.profile_photo_thumb_url,
@@ -1113,6 +1113,54 @@ def delete_artist(artist_id):
         return jsonify({'error': 'Failed to delete artist. Please try again.'}), 500
 
 
+@app.route('/api/artworks/suggest', methods=['GET'])
+def suggest_artworks():
+    """
+    Get search suggestions for artworks and artists.
+    """
+    query_str = request.args.get('q', '').strip()
+    if not query_str or len(query_str) < 2:
+        return jsonify([]), 200
+
+    search_pattern = f"%{query_str}%"
+    suggestions = []
+
+    # Search Artworks (Title)
+    artworks = Artwork.query.filter(
+        Artwork.artwork_ttl.ilike(search_pattern),
+        Artwork.is_deleted == False
+    ).limit(5).all()
+
+    for artwork in artworks:
+        suggestions.append({
+            'type': 'artwork',
+            'id': artwork.artwork_num,
+            'text': artwork.artwork_ttl,
+            'subtext': artwork.artwork_medium
+        })
+
+    # Search Artists (Name)
+    # We need to construct full name search or search first/last independently
+    artists = Artist.query.filter(
+        db.or_(
+            Artist.artist_fname.ilike(search_pattern),
+            Artist.artist_lname.ilike(search_pattern)
+        ),
+        Artist.is_deleted == False
+    ).limit(3).all()
+
+    for artist in artists:
+        full_name = f"{artist.artist_fname or ''} {artist.artist_lname or ''}".strip()
+        suggestions.append({
+            'type': 'artist',
+            'id': artist.artist_id,
+            'text': full_name,
+            'subtext': 'Artist'
+        })
+
+    return jsonify(suggestions), 200
+
+
 @app.route('/api/artworks', methods=['GET'])
 @limiter.limit(get_rate_limit_by_identity)  # Dynamic limit based on user identity
 def list_artworks():
@@ -1193,12 +1241,14 @@ def list_artworks():
             # Build search conditions - handle NULL artists gracefully
             search_conditions = [
                 Artwork.artwork_ttl.ilike(search_pattern),
-                Artwork.artwork_medium.ilike(search_pattern)
+                Artwork.artwork_medium.ilike(search_pattern),
+                Artwork.artwork_num.ilike(search_pattern)
             ]
             # Add artist search conditions (will be NULL-safe with outerjoin)
             search_conditions.extend([
                 Artist.artist_fname.ilike(search_pattern),
-                Artist.artist_lname.ilike(search_pattern)
+                Artist.artist_lname.ilike(search_pattern),
+                Artist.artist_id.ilike(search_pattern)
             ])
             query = query.filter(db.or_(*search_conditions))
 
@@ -1315,7 +1365,8 @@ def list_artworks():
                 } if storage else None,
                 'primary_photo': {
                     'id': primary_photo.photo_id,
-                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}"
+                    'thumbnail_url': f"/uploads/thumbnails/{os.path.basename(primary_photo.thumbnail_path)}",
+                    'url': f"/uploads/artworks/{os.path.basename(primary_photo.file_path)}"
                 } if primary_photo else None,
                 'photo_count': photo_count
             }
@@ -1391,8 +1442,22 @@ def get_artwork(artwork_id):
         ArtworkPhoto.uploaded_at.desc()
     ).all()
 
+    # Find next and previous artwork IDs for navigation
+    # Order by artwork_num (same as default sort usually)
+    next_artwork = Artwork.query.filter(
+        Artwork.artwork_num > artwork_id,
+        Artwork.is_deleted == False
+    ).order_by(Artwork.artwork_num.asc()).first()
+
+    prev_artwork = Artwork.query.filter(
+        Artwork.artwork_num < artwork_id,
+        Artwork.is_deleted == False
+    ).order_by(Artwork.artwork_num.desc()).first()
+
     return jsonify({
         'id': artwork.artwork_num,
+        'next_artwork_id': next_artwork.artwork_num if next_artwork else None,
+        'prev_artwork_id': prev_artwork.artwork_num if prev_artwork else None,
         'title': artwork.artwork_ttl,
         'medium': artwork.artwork_medium,
         'size': artwork.artwork_size,
@@ -1607,7 +1672,7 @@ def list_artists_catalog():
                 'id': artist.artist_id,
                 'first_name': artist.artist_fname,
                 'last_name': artist.artist_lname,
-                'email': artist.artist_email,
+                'email': _get_artist_display_email(artist),
                 'user_id': artist.user_id,
                 'photo': artist.profile_photo_thumb_url or artist.profile_photo_url
             })
@@ -1683,7 +1748,7 @@ def get_artist_details(artist_id):
         'user_id': artist.user_id,
         'mediums': mediums,
         'storage_locations': storage_locations,
-        'email': artist.artist_email,
+        'email': _get_artist_display_email(artist),
         'artist_site': artist.artist_site,
         'artist_phone': artist.artist_phone,
         'photo_thumbnail': artist.profile_photo_thumb_url or artist.profile_photo_url,
@@ -3182,9 +3247,8 @@ def admin_console_artists():
             artist_data.append({
                 'id': artist.artist_id,
                 'name': f"{artist.artist_fname} {artist.artist_lname}".strip(),
-                'email': artist.artist_email,
-                'user_id': artist.user_id,
-                'user_email': user.email if user else None
+                'email': _get_artist_display_email(artist, user),
+                'user_id': artist.user_id
             })
         return jsonify({'artists': artist_data}), 200
     except Exception:
@@ -3550,6 +3614,22 @@ def _serialize_user_with_last_login(user):
         'last_login': last_login.created_at.isoformat() if last_login and last_login.created_at else None,
         'is_bootstrap_admin': _is_bootstrap_admin(user)
     }
+
+
+def _get_artist_display_email(artist, user=None):
+    """Return User email if artist is linked to a user, otherwise artist_email.
+
+    This consolidates the two email fields into a single display value:
+    - If artist has a linked User account, return User.email
+    - Otherwise, return artist.artist_email as fallback
+    """
+    if user and user.email:
+        return user.email
+    if artist.user_id and not user:
+        linked_user = User.query.get(artist.user_id)
+        if linked_user and linked_user.email:
+            return linked_user.email
+    return artist.artist_email
 
 
 def _update_expired_password_resets():
@@ -4733,6 +4813,7 @@ def admin_console_cli():
 
 
 @app.route('/uploads/<path:filename>')
+@limiter.exempt
 def serve_upload(filename):
     """Serve uploaded files securely.
 

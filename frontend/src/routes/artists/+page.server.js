@@ -7,7 +7,7 @@ const API_BASE_URL = privateEnv.API_BASE_URL || PUBLIC_API_BASE_URL || 'http://l
 // Stores the GET request parameters from the URL into constants
 export const load = async ({ url, fetch }) => {
   const page = parseInt(url.searchParams.get('page') ?? '1', 10);
-  const perPage = parseInt(url.searchParams.get('per_page') ?? '20', 10);
+  const perPage = parseInt(url.searchParams.get('per_page') ?? '24', 10);
   const search = url.searchParams.get('search') ?? '';
   const storageId = url.searchParams.get('storage_id') ?? '';
   const ordering = url.searchParams.get('ordering') ?? 'name_asc';
