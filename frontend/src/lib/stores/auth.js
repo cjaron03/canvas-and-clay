@@ -40,11 +40,12 @@ function createAuthStore() {
 					});
 					if (meResponse.ok) {
 						const data = await meResponse.json();
-						set({
+						// Preserve the existing CSRF token - /auth/me does not return one
+						update((state) => ({
 							user: data.user,
 							isAuthenticated: true,
-							csrfToken: data.csrf_token || null
-						});
+							csrfToken: state.csrfToken
+						}));
 					} else {
 						// Explicitly clear auth state if not authenticated
 						// 401 is expected after logout, so don't log it as an error

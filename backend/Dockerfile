@@ -31,10 +31,11 @@ WORKDIR /app
 # Avoid flaky http mirror responses that can trigger Hash Sum mismatch errors
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
 
-# Install runtime dependencies (libpq for psycopg2, libmagic for python-magic)
+# Install runtime dependencies (libpq for psycopg2, libmagic for python-magic, postgresql-client for pg_dump/pg_restore)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libmagic1 \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder

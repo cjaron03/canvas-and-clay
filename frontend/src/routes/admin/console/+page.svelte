@@ -77,6 +77,31 @@
   let overallHealthStatus = 'unknown'; // Overall system health status
   let isTabVisible = true; // Track if browser tab is visible
 
+  // Backup state
+  let backups = [];
+  let backupsLoaded = false;
+  let backupLoading = false;
+  let backupError = '';
+  let backupNotice = '';
+  let backupInProgress = false;
+  let backupProgress = null;
+  let backupCurrentStep = '';
+  let currentBackupId = null;
+  let backupIncludeThumbnails = false;
+  let backupExcludeAuditLogs = false;
+  let backupDbOnly = false;
+  let backupPhotosOnly = false;
+  let restoreInProgress = false;
+  let restoreProgress = null;
+  let restoreCurrentStep = '';
+  let currentRestoreId = null;
+  let selectedBackupForRestore = null;
+  let restoreValidation = null;
+  let restoreConfirmationPending = false;
+  let restoreDbOnly = false;
+  let restorePhotosOnly = false;
+  let restoreSkipPreBackup = false;
+
   // CLI state
   let writeMode = false;
   let commandInput = '';
@@ -131,7 +156,7 @@
     
     // Read tab from URL query parameter
     const tabParam = $page.url.searchParams.get('tab');
-    if (tabParam && ['overview', 'security', 'requests', 'users', 'database', 'cli'].includes(tabParam)) {
+    if (tabParam && ['overview', 'security', 'requests', 'users', 'database', 'cli', 'backup'].includes(tabParam)) {
       activeTab = tabParam;
     }
 
@@ -1774,6 +1799,313 @@
     }
   }
 
+  // ============================================================================
+  // Backup & Restore Functions
+  // ============================================================================
+
+  const loadBackups = async () => {
+    backupLoading = true;
+    backupError = '';
+    try {
+      const headers = { accept: 'application/json' };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/backups`, {
+        credentials: 'include',
+        headers
+      });
+      if (response.ok) {
+        const result = await response.json();
+        backups = result.backups || [];
+      } else {
+        const err = await response.json();
+        backupError = err.error || 'Failed to load backups';
+      }
+    } catch (err) {
+      backupError = 'Failed to connect to server';
+      console.error('Failed to load backups:', err);
+    } finally {
+      backupLoading = false;
+      backupsLoaded = true;
+    }
+  };
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const startBackup = async () => {
+    backupInProgress = true;
+    backupError = '';
+    backupNotice = '';
+    backupCurrentStep = 'Starting backup...';
+    backupProgress = 0;
+
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        accept: 'application/json'
+      };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/backups/create`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({
+          db_only: backupDbOnly,
+          photos_only: backupPhotosOnly,
+          include_thumbnails: backupIncludeThumbnails,
+          exclude_audit_logs: backupExcludeAuditLogs
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        currentBackupId = result.backup_id;
+        pollBackupStatus();
+      } else {
+        const err = await response.json();
+        backupError = err.error || 'Failed to start backup';
+        backupInProgress = false;
+      }
+    } catch (err) {
+      backupError = 'Failed to connect to server';
+      backupInProgress = false;
+      console.error('Failed to start backup:', err);
+    }
+  };
+
+  const pollBackupStatus = async () => {
+    if (!currentBackupId) return;
+
+    try {
+      const headers = { accept: 'application/json' };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/backups/${currentBackupId}/status`,
+        { credentials: 'include', headers }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        backupProgress = result.progress || 0;
+        backupCurrentStep = result.current_step || '';
+
+        if (result.status === 'completed') {
+          backupInProgress = false;
+          backupNotice = 'Backup created successfully!';
+          currentBackupId = null;
+          loadBackups();
+        } else if (result.status === 'failed') {
+          backupInProgress = false;
+          backupError = result.error || 'Backup failed';
+          currentBackupId = null;
+        } else {
+          // Still in progress, poll again
+          setTimeout(pollBackupStatus, 1000);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to poll backup status:', err);
+      setTimeout(pollBackupStatus, 2000);
+    }
+  };
+
+  const deleteBackup = async (filename) => {
+    if (!confirm(`Are you sure you want to delete backup "${filename}"?`)) {
+      return;
+    }
+
+    try {
+      const headers = { accept: 'application/json' };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/backups/${encodeURIComponent(filename)}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+          headers
+        }
+      );
+
+      if (response.ok) {
+        backupNotice = 'Backup deleted successfully';
+        loadBackups();
+      } else {
+        const err = await response.json();
+        backupError = err.error || 'Failed to delete backup';
+      }
+    } catch (err) {
+      backupError = 'Failed to connect to server';
+      console.error('Failed to delete backup:', err);
+    }
+  };
+
+  const downloadBackup = (filename) => {
+    // Create a temporary link to trigger download
+    const url = `${PUBLIC_API_BASE_URL}/api/admin/console/backups/${encodeURIComponent(filename)}/download`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const validateRestore = async (filename) => {
+    selectedBackupForRestore = filename;
+    restoreValidation = null;
+    restoreConfirmationPending = false;
+
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        accept: 'application/json'
+      };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/restore/validate`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ filename })
+      });
+
+      if (response.ok) {
+        restoreValidation = await response.json();
+      } else {
+        const err = await response.json();
+        backupError = err.error || 'Failed to validate backup';
+        selectedBackupForRestore = null;
+      }
+    } catch (err) {
+      backupError = 'Failed to connect to server';
+      selectedBackupForRestore = null;
+      console.error('Failed to validate restore:', err);
+    }
+  };
+
+  const cancelRestore = () => {
+    selectedBackupForRestore = null;
+    restoreValidation = null;
+    restoreConfirmationPending = false;
+    restoreDbOnly = false;
+    restorePhotosOnly = false;
+    restoreSkipPreBackup = false;
+  };
+
+  const confirmRestore = () => {
+    restoreConfirmationPending = true;
+  };
+
+  const startRestore = async () => {
+    if (!selectedBackupForRestore) return;
+
+    restoreInProgress = true;
+    restoreCurrentStep = 'Starting restore...';
+    restoreProgress = 0;
+    backupError = '';
+    backupNotice = '';
+
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        accept: 'application/json'
+      };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/restore`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({
+          filename: selectedBackupForRestore,
+          confirmation_token: 'RESTORE',
+          db_only: restoreDbOnly,
+          photos_only: restorePhotosOnly,
+          skip_pre_backup: restoreSkipPreBackup
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        currentRestoreId = result.restore_id;
+        restoreConfirmationPending = false;
+        pollRestoreStatus();
+      } else {
+        const err = await response.json();
+        backupError = err.error || 'Failed to start restore';
+        restoreInProgress = false;
+      }
+    } catch (err) {
+      backupError = 'Failed to connect to server';
+      restoreInProgress = false;
+      console.error('Failed to start restore:', err);
+    }
+  };
+
+  const pollRestoreStatus = async () => {
+    if (!currentRestoreId) return;
+
+    try {
+      const headers = { accept: 'application/json' };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(
+        `${PUBLIC_API_BASE_URL}/api/admin/console/restore/${currentRestoreId}/status`,
+        { credentials: 'include', headers }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        restoreProgress = result.progress || 0;
+        restoreCurrentStep = result.current_step || '';
+
+        if (result.status === 'completed') {
+          restoreInProgress = false;
+          backupNotice = 'Restore completed successfully! You may need to refresh the page.';
+          currentRestoreId = null;
+          selectedBackupForRestore = null;
+          restoreValidation = null;
+        } else if (result.status === 'failed') {
+          restoreInProgress = false;
+          backupError = result.error || 'Restore failed';
+          currentRestoreId = null;
+        } else {
+          setTimeout(pollRestoreStatus, 1000);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to poll restore status:', err);
+      setTimeout(pollRestoreStatus, 2000);
+    }
+  };
+
+  // Load backups when backup tab is selected (only once)
+  $: if (activeTab === 'backup' && !backupsLoaded && !backupLoading) {
+    loadBackups();
+  }
+
   // Cleanup intervals on component destroy
   onDestroy(() => {
     stopPeriodicApiCheck();
@@ -1847,6 +2179,12 @@
       on:click={() => handleTabChange('cli')}
     >
       CLI
+    </button>
+    <button
+      class:active={activeTab === 'backup'}
+      on:click={() => handleTabChange('backup')}
+    >
+      Backup
     </button>
   </div>
 
@@ -2690,6 +3028,195 @@
             </div>
           {/if}
         </div>
+      </div>
+    {:else if activeTab === 'backup'}
+      <div class="backup-section">
+        <h2>Backup & Restore</h2>
+
+        {#if backupError}
+          <div class="error-message">{backupError}</div>
+        {/if}
+        {#if backupNotice}
+          <div class="success-message">{backupNotice}</div>
+        {/if}
+
+        <!-- Create Backup Section -->
+        <div class="backup-create">
+          <h3>Create New Backup</h3>
+          <div class="backup-options">
+            <label class="backup-option">
+              <input type="radio" bind:group={backupDbOnly} value={false} on:change={() => { backupDbOnly = false; backupPhotosOnly = false; }} checked={!backupDbOnly && !backupPhotosOnly} />
+              <span>Full Backup (Database + Photos)</span>
+            </label>
+            <label class="backup-option">
+              <input type="radio" bind:group={backupDbOnly} value={true} on:change={() => { backupDbOnly = true; backupPhotosOnly = false; }} />
+              <span>Database Only</span>
+            </label>
+            <label class="backup-option">
+              <input type="radio" bind:group={backupPhotosOnly} value={true} on:change={() => { backupPhotosOnly = true; backupDbOnly = false; }} />
+              <span>Photos Only</span>
+            </label>
+          </div>
+
+          <div class="backup-extra-options">
+            <label class="checkbox-option">
+              <input type="checkbox" bind:checked={backupIncludeThumbnails} disabled={backupDbOnly} />
+              <span>Include thumbnails</span>
+            </label>
+            <label class="checkbox-option">
+              <input type="checkbox" bind:checked={backupExcludeAuditLogs} disabled={backupPhotosOnly} />
+              <span>Exclude audit logs</span>
+            </label>
+          </div>
+
+          <button
+            class="primary backup-btn"
+            on:click={startBackup}
+            disabled={backupInProgress}
+          >
+            {backupInProgress ? 'Creating Backup...' : 'Create Backup'}
+          </button>
+
+          {#if backupInProgress}
+            <div class="progress-container">
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: {backupProgress}%"></div>
+              </div>
+              <div class="progress-text">{backupCurrentStep}</div>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Available Backups Section -->
+        <div class="backup-list-section">
+          <div class="backup-list-header">
+            <h3>Available Backups</h3>
+            <button class="secondary" on:click={loadBackups} disabled={backupLoading}>
+              {backupLoading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
+
+          {#if backupLoading && backups.length === 0}
+            <div class="loading">Loading backups...</div>
+          {:else if backups.length === 0}
+            <div class="no-backups">No backups found. Create your first backup above.</div>
+          {:else}
+            <table class="backup-table">
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Created</th>
+                  <th>Contents</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each backups as backup}
+                  <tr>
+                    <td class="filename">{backup.filename}</td>
+                    <td>
+                      <span class="backup-type-badge" class:full={backup.type === 'full'} class:db={backup.type === 'db_only'} class:photos={backup.type === 'photos_only'}>
+                        {backup.type === 'full' ? 'Full' : backup.type === 'db_only' ? 'DB' : backup.type === 'photos_only' ? 'Photos' : backup.type}
+                      </span>
+                    </td>
+                    <td>{formatBytes(backup.size)}</td>
+                    <td>{new Date(backup.created_at).toLocaleString()}</td>
+                    <td>
+                      {#if backup.has_database}DB{/if}
+                      {#if backup.has_database && backup.has_photos} + {/if}
+                      {#if backup.has_photos}{backup.photo_count} photos{/if}
+                    </td>
+                    <td class="actions">
+                      <button class="action-btn download" on:click={() => downloadBackup(backup.filename)} title="Download">
+                        Download
+                      </button>
+                      <button class="action-btn restore" on:click={() => validateRestore(backup.filename)} title="Restore" disabled={restoreInProgress}>
+                        Restore
+                      </button>
+                      <button class="action-btn delete" on:click={() => deleteBackup(backup.filename)} title="Delete">
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+        </div>
+
+        <!-- Restore Modal -->
+        {#if selectedBackupForRestore && restoreValidation}
+          <div class="restore-modal-backdrop" on:click={cancelRestore}>
+            <div class="restore-modal" on:click|stopPropagation>
+              <h3>Restore from Backup</h3>
+              <p class="restore-filename">{selectedBackupForRestore}</p>
+
+              <div class="restore-info">
+                <div><strong>Type:</strong> {restoreValidation.manifest?.type || 'Unknown'}</div>
+                <div><strong>Created:</strong> {restoreValidation.manifest?.created_at ? new Date(restoreValidation.manifest.created_at).toLocaleString() : 'Unknown'}</div>
+                <div><strong>Created by:</strong> {restoreValidation.manifest?.created_by || 'Unknown'}</div>
+              </div>
+
+              {#if restoreValidation.warnings && restoreValidation.warnings.length > 0}
+                <div class="restore-warnings">
+                  <strong>Warnings:</strong>
+                  <ul>
+                    {#each restoreValidation.warnings as warning}
+                      <li>{warning}</li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+
+              {#if !restoreValidation.pii_key_match}
+                <div class="restore-warning-box">
+                  PII encryption key differs. Encrypted data may need re-encryption after restore.
+                </div>
+              {/if}
+
+              <div class="restore-options">
+                <h4>Restore Options</h4>
+                <label class="checkbox-option">
+                  <input type="checkbox" bind:checked={restoreDbOnly} disabled={restorePhotosOnly || !restoreValidation.manifest?.contents?.database?.included} />
+                  <span>Database only</span>
+                </label>
+                <label class="checkbox-option">
+                  <input type="checkbox" bind:checked={restorePhotosOnly} disabled={restoreDbOnly || !restoreValidation.manifest?.contents?.photos?.included} />
+                  <span>Photos only</span>
+                </label>
+                <label class="checkbox-option">
+                  <input type="checkbox" bind:checked={restoreSkipPreBackup} />
+                  <span>Skip pre-restore backup (not recommended)</span>
+                </label>
+              </div>
+
+              {#if restoreInProgress}
+                <div class="progress-container">
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: {restoreProgress}%"></div>
+                  </div>
+                  <div class="progress-text">{restoreCurrentStep}</div>
+                </div>
+              {:else if restoreConfirmationPending}
+                <div class="restore-confirmation">
+                  <p class="warning-text">This will replace your current data!</p>
+                  <p>Are you sure you want to proceed?</p>
+                  <div class="restore-actions">
+                    <button class="danger" on:click={startRestore}>Yes, Restore Now</button>
+                    <button class="secondary" on:click={() => restoreConfirmationPending = false}>Cancel</button>
+                  </div>
+                </div>
+              {:else}
+                <div class="restore-actions">
+                  <button class="primary" on:click={confirmRestore}>Restore</button>
+                  <button class="secondary" on:click={cancelRestore}>Cancel</button>
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -4009,6 +4536,366 @@
 
     .assign-button {
       width: 100%;
+    }
+  }
+
+  /* Backup Section Styles */
+  .backup-section {
+    padding: 1rem 0;
+  }
+
+  .backup-create {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .backup-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .backup-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    transition: all 0.2s;
+  }
+
+  .backup-option:hover {
+    border-color: var(--accent-color);
+  }
+
+  .backup-option input[type="radio"] {
+    accent-color: var(--accent-color);
+  }
+
+  .backup-extra-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .checkbox-option input[type="checkbox"] {
+    accent-color: var(--accent-color);
+  }
+
+  .checkbox-option input:disabled + span {
+    opacity: 0.5;
+  }
+
+  .backup-btn {
+    padding: 0.75rem 2rem;
+    font-size: 1rem;
+  }
+
+  .progress-container {
+    margin-top: 1rem;
+  }
+
+  .progress-bar {
+    height: 8px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent-color);
+    transition: width 0.3s ease;
+  }
+
+  .progress-text {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+  }
+
+  .backup-list-section {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 1.5rem;
+  }
+
+  .backup-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .backup-list-header h3 {
+    margin: 0;
+  }
+
+  .no-backups {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  .backup-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .backup-table th,
+  .backup-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .backup-table th {
+    background: var(--bg-secondary);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
+
+  .backup-table td.filename {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.8125rem;
+    word-break: break-all;
+  }
+
+  .backup-type-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .backup-type-badge.full {
+    background: rgba(52, 168, 83, 0.15);
+    color: #34a853;
+  }
+
+  .backup-type-badge.db {
+    background: rgba(66, 133, 244, 0.15);
+    color: #4285f4;
+  }
+
+  .backup-type-badge.photos {
+    background: rgba(251, 188, 4, 0.15);
+    color: #f9ab00;
+  }
+
+  .backup-table td.actions {
+    white-space: nowrap;
+  }
+
+  .action-btn {
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.75rem;
+    margin-right: 0.25rem;
+    transition: all 0.2s;
+  }
+
+  .action-btn:hover:not(:disabled) {
+    border-color: var(--accent-color);
+  }
+
+  .action-btn.download:hover:not(:disabled) {
+    color: var(--accent-color);
+  }
+
+  .action-btn.restore:hover:not(:disabled) {
+    color: var(--success-color);
+    border-color: var(--success-color);
+  }
+
+  .action-btn.delete:hover:not(:disabled) {
+    color: var(--error-color);
+    border-color: var(--error-color);
+  }
+
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .restore-modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .restore-modal {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 2rem;
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .restore-modal h3 {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+  }
+
+  .restore-filename {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    word-break: break-all;
+  }
+
+  .restore-info {
+    background: var(--bg-secondary);
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+
+  .restore-info div {
+    margin-bottom: 0.25rem;
+  }
+
+  .restore-warnings {
+    background: rgba(251, 188, 4, 0.1);
+    border: 1px solid rgba(251, 188, 4, 0.3);
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+
+  .restore-warnings ul {
+    margin: 0.5rem 0 0 1.5rem;
+    padding: 0;
+  }
+
+  .restore-warning-box {
+    background: rgba(211, 47, 47, 0.1);
+    border: 1px solid rgba(211, 47, 47, 0.3);
+    color: var(--error-color);
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+
+  .restore-options {
+    margin-bottom: 1.5rem;
+  }
+
+  .restore-options h4 {
+    margin-bottom: 0.75rem;
+  }
+
+  .restore-confirmation {
+    background: rgba(211, 47, 47, 0.1);
+    border: 1px solid rgba(211, 47, 47, 0.3);
+    padding: 1rem;
+    border-radius: 4px;
+    text-align: center;
+  }
+
+  .restore-confirmation .warning-text {
+    color: var(--error-color);
+    font-weight: 600;
+    font-size: 1.125rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .restore-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1rem;
+  }
+
+  .restore-actions button {
+    padding: 0.625rem 1.25rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .restore-actions button.primary {
+    background: var(--accent-color);
+    border: 1px solid var(--accent-color);
+    color: white;
+  }
+
+  .restore-actions button.primary:hover {
+    background: var(--accent-hover);
+  }
+
+  .restore-actions button.secondary {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .restore-actions button.secondary:hover {
+    border-color: var(--accent-color);
+  }
+
+  .restore-actions button.danger {
+    background: var(--error-color);
+    border: 1px solid var(--error-color);
+    color: white;
+  }
+
+  .restore-actions button.danger:hover {
+    background: #b71c1c;
+  }
+
+  @media (max-width: 768px) {
+    .backup-options {
+      flex-direction: column;
+    }
+
+    .backup-table {
+      font-size: 0.875rem;
+    }
+
+    .backup-table th,
+    .backup-table td {
+      padding: 0.5rem;
+    }
+
+    .action-btn {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.6875rem;
     }
   }
 </style>

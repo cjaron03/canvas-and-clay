@@ -20,31 +20,22 @@ depends_on = None
 def upgrade():
     # get bootstrap admin email from environment
     bootstrap_email = os.getenv('BOOTSTRAP_ADMIN_EMAIL', 'admin@canvas-clay.local')
-    
-    # use raw connection to check if table exists and has data
-    # this handles fresh database installations gracefully
+
     connection = op.get_bind()
-    
-    # check if users table exists and has admin users
-    # use parameterized query to avoid sql injection
-    result = connection.execute(
-        sa.text("""
-            SELECT COUNT(*) 
-            FROM information_schema.tables 
-            WHERE table_name = 'users'
-        """)
-    )
-    
-    table_exists = result.scalar() > 0
-    
-    # only run downgrade if users table exists and has admin users
+
+    # check if users table exists using dialect-agnostic inspection
+    from sqlalchemy import inspect
+    inspector = inspect(connection)
+    table_exists = 'users' in inspector.get_table_names()
+
+    # only run downgrade if users table exists
     if table_exists:
         # downgrade all admin users to visitor except the bootstrap admin
         connection.execute(
             sa.text("""
-                UPDATE users 
-                SET role = 'visitor' 
-                WHERE role = 'admin' 
+                UPDATE users
+                SET role = 'visitor'
+                WHERE role = 'admin'
                 AND email != :bootstrap_email
             """),
             {'bootstrap_email': bootstrap_email}
