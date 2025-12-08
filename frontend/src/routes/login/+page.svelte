@@ -315,13 +315,10 @@
 				</div>
 				{#if isAddAccountMode}
 					<h1>Add another account</h1>
-					<p class="subtitle">Sign in to continue</p>
 				{:else if isRegisterMode}
 					<h1>Create account</h1>
-					<p class="subtitle">to get started with Canvas and Clay</p>
 				{:else}
 					<h1>Sign in</h1>
-					<p class="subtitle">to continue to Canvas and Clay</p>
 				{/if}
 			</div>
 

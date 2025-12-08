@@ -37,6 +37,10 @@
 		theme.toggle();
 	};
 
+	const goToHelp = () => {
+		window.location.href = '/help';
+	};
+
 	let showUserMenu = false;
 
 	const toggleUserMenu = () => {
@@ -92,6 +96,12 @@
 			{/if}
 		</div>
 		<div class="nav-auth">
+			<button on:click={goToHelp} class="help-btn" title="Help">
+				<svg class="help-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+					<line x1="12" y1="17" x2="12.01" y2="17"></line>
+				</svg>
+			</button>
 			<button on:click={toggleTheme} class="theme-toggle" title="Toggle theme">
 				{#if $theme === 'dark'}
 					<svg class="theme-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -248,6 +258,38 @@
 		display: flex;
 		align-items: center;
 		gap: 1rem;
+	}
+
+	.help-btn {
+		padding: 0.5rem;
+		background: transparent;
+		border: 1px solid var(--border-color);
+		border-radius: 50%;
+		cursor: pointer;
+		color: var(--text-primary);
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+	}
+
+	.help-icon {
+		width: 20px;
+		height: 20px;
+		color: var(--text-primary);
+		transition: color 0.2s;
+	}
+
+	.help-btn:hover {
+		background: var(--bg-tertiary);
+		border-color: var(--accent-color);
+		color: var(--accent-color);
+	}
+
+	.help-btn:hover .help-icon {
+		color: var(--accent-color);
 	}
 
 	.theme-toggle {
