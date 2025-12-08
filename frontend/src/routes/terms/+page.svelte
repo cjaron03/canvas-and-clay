@@ -1,6 +1,4 @@
 <script>
-  import { theme } from '$lib/stores/theme';
-
   export let data;
 
   $: dynamicContent = data?.content;

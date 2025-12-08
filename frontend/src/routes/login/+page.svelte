@@ -11,7 +11,7 @@
 	let confirmPassword = '';
 	let remember = false;
 	let error = '';
-	let success = '';
+	let _success = '';
 	let loading = false;
 	let isRegisterMode = false;
 	let isAddAccountMode = false;
@@ -24,14 +24,14 @@
 	let showNewPassword = false;
 	let showConfirmNewPassword = false;
 
-	const RESET_MESSAGE_LIMIT = 500;
+	const _RESET_MESSAGE_LIMIT = 500;
 	let showResetForm = false;
 	let resetEmail = '';
 	let resetNotes = '';
-	let resetRequestError = '';
+	let _resetRequestError = '';
 	let resetRequestSuccess = '';
-	let resetRequestLoading = false;
-	let resetCharCount = 0;
+	let _resetRequestLoading = false;
+	let _resetCharCount = 0;
 	let showCodeForm = false;
 	let resetCodeEmail = '';
 	let resetCode = '';
@@ -39,19 +39,19 @@
 	let newPassword = '';
 	let confirmNewPassword = '';
 	let resetCodeError = '';
-	let resetCodeSuccess = '';
+	let _resetCodeSuccess = '';
 	let resetCodeLoading = false;
 	let verifyCodeLoading = false;
 
 	// Password strength + requirements (register form)
 	let passwordRequirements = [];
-	let strengthLabel = 'Weak';
+	let _strengthLabel = 'Weak';
 	let strengthLevel = 0;
 
 	// Password strength + requirements (reset password form)
-	let resetPasswordRequirements = [];
-	let resetStrengthLabel = 'Weak';
-	let resetStrengthLevel = 0;
+	let _resetPasswordRequirements = [];
+	let _resetStrengthLabel = 'Weak';
+	let _resetStrengthLevel = 0;
 
 	// Check if we're in add-account mode
 	$: isAddAccountMode = $page.url.searchParams.get('mode') === 'add-account';
@@ -62,7 +62,7 @@
 
 		// Check for logout success message
 		if ($page.url.searchParams.get('logout') === 'success') {
-			success = 'Successfully logged out';
+			_success = 'Successfully logged out';
 			goto('/login', { replaceState: true });
 		}
 
@@ -79,7 +79,7 @@
 	}
 
 	const handleLogin = async () => {
-		error = ''; success = ''; loading = true;
+		error = ''; _success = ''; loading = true;
 		try {
 			if (isAddAccountMode) {
 				await auth.addAccount(email, password, remember);
@@ -106,7 +106,7 @@
 	};
 
 	const handleRegister = async () => {
-		error = ''; success = ''; loading = true;
+		error = ''; _success = ''; loading = true;
 		if (password !== confirmPassword) {
 			error = 'Passwords do not match';
 			loading = false;
@@ -133,7 +133,7 @@
 				const errorData = await response.json();
 				throw new Error(errorData.error || 'Registration failed');
 			}
-			success = 'Account created! You can now log in.';
+			_success = 'Account created! You can now log in.';
 			loading = false;
 			setTimeout(() => { isRegisterMode = false; password = ''; confirmPassword = ''; }, 2000);
 		} catch (err) {
@@ -142,20 +142,20 @@
 		}
 	};
 
-	const toggleMode = () => { isRegisterMode = !isRegisterMode; error = ''; success = ''; password = ''; confirmPassword = ''; };
-	const toggleResetForm = () => { 
-		showResetForm = !showResetForm; resetRequestError = ''; resetRequestSuccess = '';
+	const toggleMode = () => { isRegisterMode = !isRegisterMode; error = ''; _success = ''; password = ''; confirmPassword = ''; };
+	const toggleResetForm = () => {
+		showResetForm = !showResetForm; _resetRequestError = ''; resetRequestSuccess = '';
 		if (showResetForm && !resetEmail && email) resetEmail = email;
 		if (!showResetForm) { resetNotes = ''; showCodeForm = false; }
 	};
 	const toggleCodeForm = () => {
-		showCodeForm = !showCodeForm; resetCodeError = ''; resetCodeSuccess = ''; codeVerified = false;
+		showCodeForm = !showCodeForm; resetCodeError = ''; _resetCodeSuccess = ''; codeVerified = false;
 		if (showCodeForm) resetCodeEmail = resetEmail || email;
 		else { resetCode = ''; newPassword = ''; confirmNewPassword = ''; }
 	};
 
 	const handleVerifyCode = async () => {
-		resetCodeError = ''; resetCodeSuccess = ''; verifyCodeLoading = true;
+		resetCodeError = ''; _resetCodeSuccess = ''; verifyCodeLoading = true;
 		let csrfToken = $auth?.csrfToken;
 		if (!csrfToken) { /* fetch logic omitted for brevity, assumed working */ }
 		try {
@@ -166,13 +166,13 @@
 				body: JSON.stringify({ email: resetCodeEmail.trim().toLowerCase(), code: resetCode.trim() })
 			});
 			if (!response.ok) throw new Error((await response.json()).error || 'Failed to verify');
-			codeVerified = true; resetCodeSuccess = 'Code verified!';
+			codeVerified = true; _resetCodeSuccess = 'Code verified!';
 		} catch (err) { resetCodeError = err?.message || 'Failed to verify.'; } finally { verifyCodeLoading = false; }
 	};
 
 	const handleCodeReset = async () => {
 		if (!codeVerified) { await handleVerifyCode(); return; }
-		resetCodeError = ''; resetCodeSuccess = ''; resetCodeLoading = true;
+		resetCodeError = ''; _resetCodeSuccess = ''; resetCodeLoading = true;
 		if (newPassword !== confirmNewPassword) { resetCodeError = 'Passwords do not match.'; resetCodeLoading = false; return; }
 		let csrfToken = $auth?.csrfToken;
 		try {
@@ -183,13 +183,13 @@
 				body: JSON.stringify({ email: resetCodeEmail.trim().toLowerCase(), code: resetCode.trim(), password: newPassword })
 			});
 			if (!response.ok) throw new Error((await response.json()).error || 'Failed to reset');
-			resetCodeSuccess = 'Password updated! Log in now.';
-			setTimeout(() => { showCodeForm = false; showResetForm = false; resetCodeSuccess = ''; }, 2000);
+			_resetCodeSuccess = 'Password updated! Log in now.';
+			setTimeout(() => { showCodeForm = false; showResetForm = false; _resetCodeSuccess = ''; }, 2000);
 		} catch (err) { resetCodeError = err?.message || 'Failed to reset.'; } finally { resetCodeLoading = false; }
 	};
 
 	const handleResetRequest = async () => {
-		resetRequestError = ''; resetRequestSuccess = ''; resetRequestLoading = true;
+		_resetRequestError = ''; resetRequestSuccess = ''; _resetRequestLoading = true;
 		let csrfToken = $auth?.csrfToken;
 		try {
 			const response = await fetch(`${PUBLIC_API_BASE_URL}/auth/password-reset/request`, {
@@ -200,7 +200,7 @@
 			});
 			if (!response.ok) throw new Error((await response.json()).error || 'Failed to request');
 			resetRequestSuccess = 'Request submitted.';
-		} catch (err) { resetRequestError = err?.message || 'Failed to request.'; } finally { resetRequestLoading = false; }
+		} catch (err) { _resetRequestError = err?.message || 'Failed to request.'; } finally { _resetRequestLoading = false; }
 	};
 
 	// Password strength logic
@@ -214,9 +214,9 @@
 	$: {
 		const score = passwordRequirements.filter(r => r.met).length;
 		strengthLevel = Math.max(0, Math.min(4, score - 1)); // Rough score
-		strengthLabel = ['Weak', 'Fair', 'Good', 'Strong', 'Strong'][strengthLevel];
+		_strengthLabel = ['Weak', 'Fair', 'Good', 'Strong', 'Strong'][strengthLevel];
 	}
-	$: resetCharCount = resetNotes?.length || 0;
+	$: _resetCharCount = resetNotes?.length || 0;
 	$: if (showResetForm && !resetEmail && email) resetEmail = email;
 </script>
 

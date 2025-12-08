@@ -1,5 +1,4 @@
 <script>
-  import { theme } from '$lib/stores/theme';
   import { auth } from '$lib/stores/auth';
 
   let searchQuery = '';

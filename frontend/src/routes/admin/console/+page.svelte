@@ -2296,7 +2296,7 @@
           }
         }
 
-        legalPages = legalPages; // Trigger reactivity
+        legalPages = {...legalPages}; // Trigger reactivity
         // Initialize Quill with current page content using Quill's API
         if (quillEditor) {
           const currentPage = legalPages[legalActivePage];
@@ -2345,11 +2345,11 @@
       });
 
       if (response.ok) {
-        const result = await response.json();
+        await response.json();
         legalPages[legalActivePage].content = content;
         legalPages[legalActivePage].last_updated = new Date().toISOString();
         legalPages[legalActivePage].editor_email = $auth.user?.email || 'Unknown';
-        legalPages = legalPages; // Trigger reactivity
+        legalPages = {...legalPages}; // Trigger reactivity
         legalNotice = 'Page saved successfully';
         setTimeout(() => legalNotice = '', 3000);
       } else {
@@ -2394,16 +2394,11 @@
 
     // Register custom clipboard to handle pasted plain text with Unicode bullets
     const Clipboard = window.Quill.import('modules/clipboard');
-    const Delta = window.Quill.import('delta');
 
     class PlainTextClipboard extends Clipboard {
       convert(html) {
         if (typeof html === 'string') {
           // Convert Unicode bullet points to HTML list items
-          // Handle lines starting with bullet characters
-          const bulletPatterns = /^[\s]*[•\-\*]\s+(.+)$/gm;
-          const numberedPatterns = /^[\s]*(\d+)\.\s+(.+)$/gm;
-
           // First, wrap bullet lists
           let inBulletList = false;
           let inNumberedList = false;
@@ -2412,7 +2407,7 @@
 
           for (let i = 0; i < lines.length; i++) {
             let line = lines[i];
-            const bulletMatch = line.match(/^[\s]*[•\-\*]\s+(.+)$/);
+            const bulletMatch = line.match(/^[\s]*[•*-]\s+(.+)$/);
             const numberedMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
 
             if (bulletMatch) {
@@ -2434,7 +2429,7 @@
               if (inNumberedList) { processed.push('</ol>'); inNumberedList = false; }
 
               // Convert horizontal lines (⸻ or ---) to <hr>
-              if (/^[\s]*[⸻—\-]{3,}[\s]*$/.test(line)) {
+              if (/^[\s]*[⸻—-]{3,}[\s]*$/.test(line)) {
                 processed.push('<hr>');
               } else if (line.trim()) {
                 // Check if it looks like a heading (e.g., "1. Agreement to Terms")
@@ -2509,7 +2504,7 @@
     const defaultContent = staticFallbackContent[legalActivePage];
     legalPages[legalActivePage].title = defaultContent.title;
     legalPages[legalActivePage].content = defaultContent.content;
-    legalPages = legalPages;
+    legalPages = {...legalPages};
     quillEditor.setContents([]);
     quillEditor.clipboard.dangerouslyPasteHTML(defaultContent.content);
     legalNotice = 'Reset to default content. Remember to save.';
