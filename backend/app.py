@@ -278,6 +278,14 @@ db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 migrate = Migrate(app, db)
 csrf = CSRFProtect(app)
+
+# CSRF error handler - return JSON for API clients
+from flask_wtf.csrf import CSRFError
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    app.logger.warning(f"CSRF validation failed: {e.description}")
+    return jsonify({'error': 'CSRF token missing or invalid. Please refresh the page and try again.'}), 400
+
 login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 login_manager.session_protection = 'strong'
