@@ -132,22 +132,37 @@ import { page } from '$app/stores';
 							tabindex="-1"
 						>
 							<div class="user-menu-header">
-								<div class="user-menu-email">{$auth.user?.email || '—'}</div>
-								<div class="user-menu-role">{$auth.user?.role || '—'}</div>
+								<div class="header-avatar">
+									{userInitial}
+								</div>
+								<div class="user-details">
+									<div class="user-menu-email">{$auth.user?.email || '—'}</div>
+									<div class="user-menu-role">{$auth.user?.role || '—'}</div>
+								</div>
+								<a
+									href="/account"
+									class="manage-account-btn"
+									on:click={closeUserMenu}
+								>
+									Manage your Account
+								</a>
 							</div>
 							<div class="user-menu-divider"></div>
-							<a
-								href="/account"
-								class="user-menu-item"
-								class:active={$page.url.pathname.startsWith('/account')}
-								on:click={closeUserMenu}
-							>
-								Account
-							</a>
-							<div class="user-menu-divider"></div>
-							<button class="user-menu-item logout-item" on:click={handleLogout}>
-								Logout
-							</button>
+							<div class="user-menu-actions">
+								<button class="user-menu-item logout-item" on:click={handleLogout}>
+									<svg class="logout-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+										<polyline points="16 17 21 12 16 7"></polyline>
+										<line x1="21" y1="12" x2="9" y2="12"></line>
+									</svg>
+									Sign out
+								</button>
+							</div>
+							<div class="user-menu-footer">
+								<a href="/privacy" class="footer-link">Privacy Policy</a>
+								<span class="footer-dot">•</span>
+								<a href="/terms" class="footer-link">Terms of Service</a>
+							</div>
 						</div>
 					{/if}
 				</div>
@@ -180,7 +195,7 @@ import { page } from '$app/stores';
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 1rem 2rem;
+		padding: 0.75rem 2rem;
 	}
 
 	.nav-links {
@@ -223,20 +238,20 @@ import { page } from '$app/stores';
 		padding: 0.5rem;
 		background: transparent;
 		border: 1px solid var(--border-color);
-		border-radius: 4px;
+		border-radius: 50%;
 		cursor: pointer;
 		color: var(--text-primary);
 		transition: all 0.2s;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
+		width: 40px;
+		height: 40px;
 	}
 
 	.theme-icon {
-		width: 18px;
-		height: 18px;
+		width: 20px;
+		height: 20px;
 		color: var(--text-primary);
 		transition: color 0.2s;
 	}
@@ -257,7 +272,7 @@ import { page } from '$app/stores';
 		border-radius: 50%;
 		background: var(--accent-color);
 		color: white;
-		border: 2px solid var(--border-color);
+		border: 2px solid transparent;
 		font-size: 1.125rem;
 		font-weight: 500;
 		cursor: pointer;
@@ -270,8 +285,8 @@ import { page } from '$app/stores';
 	}
 
 	.user-avatar:hover {
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-		transform: scale(1.05);
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+		transform: scale(1.02);
 	}
 
 	.user-avatar:focus {
@@ -281,64 +296,113 @@ import { page } from '$app/stores';
 
 	.user-menu-dropdown {
 		position: absolute;
-		top: calc(100% + 8px);
+		top: calc(100% + 10px);
 		right: 0;
 		background: var(--bg-secondary);
 		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-		min-width: 200px;
+		border-radius: 28px;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+		width: 380px;
 		z-index: 1000;
 		overflow: hidden;
-		animation: slideDown 0.2s ease-out;
+		animation: slideDown 0.2s cubic-bezier(0.2, 0, 0, 1);
+		padding: 0;
+		display: flex;
+		flex-direction: column;
 	}
 
 	@keyframes slideDown {
 		from {
 			opacity: 0;
-			transform: translateY(-8px);
+			transform: translateY(-10px) scale(0.98);
 		}
 		to {
 			opacity: 1;
-			transform: translateY(0);
+			transform: translateY(0) scale(1);
 		}
 	}
 
 	.user-menu-header {
-		padding: 1rem;
-		border-bottom: 1px solid var(--border-color);
+		padding: 20px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 12px;
+		text-align: center;
+	}
+
+	.header-avatar {
+		width: 80px;
+		height: 80px;
+		border-radius: 50%;
+		background: var(--accent-color);
+		color: white;
+		font-size: 2.5rem;
+		font-weight: 500;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-bottom: 4px;
+	}
+
+	.user-details {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
 	}
 
 	.user-menu-email {
 		color: var(--text-primary);
-		font-size: 0.9375rem;
+		font-size: 1rem;
 		font-weight: 500;
-		margin-bottom: 0.25rem;
 		word-break: break-word;
 	}
 
 	.user-menu-role {
-		color: var(--accent-color);
-		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
 		text-transform: capitalize;
-		font-weight: 600;
+	}
+
+	.manage-account-btn {
+		margin-top: 8px;
+		padding: 8px 24px;
+		background: transparent;
+		border: 1px solid var(--border-color);
+		border-radius: 100px;
+		color: var(--text-primary);
+		font-size: 0.875rem;
+		font-weight: 500;
+		text-decoration: none;
+		transition: background-color 0.2s;
+	}
+
+	.manage-account-btn:hover {
+		background-color: var(--bg-tertiary);
 	}
 
 	.user-menu-divider {
 		height: 1px;
 		background: var(--border-color);
-		margin: 0.5rem 0;
+		margin: 0;
+	}
+
+	.user-menu-actions {
+		padding: 8px;
 	}
 
 	.user-menu-item {
-		display: block;
+		display: flex;
+		align-items: center;
+		gap: 12px;
 		width: 100%;
-		padding: 0.75rem 1rem;
+		padding: 12px 24px;
 		color: var(--text-primary);
 		text-decoration: none;
 		font-size: 0.9375rem;
 		background: transparent;
 		border: none;
+		border-radius: 0; /* List style */
 		text-align: left;
 		cursor: pointer;
 		transition: background 0.2s;
@@ -348,20 +412,42 @@ import { page } from '$app/stores';
 		background: var(--bg-tertiary);
 	}
 
-	.user-menu-item.active {
-		background: var(--bg-tertiary);
-		color: var(--accent-color);
-		font-weight: 500;
-	}
-
 	.user-menu-item.logout-item {
-		color: var(--error-color, #ea4335);
+		color: var(--text-primary);
+		justify-content: center;
+		border-radius: 0 0 4px 4px; /* Slight radius at bottom of list area if needed */
 	}
-
+	
 	.user-menu-item.logout-item:hover {
-		background: rgba(234, 67, 53, 0.1);
+		background: var(--bg-tertiary);
 	}
 
+	.logout-icon {
+		width: 20px;
+		height: 20px;
+		color: var(--text-secondary);
+	}
+
+	.user-menu-footer {
+		padding: 12px;
+		background: var(--bg-tertiary);
+		border-top: 1px solid var(--border-color);
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+	}
+
+	.footer-link {
+		color: var(--text-secondary);
+		text-decoration: none;
+	}
+
+	.footer-link:hover {
+		text-decoration: underline;
+	}
 
 	.sign-in-link {
 		display: flex;
@@ -413,6 +499,8 @@ import { page } from '$app/stores';
 			right: auto;
 			left: 50%;
 			transform: translateX(-50%);
+			width: 90vw;
+			max-width: 380px;
 		}
 	}
 </style>

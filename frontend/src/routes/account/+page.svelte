@@ -261,36 +261,47 @@
 <div class="account-page">
   <div class="account-container">
     <aside class="account-sidebar">
-      <h2>Account</h2>
       <nav class="sidebar-nav">
         <button
           class="nav-item"
           class:active={activeSection === 'profile'}
           on:click={() => (activeSection = 'profile')}
         >
-          Profile
-        </button>
-        <button
-          class="nav-item"
-          class:active={activeSection === 'password'}
-          on:click={() => (activeSection = 'password')}
-        >
-          Password
+          <div class="nav-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          </div>
+          <span class="nav-label">Home</span>
         </button>
         <button
           class="nav-item"
           class:active={activeSection === 'email'}
           on:click={() => (activeSection = 'email')}
         >
-          Email
+          <div class="nav-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+          </div>
+          <span class="nav-label">Personal info</span>
+        </button>
+        <button
+          class="nav-item"
+          class:active={activeSection === 'password'}
+          on:click={() => (activeSection = 'password')}
+        >
+          <div class="nav-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          </div>
+          <span class="nav-label">Security</span>
         </button>
         {#if $auth.user?.role === 'admin'}
           <button
-            class="nav-item admin-only"
+            class="nav-item"
             class:active={activeSection === 'admin'}
             on:click={() => (activeSection = 'admin')}
           >
-            Admin
+             <div class="nav-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+             </div>
+             <span class="nav-label">Data & privacy</span>
           </button>
         {/if}
       </nav>
@@ -298,35 +309,50 @@
 
     <main class="account-content">
       {#if activeSection === 'profile'}
-        <div class="section">
-          <h1>Profile</h1>
-          <div class="profile-info">
-            <div class="info-row">
-              <span class="info-label">Email</span>
-              <span>{$auth.user?.email || '—'}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Role</span>
+        <div class="content-header">
+           <h1>Home</h1>
+           <p class="subtitle">Control your profile and account settings</p>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">
+            <h2>Profile info</h2>
+            <div class="card-desc">Basic info about your account</div>
+          </div>
+          
+          <div class="info-row">
+            <div class="info-label">Email</div>
+            <div class="info-value">{$auth.user?.email || '—'}</div>
+          </div>
+          <div class="info-row">
+            <div class="info-label">Role</div>
+            <div class="info-value">
               <span class="role-badge">{$auth.user?.role || '—'}</span>
             </div>
-            <div class="info-row">
-              <span class="info-label">Account Created</span>
-              <span>
-                {#if $auth.user?.created_at}
-                  {new Date($auth.user.created_at).toLocaleDateString()}
-                {:else}
-                  —
-                {/if}
-              </span>
+          </div>
+          <div class="info-row">
+            <div class="info-label">Account Created</div>
+            <div class="info-value">
+              {#if $auth.user?.created_at}
+                {new Date($auth.user.created_at).toLocaleDateString()}
+              {:else}
+                —
+              {/if}
             </div>
           </div>
         </div>
+        
       {:else if activeSection === 'password'}
-        <div class="section">
-          <h1>Change Password</h1>
-          <p class="section-description">
-            Update your password. You'll need to enter your current password to make changes.
-          </p>
+         <div class="content-header">
+           <h1>Security</h1>
+           <p class="subtitle">Settings and recommendations to help you keep your account secure</p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Signing in to your account</h2>
+            <div class="card-desc">Change your password</div>
+          </div>
 
           <form on:submit|preventDefault={handlePasswordChange} class="account-form">
             <div class="form-group">
@@ -464,17 +490,22 @@
 
             <div class="form-actions">
               <button type="submit" class="primary-button" disabled={passwordLoading}>
-                {passwordLoading ? 'Updating...' : 'Update Password'}
+                {passwordLoading ? 'Updating...' : 'Change Password'}
               </button>
             </div>
           </form>
         </div>
       {:else if activeSection === 'email'}
-        <div class="section">
-          <h1>Change Email</h1>
-          <p class="section-description">
-            Update your email address. You'll need to enter your password to confirm this change.
-          </p>
+        <div class="content-header">
+           <h1>Personal info</h1>
+           <p class="subtitle">Info about you and your preferences</p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Contact info</h2>
+            <div class="card-desc">Update your email address</div>
+          </div>
 
           <form on:submit|preventDefault={handleEmailChange} class="account-form">
             <div class="form-group">
@@ -545,111 +576,97 @@
 
             <div class="form-actions">
               <button type="submit" class="primary-button" disabled={emailLoading}>
-                {emailLoading ? 'Updating...' : 'Update Email'}
+                {emailLoading ? 'Updating...' : 'Save'}
               </button>
             </div>
           </form>
         </div>
       {:else if activeSection === 'admin' && $auth.user?.role === 'admin'}
-        <div class="section">
-          <h1>Admin Information</h1>
-          <p class="section-description">Your personal administrative account details and activity.</p>
+        <div class="content-header">
+           <h1>Data & privacy</h1>
+           <p class="subtitle">Admin console and statistics</p>
+        </div>
 
-          {#if adminInfoLoading}
-            <div class="loading">Loading admin information...</div>
-          {:else if adminInfo}
-            <div class="admin-info-grid">
-              <div class="info-section">
-                <h2>Account Details</h2>
-                <div class="info-card">
-                  <div class="info-item">
-                    <span class="info-label">Account Created</span>
-                    <span>{formatDate(adminInfo.account_info?.created_at)}</span>
+        <div class="card">
+          <div class="card-header">
+             <h2>Admin Dashboard</h2>
+          </div>
+          
+          <div class="card-content-padded">
+            {#if adminInfoLoading}
+              <div class="loading">Loading admin information...</div>
+            {:else if adminInfo}
+              <div class="admin-info-grid">
+                <div class="info-section">
+                  <h3>Account Details</h3>
+                  <div class="info-card-sub">
+                    <div class="info-item">
+                      <span class="info-label">Account Created</span>
+                      <span>{formatDate(adminInfo.account_info?.created_at)}</span>
+                    </div>
+                    <div class="info-item">
+                      <span class="info-label">Last Login</span>
+                      <span>{formatDate(adminInfo.account_info?.last_login)}</span>
+                    </div>
+                    <div class="info-item">
+                      <span class="info-label">Password Last Changed</span>
+                      <span>{formatDate(adminInfo.account_info?.password_last_changed)}</span>
+                    </div>
+                    <div class="info-item">
+                      <span class="info-label">Email Last Changed</span>
+                      <span>{formatDate(adminInfo.account_info?.email_last_changed)}</span>
+                    </div>
                   </div>
-                  <div class="info-item">
-                    <span class="info-label">Last Login</span>
-                    <span>{formatDate(adminInfo.account_info?.last_login)}</span>
+                </div>
+
+                <div class="info-section">
+                  <h3>Your Statistics</h3>
+                  <div class="stats-grid">
+                    <div class="stat-card">
+                      <div class="stat-label">Password Resets</div>
+                      <div class="stat-value">{adminInfo.statistics?.password_resets_approved || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Users Promoted</div>
+                      <div class="stat-value">{adminInfo.statistics?.users_promoted || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Artworks</div>
+                      <div class="stat-value">{adminInfo.statistics?.artworks_count || 0}</div>
+                    </div>
                   </div>
-                  <div class="info-item">
-                    <span class="info-label">Password Last Changed</span>
-                    <span>{formatDate(adminInfo.account_info?.password_last_changed)}</span>
+                </div>
+
+                <div class="info-section">
+                  <h3>Recent Actions</h3>
+                  <div class="actions-list">
+                    {#if adminInfo.recent_actions && adminInfo.recent_actions.length > 0}
+                      {#each adminInfo.recent_actions as action}
+                        <div class="action-item">
+                          <div class="action-type">{formatEventType(action.event_type)}</div>
+                          <div class="action-time">{formatDate(action.created_at)}</div>
+                        </div>
+                      {/each}
+                    {:else}
+                      <div class="no-actions">No recent actions</div>
+                    {/if}
                   </div>
-                  <div class="info-item">
-                    <span class="info-label">Email Last Changed</span>
-                    <span>{formatDate(adminInfo.account_info?.email_last_changed)}</span>
+                </div>
+
+                <div class="info-section">
+                  <h3>Quick Links</h3>
+                  <div class="quick-links">
+                    <a href="/admin/console" class="quick-link">
+                      <span>Admin Console</span>
+                    </a>
+                    <a href="/admin/console?tab=security" class="quick-link">
+                      <span>Security & Audit Logs</span>
+                    </a>
                   </div>
                 </div>
               </div>
-
-              <div class="info-section">
-                <h2>Your Statistics</h2>
-                <div class="stats-grid">
-                  <div class="stat-card">
-                    <div class="stat-label">Password Resets Approved</div>
-                    <div class="stat-value">{adminInfo.statistics?.password_resets_approved || 0}</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-label">Password Resets Denied</div>
-                    <div class="stat-value">{adminInfo.statistics?.password_resets_denied || 0}</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-label">Users Promoted</div>
-                    <div class="stat-value">{adminInfo.statistics?.users_promoted || 0}</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-label">Users Demoted</div>
-                    <div class="stat-value">{adminInfo.statistics?.users_demoted || 0}</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-label">Photos Uploaded</div>
-                    <div class="stat-value">{adminInfo.statistics?.photos_uploaded || 0}</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-label">Artworks</div>
-                    <div class="stat-value">{adminInfo.statistics?.artworks_count || 0}</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-label">Assigned Artists</div>
-                    <div class="stat-value">{adminInfo.statistics?.assigned_artists || 0}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="info-section">
-                <h2>Recent Actions</h2>
-                <div class="actions-list">
-                  {#if adminInfo.recent_actions && adminInfo.recent_actions.length > 0}
-                    {#each adminInfo.recent_actions as action}
-                      <div class="action-item">
-                        <div class="action-type">{formatEventType(action.event_type)}</div>
-                        <div class="action-time">{formatDate(action.created_at)}</div>
-                      </div>
-                    {/each}
-                  {:else}
-                    <div class="no-actions">No recent actions</div>
-                  {/if}
-                </div>
-              </div>
-
-              <div class="info-section">
-                <h2>Quick Links</h2>
-                <div class="quick-links">
-                  <a href="/admin/console" class="quick-link">
-                    <span>Admin Console</span>
-                  </a>
-                  <a href="/admin/console?tab=security" class="quick-link">
-                    <span>Security & Audit Logs</span>
-                  </a>
-                  <a href="/admin/console?tab=requests" class="quick-link">
-                    <span>Password Reset Requests</span>
-                  </a>
-                  <a href="/admin/console?tab=users" class="quick-link">
-                    <span>User Management</span>
-                  </a>
-                </div>
-              </div>
-            </div>
-          {/if}
+            {/if}
+          </div>
         </div>
       {/if}
     </main>
@@ -658,47 +675,40 @@
 
 <style>
   .account-page {
-    min-height: calc(100vh - 80px);
-    padding: 2rem;
+    min-height: calc(100vh - 64px);
     background: var(--bg-primary);
+    padding: 0;
   }
 
   .account-container {
-    max-width: 1200px;
+    max-width: 1000px;
     margin: 0 auto;
     display: grid;
-    grid-template-columns: 250px 1fr;
-    gap: 2rem;
+    grid-template-columns: 280px 1fr;
+    min-height: calc(100vh - 64px);
   }
 
+  /* Sidebar */
   .account-sidebar {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 1.5rem;
-    height: fit-content;
-    position: sticky;
-    top: 2rem;
-  }
-
-  .account-sidebar h2 {
-    margin: 0 0 1.5rem 0;
-    font-size: 1.25rem;
-    color: var(--text-primary);
-    font-weight: 600;
+    padding: 2rem 0;
   }
 
   .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 4px;
+    padding-right: 16px;
   }
 
   .nav-item {
-    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px 0 32px;
+    height: 48px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: 0 24px 24px 0;
     color: var(--text-secondary);
     text-align: left;
     cursor: pointer;
@@ -713,46 +723,90 @@
   }
 
   .nav-item.active {
-    background: var(--accent-color);
-    color: white;
+    background: #e8f0fe; /* Light blue background for active state, common in Google UI */
+    color: var(--accent-color);
   }
 
-  .nav-item.admin-only {
-    border-top: 1px solid var(--border-color);
-    margin-top: 0.5rem;
-    padding-top: 1rem;
+  :global([data-theme='dark']) .nav-item.active {
+    background: rgba(66, 133, 244, 0.2);
   }
 
+  .nav-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+  }
+
+  /* Main Content */
   .account-content {
+    padding: 2rem 2rem 4rem;
+  }
+  
+  .content-header {
+    margin-bottom: 2rem;
+    text-align: center;
+  }
+
+  .content-header h1 {
+    font-size: 1.75rem;
+    font-weight: 400;
+    color: var(--text-primary);
+    margin: 0 0 0.5rem;
+  }
+  
+  .content-header .subtitle {
+    font-size: 1rem;
+    color: var(--text-secondary);
+  }
+
+  /* Cards */
+  .card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    padding: 2rem;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 2px rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  }
+  
+  :global([data-theme='dark']) .card {
+    box-shadow: none;
+    background: var(--bg-secondary);
   }
 
-  .section h1 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.75rem;
+  .card-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .card-header h2 {
+    font-size: 1.125rem;
+    font-weight: 400;
+    margin: 0 0 0.25rem;
     color: var(--text-primary);
-    font-weight: 600;
   }
-
-  .section-description {
+  
+  .card-desc {
     color: var(--text-secondary);
-    font-size: 0.9375rem;
-    margin-bottom: 2rem;
+    font-size: 0.875rem;
+  }
+  
+  .card-content-padded {
+    padding: 1.5rem;
   }
 
-  .profile-info {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
+  /* Info Rows */
   .info-row {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+  
+  .info-row:last-child {
+    border-bottom: none;
   }
 
   .info-label {
@@ -761,11 +815,14 @@
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    flex: 0 0 150px;
   }
 
-  .info-row span {
+  .info-value {
+    flex: 1;
     font-size: 1rem;
     color: var(--text-primary);
+    text-align: right;
   }
 
   .role-badge {
@@ -775,12 +832,13 @@
     color: white;
     border-radius: 12px;
     font-size: 0.875rem;
-    font-weight: 600;
+    font-weight: 500;
     text-transform: capitalize;
-    width: fit-content;
   }
 
+  /* Forms */
   .account-form {
+    padding: 1.5rem;
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
@@ -794,37 +852,39 @@
 
   .form-group label {
     font-size: 0.875rem;
+    color: var(--text-secondary);
     font-weight: 500;
-    color: var(--text-primary);
   }
 
   .form-group input {
-    padding: 0.875rem 1rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
+    padding: 12px 0;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
     color: var(--text-primary);
     font-size: 1rem;
-    transition: all 0.2s;
+    transition: border-color 0.2s;
+    border-radius: 0;
   }
 
   .form-group input:focus {
     outline: none;
-    border-color: var(--accent-color);
-    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+    border-bottom-color: var(--accent-color);
+    border-bottom-width: 2px;
+    padding-bottom: 11px; /* Adjust for border width change */
   }
 
   .form-group input:disabled,
   .disabled-input {
     opacity: 0.6;
     cursor: not-allowed;
-    background: var(--bg-tertiary);
+    color: var(--text-secondary);
   }
 
   .password-input-group {
     position: relative;
     display: flex;
-    align-items: stretch;
+    align-items: center;
   }
 
   .password-input-group input {
@@ -835,144 +895,29 @@
   .password-toggle {
     position: absolute;
     right: 0;
-    top: 0;
-    bottom: 0;
     background: transparent;
     border: none;
     cursor: pointer;
-    color: var(--text-secondary);
+    color: var(--accent-color);
     font-size: 0.875rem;
-    padding: 0 1rem;
-    min-width: 60px;
-    border-radius: 0 4px 4px 0;
-    transition: all 0.2s;
+    font-weight: 500;
+    padding: 8px;
   }
 
-  .password-toggle:hover {
-    color: var(--text-primary);
-  }
-
-  .password-hint {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin-top: 0.25rem;
-  }
-
-  .password-strength {
-    margin-top: 0.75rem;
-  }
-
-  .strength-label {
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-    margin-bottom: 0.35rem;
-  }
-
-  .strength-bars {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
-  }
-
-  .strength-bars div {
-    height: 6px;
-    background: var(--bg-tertiary);
-    border-radius: 3px;
-    transition: all 0.2s;
-  }
-
-  .strength-bars div.active {
-    background: var(--accent-color);
-  }
-
-  .password-requirements {
-    margin-top: 0.65rem;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 0.5rem;
-  }
-
-  .requirement {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .requirement .icon {
-    font-weight: bold;
-  }
-
-  .requirement.met {
-    color: var(--success-color, #34a853);
-  }
-
-  .requirement.missing {
-    color: var(--text-secondary);
-  }
-
-  .requirement.optional {
-    opacity: 0.7;
-  }
-
-  .pill {
-    display: inline-block;
-    padding: 0.25rem 0.5rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: capitalize;
-  }
-
-  .pill-weak {
-    background: rgba(234, 67, 53, 0.12);
-    color: #c5221f;
-  }
-
-  .pill-okay {
-    background: rgba(255, 152, 0, 0.12);
-    color: #b45309;
-  }
-
-  .pill-good {
-    background: rgba(52, 168, 83, 0.12);
-    color: #137333;
-  }
-
-  .pill-strong {
-    background: rgba(52, 168, 83, 0.2);
-    color: #137333;
-  }
-
-  .message {
-    padding: 0.75rem 1rem;
-    border-radius: 4px;
-    font-size: 0.875rem;
-  }
-
-  .message.success {
-    background: rgba(52, 168, 83, 0.1);
-    color: #137333;
-    border: 1px solid rgba(52, 168, 83, 0.3);
-  }
-
-  .message.error {
-    background: rgba(234, 67, 53, 0.1);
-    color: #c5221f;
-    border: 1px solid rgba(234, 67, 53, 0.3);
-  }
-
+  /* Actions */
   .form-actions {
-    margin-top: 0.5rem;
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1rem;
   }
 
   .primary-button {
-    padding: 0.875rem 1.5rem;
+    padding: 0.625rem 1.5rem;
     background: var(--accent-color);
     color: white;
     border: none;
     border-radius: 4px;
-    font-size: 1rem;
+    font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
@@ -987,154 +932,155 @@
     cursor: not-allowed;
   }
 
+  /* Messages */
+  .message {
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+  }
+
+  .message.success {
+    background: rgba(52, 168, 83, 0.1);
+    color: #137333;
+  }
+
+  .message.error {
+    background: rgba(234, 67, 53, 0.1);
+    color: #c5221f;
+  }
+
+  /* Admin Section */
   .admin-info-grid {
     display: flex;
     flex-direction: column;
     gap: 2rem;
   }
-
-  .info-section {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+  
+  .info-section h3 {
+     font-size: 1rem;
+     font-weight: 500;
+     margin-bottom: 1rem;
+     color: var(--text-primary);
   }
-
-  .info-section h2 {
-    margin: 0;
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--text-primary);
+  
+  .info-card-sub {
+     background: var(--bg-tertiary);
+     padding: 1rem;
+     border-radius: 8px;
+     display: grid;
+     gap: 1rem;
   }
-
-  .info-card {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
+  
   .info-item {
     display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+    justify-content: space-between;
+    font-size: 0.875rem;
   }
-
-  .info-item .info-label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .info-item span {
-    font-size: 0.9375rem;
-    color: var(--text-primary);
-  }
-
+  
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 1rem;
   }
-
+  
   .stat-card {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .stat-label {
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    text-transform: capitalize;
-  }
-
-  .stat-value {
-    font-size: 1.75rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .actions-list {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    max-height: 400px;
-    overflow-y: auto;
-  }
-
-  .action-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: var(--bg-secondary);
-    border-radius: 4px;
-  }
-
-  .action-type {
-    font-size: 0.9375rem;
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .action-time {
-    font-size: 0.8125rem;
-    color: var(--text-secondary);
-  }
-
-  .no-actions {
-    text-align: center;
-    color: var(--text-secondary);
-    font-style: italic;
-    padding: 2rem;
-  }
-
-  .quick-links {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .quick-link {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    text-decoration: none;
-    color: var(--text-primary);
-    transition: all 0.2s;
-  }
-
-  .quick-link:hover {
     background: var(--bg-tertiary);
-    border-color: var(--accent-color);
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+  }
+  
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
     color: var(--accent-color);
   }
-
-  .link-icon {
-    font-size: 1.25rem;
+  
+  .actions-list {
+     border: 1px solid var(--border-color);
+     border-radius: 8px;
+     max-height: 300px;
+     overflow-y: auto;
+  }
+  
+  .action-item {
+     padding: 0.75rem 1rem;
+     border-bottom: 1px solid var(--border-color);
+     display: flex;
+     justify-content: space-between;
+  }
+  
+  .action-item:last-child {
+     border-bottom: none;
+  }
+  
+  .quick-links {
+     display: flex;
+     flex-wrap: wrap;
+     gap: 0.5rem;
+  }
+  
+  .quick-link {
+     padding: 0.5rem 1rem;
+     border: 1px solid var(--border-color);
+     border-radius: 100px;
+     text-decoration: none;
+     color: var(--text-primary);
+     font-size: 0.875rem;
+     transition: all 0.2s;
+  }
+  
+  .quick-link:hover {
+     background: var(--bg-tertiary);
+     color: var(--accent-color);
+     border-color: var(--accent-color);
   }
 
-  .loading {
+  /* Password Strength */
+  .password-hint {
+    font-size: 0.75rem;
     color: var(--text-secondary);
-    font-style: italic;
+    margin-top: 0.5rem;
+  }
+  
+  .password-strength {
+    margin-top: 0.75rem;
+  }
+  
+  .strength-bars {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  
+  .strength-bars div {
+    flex: 1;
+    height: 4px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+  }
+  
+  .strength-bars div.active {
+    background: var(--accent-color);
+  }
+  
+  .password-requirements {
+    margin-top: 0.75rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.5rem;
+  }
+  
+  .requirement {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+  
+  .requirement.met {
+    color: var(--success-color, #34a853);
   }
 
   @media (max-width: 768px) {
@@ -1143,12 +1089,24 @@
     }
 
     .account-sidebar {
-      position: static;
+      padding: 1rem 0;
+      border-bottom: 1px solid var(--border-color);
     }
 
     .sidebar-nav {
       flex-direction: row;
       overflow-x: auto;
+      padding: 0 1rem;
+    }
+    
+    .nav-item {
+       border-radius: 100px;
+       padding: 0 16px;
+       white-space: nowrap;
+    }
+
+    .account-content {
+      padding: 1.5rem;
     }
   }
 </style>
