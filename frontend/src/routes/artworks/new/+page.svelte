@@ -368,37 +368,55 @@
     max-width: 1000px;
     margin: 0 auto;
     padding: 2rem;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .header {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
   }
 
   .back-link {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 6px;
     color: var(--accent-color);
     text-decoration: none;
-    transition: color 0.2s;
     font-weight: 500;
+    font-size: 0.9rem;
+    padding: 8px 12px;
+    margin-left: -12px;
+    border-radius: 8px;
+    transition: background 0.15s ease;
   }
 
   .back-link:hover {
-    color: var(--accent-hover);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .form-container {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
-    padding: 2rem;
-    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    border-radius: 12px;
+    padding: 2.5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   h1 {
     margin: 0 0 2rem 0;
     color: var(--text-primary);
     font-size: 1.75rem;
+    font-weight: 500;
+    letter-spacing: -0.5px;
   }
 
   .form-grid {
@@ -421,7 +439,7 @@
     display: block;
     margin-bottom: 0.5rem;
     color: var(--text-primary);
-    font-weight: 600;
+    font-weight: 500;
     font-size: 0.9rem;
   }
 
@@ -437,32 +455,43 @@
 
   .input-icon {
     position: absolute;
-    left: 1rem;
+    left: 14px;
     color: var(--text-secondary);
     pointer-events: none;
+    transition: color 0.15s ease;
+  }
+
+  .input-wrapper:focus-within .input-icon {
+    color: var(--accent-color);
   }
 
   .form-group input[type="text"],
   .form-group input[type="date"] {
     width: 100%;
-    padding: 0.75rem 1rem 0.75rem 2.5rem;
+    height: 48px;
+    padding: 0 16px 0 44px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--text-primary);
     font-size: 1rem;
-    transition: all 0.2s;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
 
   .form-group input[type="text"]:focus,
   .form-group input[type="date"]:focus {
     outline: none;
     border-color: var(--accent-color);
-    box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.1);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+  }
+
+  .form-group input::placeholder {
+    color: var(--text-tertiary);
   }
 
   .form-group input:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
@@ -479,47 +508,57 @@
     top: 100%;
     left: 0;
     right: 0;
-    max-height: 300px;
+    max-height: 320px;
     overflow-y: auto;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
-    margin-top: 0.25rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-radius: 10px;
+    margin-top: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
     z-index: 10;
   }
 
   .dropdown-item {
     width: 100%;
-    padding: 0.75rem 1rem;
+    padding: 12px 16px;
     background: none;
     border: none;
     border-bottom: 1px solid var(--border-color);
     cursor: pointer;
     text-align: left;
-    transition: background 0.2s;
+    transition: background 0.15s ease;
   }
 
   .dropdown-item:hover {
     background: var(--bg-tertiary);
   }
 
+  .dropdown-item:first-child {
+    border-radius: 10px 10px 0 0;
+  }
+
   .dropdown-item:last-child {
     border-bottom: none;
+    border-radius: 0 0 10px 10px;
+  }
+
+  .dropdown-item:only-child {
+    border-radius: 10px;
   }
 
   .option-content {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 4px;
   }
 
   .option-id code {
+    display: inline-block;
     background: var(--bg-tertiary);
     color: var(--accent-color);
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-    font-family: monospace;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Consolas', monospace;
     font-size: 0.8rem;
     font-weight: 600;
   }
@@ -531,85 +570,110 @@
 
   .form-group small {
     display: block;
-    margin-top: 0.5rem;
+    margin-top: 6px;
     color: var(--text-secondary);
     font-size: 0.8rem;
   }
 
   .form-group small.warning {
-    color: #ff9800;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+    padding: 6px 10px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .form-actions {
     display: flex;
-    gap: 1rem;
+    gap: 12px;
     margin-top: 2rem;
-    padding-top: 2rem;
+    padding-top: 1.5rem;
     border-top: 1px solid var(--border-color);
   }
 
   .btn-primary {
-    padding: 0.75rem 2rem;
+    padding: 0 28px;
+    height: 44px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 22px;
     cursor: pointer;
-    font-size: 1rem;
-    font-weight: 600;
-    transition: background 0.2s;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
     text-decoration: none;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
+    filter: brightness(1.05);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   .btn-primary:disabled {
     background: var(--bg-tertiary);
     color: var(--text-tertiary);
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+    filter: none;
   }
 
   .btn-secondary {
-    padding: 0.75rem 2rem;
+    padding: 0 20px;
+    height: 44px;
     background: transparent;
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
+    color: var(--accent-color);
+    border: none;
+    border-radius: 8px;
     cursor: pointer;
     text-decoration: none;
-    display: inline-block;
-    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-weight: 500;
+    font-size: 0.95rem;
+    transition: background 0.15s ease;
   }
 
   .btn-secondary:hover {
-    background: var(--bg-secondary);
-    border-color: var(--accent-color);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .error-message {
-    padding: 1rem;
+    padding: 12px 16px;
     margin-bottom: 1.5rem;
-    background: rgba(211, 47, 47, 0.1);
-    color: var(--error-color);
-    border: 1px solid var(--error-color);
-    border-radius: 6px;
-    font-weight: 500;
+    background: rgba(234, 67, 53, 0.08);
+    color: #ea4335;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .artist-display-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.75rem 1rem;
+    height: 48px;
+    padding: 0 16px;
     background: var(--bg-secondary);
     border: 1px solid var(--accent-color);
-    border-radius: 6px;
+    border-radius: 8px;
   }
-  
+
   .artist-info {
     display: flex;
     align-items: center;
@@ -617,21 +681,22 @@
   }
 
   .artist-name {
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-primary);
   }
 
   .artist-id-badge {
     background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    padding: 0.1rem 0.4rem;
+    color: var(--accent-color);
+    padding: 3px 8px;
     border-radius: 4px;
     font-size: 0.8rem;
-    font-family: monospace;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-weight: 600;
   }
 
   .artist-status {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--accent-color);
     font-weight: 600;
     text-transform: uppercase;
@@ -650,6 +715,8 @@
 
     .form-container {
       padding: 1.5rem;
+      border-radius: 0;
+      box-shadow: none;
     }
 
     .form-actions {
@@ -659,7 +726,6 @@
     .btn-primary,
     .btn-secondary {
       width: 100%;
-      text-align: center;
     }
   }
 </style>

@@ -4,7 +4,8 @@
 	import '../app.css';
 	import { auth } from '$lib/stores/auth';
 	import { theme } from '$lib/stores/theme';
-import { page } from '$app/stores';
+	import { page } from '$app/stores';
+	import AccountSwitcher from '$lib/components/AccountSwitcher.svelte';
 
 	// Initialize auth and theme on app load
 	// Don't await - let each page handle its own auth.init() to avoid race conditions
@@ -147,15 +148,30 @@ import { page } from '$app/stores';
 									Manage your Account
 								</a>
 							</div>
+							{#if $auth.accounts && $auth.accounts.length > 1}
+								<div class="user-menu-divider"></div>
+								<AccountSwitcher on:close={closeUserMenu} on:switch={closeUserMenu} />
+							{/if}
 							<div class="user-menu-divider"></div>
 							<div class="user-menu-actions">
+								{#if !$auth.accounts || $auth.accounts.length <= 1}
+									<a href="/login?mode=add-account" class="user-menu-item add-account-item" on:click={closeUserMenu}>
+										<svg class="add-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+											<circle cx="8.5" cy="7" r="4"></circle>
+											<line x1="20" y1="8" x2="20" y2="14"></line>
+											<line x1="23" y1="11" x2="17" y2="11"></line>
+										</svg>
+										Add another account
+									</a>
+								{/if}
 								<button class="user-menu-item logout-item" on:click={handleLogout}>
 									<svg class="logout-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 										<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
 										<polyline points="16 17 21 12 16 7"></polyline>
 										<line x1="21" y1="12" x2="9" y2="12"></line>
 									</svg>
-									Sign out
+									Sign out of all accounts
 								</button>
 							</div>
 							<div class="user-menu-footer">
@@ -414,8 +430,8 @@ import { page } from '$app/stores';
 
 	.user-menu-item.logout-item {
 		color: var(--text-primary);
-		justify-content: center;
-		border-radius: 0 0 4px 4px; /* Slight radius at bottom of list area if needed */
+		/* Align left like other items */
+		justify-content: flex-start;
 	}
 	
 	.user-menu-item.logout-item:hover {
@@ -423,6 +439,16 @@ import { page } from '$app/stores';
 	}
 
 	.logout-icon {
+		width: 20px;
+		height: 20px;
+		color: var(--text-secondary);
+	}
+
+	.user-menu-item.add-account-item {
+		color: var(--text-primary);
+	}
+
+	.add-icon {
 		width: 20px;
 		height: 20px;
 		color: var(--text-secondary);

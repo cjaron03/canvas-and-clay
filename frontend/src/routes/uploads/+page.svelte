@@ -824,6 +824,21 @@
 {/if}
 
 <style>
+  :global(.uploads-page) {
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   .tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -833,31 +848,31 @@
 
   .tabs button {
     padding: 1.5rem;
-    background: var(--bg-secondary);
-    border: 2px solid var(--border-color);
-    border-radius: 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
     cursor: pointer;
     font-size: 1rem;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
     color: var(--text-primary);
     text-align: left;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     position: relative;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
 
   .tabs button:hover {
     border-color: var(--accent-color);
-    background: var(--bg-tertiary);
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 
   .tabs button.active {
     border-color: var(--accent-color);
-    background: var(--bg-tertiary);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    background: var(--bg-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .tabs button.tab-existing.active {
@@ -865,7 +880,7 @@
   }
 
   .tabs button.tab-new.active {
-    border-left: 4px solid #4caf50;
+    border-left: 4px solid #34a853;
   }
 
   .tab-icon {
@@ -906,11 +921,12 @@
   }
 
   .tab-content {
-    padding: 2rem;
-    background: var(--bg-secondary);
-    border-radius: 8px;
+    padding: 2.5rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
     border: 1px solid var(--border-color);
     margin-top: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .tab-content-existing {
@@ -960,26 +976,24 @@
 
   .form-group input[type="text"] {
     width: 100%;
-    padding: 0.75rem 1rem;
+    height: 48px;
+    padding: 0 16px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 1rem;
-    transition: all 0.2s ease;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
 
   .form-group input[type="text"]:hover {
     border-color: var(--text-tertiary);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   }
 
   .form-group input[type="text"]:focus {
     outline: none;
     border-color: var(--accent-color);
-    border-width: 2px;
-    box-shadow: 0 0 0 3px rgba(90, 159, 212, 0.1);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
   }
 
   .file-input-wrapper {
@@ -1090,18 +1104,18 @@
     width: 100%;
     padding: 1rem 1.25rem;
     border: 2px dashed var(--border-color);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 0.9375rem;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
     gap: 1rem;
   }
 
   .file-input-label:hover {
     border-color: var(--accent-color);
-    background: var(--bg-secondary);
+    background: rgba(0, 122, 255, 0.04);
     border-style: solid;
   }
 
@@ -1109,7 +1123,7 @@
     outline: none;
     border-color: var(--accent-color);
     border-style: solid;
-    box-shadow: 0 0 0 3px rgba(90, 159, 212, 0.1);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
   }
 
 
@@ -1127,19 +1141,24 @@
   }
 
   .file-input-button {
-    padding: 0.5rem 1rem;
+    padding: 0 18px;
+    height: 36px;
+    display: flex;
+    align-items: center;
     background: var(--accent-color);
     color: white;
-    border-radius: 6px;
+    border-radius: 18px;
     font-size: 0.875rem;
     font-weight: 500;
     flex-shrink: 0;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .file-input-label:hover .file-input-button {
-    background: var(--accent-hover);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    filter: brightness(1.05);
+    box-shadow: 0 2px 6px rgba(0, 122, 255, 0.3);
+    transform: translateY(-1px);
   }
 
   .form-group small {
@@ -1151,29 +1170,30 @@
   }
 
   button[type="submit"] {
-    padding: 0.75rem 2rem;
+    padding: 0 28px;
+    height: 44px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 8px;
+    border-radius: 22px;
     cursor: pointer;
     font-size: 0.9375rem;
     font-weight: 500;
     letter-spacing: 0.25px;
-    transition: all 0.2s ease;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
-    min-width: 120px;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    min-width: 140px;
   }
 
   button[type="submit"]:hover:not(:disabled) {
-    background: var(--accent-hover);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
+    filter: brightness(1.05);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
     transform: translateY(-1px);
   }
 
   button[type="submit"]:active:not(:disabled) {
     transform: translateY(0);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   button[type="submit"]:disabled {
@@ -1188,9 +1208,9 @@
     padding: 1.5rem;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: 12px;
     margin-bottom: 1.5rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .file-preview strong {
@@ -1214,13 +1234,13 @@
     padding: 1rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
-    transition: all 0.2s ease;
+    border-radius: 10px;
+    transition: all 0.15s ease;
   }
 
   .file-preview li:hover {
     border-color: var(--accent-color);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   }
 
   .file-item {
@@ -1263,21 +1283,25 @@
   }
 
   .status-message {
-    padding: 1rem;
-    margin: 1rem 0;
-    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+    border-radius: 10px;
+    font-weight: 500;
+    font-size: 0.9375rem;
   }
 
   .status-message.success {
-    background: rgba(76, 175, 80, 0.1);
+    background: rgba(76, 175, 80, 0.08);
     color: var(--success-color);
-    border: 1px solid var(--success-color);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    box-shadow: 0 1px 3px rgba(76, 175, 80, 0.1);
   }
 
   .status-message.error {
-    background: rgba(211, 47, 47, 0.2);
+    background: rgba(211, 47, 47, 0.08);
     color: var(--error-color);
-    border: 1px solid var(--error-color);
+    border: 1px solid rgba(211, 47, 47, 0.3);
+    box-shadow: 0 1px 3px rgba(211, 47, 47, 0.1);
   }
 
   .status-pending {
@@ -1316,19 +1340,21 @@
   }
 
   .photo-ids {
-    padding: 1rem;
-    background: var(--bg-tertiary);
+    padding: 1.25rem;
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
-    margin: 1rem 0;
+    border-radius: 12px;
+    margin: 1.5rem 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .photo-ids code {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
     padding: 0.25rem 0.5rem;
-    border-radius: 3px;
+    border-radius: 6px;
     font-family: monospace;
+    font-weight: 500;
   }
 
   /* Artwork selector dropdown styles */
@@ -1349,15 +1375,15 @@
     overflow-y: auto;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: 10px;
     margin-top: 0.5rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
     z-index: 10;
   }
 
   .dropdown-item {
     width: 100%;
-    padding: 1rem;
+    padding: 12px 16px;
     background: none;
     border: none;
     border-bottom: 1px solid var(--border-color);
@@ -1367,16 +1393,16 @@
   }
 
   .dropdown-item:hover {
-    background: var(--bg-secondary);
+    background: rgba(0, 122, 255, 0.06);
   }
 
   .dropdown-item:first-child {
-    border-radius: 8px 8px 0 0;
+    border-radius: 10px 10px 0 0;
   }
 
   .dropdown-item:last-child {
     border-bottom: none;
-    border-radius: 0 0 8px 8px;
+    border-radius: 0 0 10px 10px;
   }
 
   .artwork-option {

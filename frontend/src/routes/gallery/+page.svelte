@@ -107,6 +107,18 @@
         position: relative;
         background: var(--bg-primary);
         overflow: hidden;
+        animation: pageEnter 0.3s ease-out;
+    }
+
+    @keyframes pageEnter {
+        from {
+            opacity: 0;
+            transform: translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 
     .gallery-content {
@@ -198,38 +210,50 @@
         position: absolute;
         top: 50%;
         transform: translateY(-50%);
-        background: transparent;
-        border: none;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
         color: var(--text-secondary);
         cursor: pointer;
-        padding: 1rem;
-        transition: all 0.2s;
+        width: 52px;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
         z-index: 30;
-        border-radius: 50%;
+        border-radius: 26px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
     }
 
     .nav-btn:hover {
-        background: rgba(0, 0, 0, 0.05);
-        color: var(--text-primary);
-        transform: translateY(-50%) scale(1.1);
+        background: rgba(0, 122, 255, 0.08);
+        border-color: var(--accent-color);
+        color: var(--accent-color);
+        transform: translateY(-50%) scale(1.05);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
 
-    .nav-btn.prev { left: 0.5rem; }
-    .nav-btn.next { right: 0.5rem; }
+    .nav-btn.prev { left: 1.5rem; }
+    .nav-btn.next { right: 1.5rem; }
 
     .edit-btn {
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 0.5rem;
+        width: 40px;
+        height: 40px;
         color: var(--text-secondary);
-        border-radius: 6px;
-        transition: all 0.2s;
+        border-radius: 20px;
+        transition: all 0.15s ease;
+        border: 1px solid var(--border-color);
+        background: var(--bg-primary);
     }
 
     .edit-btn:hover {
-        background: var(--bg-tertiary);
+        background: rgba(0, 122, 255, 0.08);
+        border-color: var(--accent-color);
         color: var(--accent-color);
+        transform: translateY(-1px);
     }
 
     .empty-state {
@@ -240,23 +264,29 @@
         .image-container {
             padding: 0.5rem;
         }
-        
+
         .image-wrapper {
             padding: 0.5rem;
         }
 
         .nav-btn {
-            padding: 0.5rem;
-            background: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(4px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(8px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
         }
-        
-        .nav-btn.prev { left: 0.5rem; }
-        .nav-btn.next { right: 0.5rem; }
-        
+
+        .nav-btn.prev { left: 0.75rem; }
+        .nav-btn.next { right: 0.75rem; }
+
         .info-bar {
             padding: 1rem;
+        }
+
+        .text-content h1 {
+            font-size: 1.25rem;
         }
     }
 </style>

@@ -261,6 +261,18 @@
     max-width: 1200px;
     margin: 0 auto;
     padding: 2rem;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .header-nav {
@@ -274,11 +286,15 @@
     color: var(--text-secondary);
     text-decoration: none;
     font-weight: 500;
-    transition: color 0.2s;
+    padding: 8px 12px;
+    margin: -8px -12px;
+    border-radius: 8px;
+    transition: all 0.15s ease;
   }
 
   .back-link:hover {
-    color: var(--text-primary);
+    color: var(--accent-color);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .artwork-layout {
@@ -298,13 +314,14 @@
   .main-image-container {
     width: 100%;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: 12px;
     overflow: hidden;
-    aspect-ratio: 1; /* Default aspect, allows intrinsic sizing via img */
+    aspect-ratio: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .main-image-btn {
@@ -347,19 +364,20 @@
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    background: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.9);
     color: var(--text-primary);
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     opacity: 0;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
     z-index: 10;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    text-decoration: none;
   }
 
   .main-image-container:hover .nav-arrow {
@@ -368,7 +386,8 @@
 
   .nav-arrow:hover {
     background: white;
-    transform: translateY(-50%) scale(1.1);
+    transform: translateY(-50%) scale(1.08);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   }
 
   .nav-arrow.prev { left: 1rem; }
@@ -399,15 +418,17 @@
     border: 2px solid transparent;
     padding: 0;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 8px;
     overflow: hidden;
     opacity: 0.7;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
+    background: var(--bg-secondary);
   }
 
   .thumb-btn:hover, .thumb-btn.active {
     opacity: 1;
     border-color: var(--accent-color);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2);
   }
 
   .thumb-btn img {
@@ -441,27 +462,29 @@
   }
 
   .tool-btn {
-    padding: 0.75rem; /* Increased padding for bigger buttons */
+    padding: 0.75rem;
     color: var(--text-secondary);
     background: transparent;
-    border: 1px solid var(--border-color); /* Added subtle border */
-    border-radius: 6px; /* Slightly more rounded */
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
     display: flex;
     align-items: center;
     justify-content: center;
+    text-decoration: none;
   }
 
   .tool-btn:hover {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
+    background: rgba(0, 122, 255, 0.08);
+    color: var(--accent-color);
     border-color: var(--accent-color);
+    transform: translateY(-1px);
   }
 
   .tool-btn.delete:hover {
     color: var(--error-color);
-    background: rgba(220, 38, 38, 0.1);
+    background: rgba(211, 47, 47, 0.08);
     border-color: var(--error-color);
   }
 
@@ -525,7 +548,8 @@
   .toggle-btn {
     background: none;
     border: none;
-    padding: 0;
+    padding: 8px 12px;
+    margin: -8px -12px;
     color: var(--accent-color);
     font-size: 0.9rem;
     cursor: pointer;
@@ -533,6 +557,12 @@
     align-items: center;
     gap: 0.5rem;
     font-weight: 500;
+    border-radius: 8px;
+    transition: background 0.15s ease;
+  }
+
+  .toggle-btn:hover {
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .toggle-btn svg {
@@ -544,10 +574,12 @@
   }
 
   .extended-meta {
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     padding: 1.5rem;
-    border-radius: 8px;
+    border-radius: 12px;
     font-size: 0.9rem;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .meta-group {
@@ -578,9 +610,11 @@
 
   .meta-pair code {
     background: var(--bg-tertiary);
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
+    color: var(--accent-color);
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
     font-size: 0.85em;
+    font-weight: 500;
   }
 
   /* Modal Styles */

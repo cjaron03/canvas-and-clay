@@ -102,6 +102,20 @@
   let restorePhotosOnly = false;
   let restoreSkipPreBackup = false;
 
+  // Legal pages state
+  let legalLoading = false;
+  let legalError = '';
+  let legalNotice = '';
+  let legalSaving = false;
+  let legalLoaded = false;
+  let legalActivePage = 'privacy_policy';
+  let legalPages = {
+    privacy_policy: { title: 'Privacy Policy', content: '', last_updated: null, editor_email: null },
+    terms_of_service: { title: 'Terms Of Service', content: '', last_updated: null, editor_email: null }
+  };
+  let quillEditor = null;
+  let quillLoaded = false;
+
   // CLI state
   let writeMode = false;
   let commandInput = '';
@@ -156,7 +170,7 @@
     
     // Read tab from URL query parameter
     const tabParam = $page.url.searchParams.get('tab');
-    if (tabParam && ['overview', 'security', 'requests', 'users', 'database', 'cli', 'backup'].includes(tabParam)) {
+    if (tabParam && ['overview', 'security', 'requests', 'users', 'database', 'cli', 'backup', 'legal'].includes(tabParam)) {
       activeTab = tabParam;
     }
 
@@ -2106,6 +2120,425 @@
     loadBackups();
   }
 
+  // ============================================================================
+  // Legal Pages Functions
+  // ============================================================================
+
+  // Static fallback content - matches what's shown on public pages when DB is empty
+  const staticFallbackContent = {
+    privacy_policy: {
+      title: 'Privacy Policy',
+      content: `<h2>1. Introduction</h2>
+<p>Welcome to Canvas and Clay. We respect your privacy and are committed to protecting your personal data. This privacy policy will inform you as to how we look after your personal data when you visit our website and tell you about your privacy rights.</p>
+
+<h2>2. The Data We Collect</h2>
+<p>We may collect, use, store and transfer different kinds of personal data about you which we have grouped together follows:</p>
+<ul>
+<li><strong>Identity Data:</strong> includes first name, last name, username or similar identifier.</li>
+<li><strong>Contact Data:</strong> includes email address.</li>
+<li><strong>Content Data:</strong> includes the photos, artwork images, and descriptions you upload to the platform.</li>
+<li><strong>Technical Data:</strong> includes internet protocol (IP) address, browser type and version, time zone setting and location, and operating system.</li>
+</ul>
+
+<h2>3. How We Use Your Data</h2>
+<p>We will only use your personal data when the law allows us to. Most commonly, we will use your personal data in the following circumstances:</p>
+<ul>
+<li>To register you as a new customer or artist.</li>
+<li>To manage and display your artwork portfolio.</li>
+<li>To manage our relationship with you (including notifying you about changes to our terms or privacy policy).</li>
+<li>To administer and protect our business and this website.</li>
+</ul>
+
+<h2>4. Data Security</h2>
+<p>We have put in place appropriate security measures to prevent your personal data from being accidentally lost, used, or accessed in an unauthorized way. We limit access to your personal data to those employees, agents, contractors, and other third parties who have a business need to know.</p>
+
+<h2>5. Your Legal Rights</h2>
+<p>Under certain circumstances, you have rights under data protection laws in relation to your personal data, including the right to request access, correction, erasure, restriction, transfer, to object to processing, to portability of data and (where the lawful ground of processing is consent) to withdraw consent.</p>
+
+<h2>6. Contact Us</h2>
+<p>If you have any questions about this privacy policy or our privacy practices, please contact us through the administrative channels on the platform.</p>`
+    },
+    terms_of_service: {
+      title: 'Terms of Service',
+      content: `<h2>1. Agreement to Terms</h2>
+<p>These Terms of Service ("Terms") constitute a legally binding agreement between you ("you") and Canvas and Clay ("Canvas and Clay," "we," "us," or "our") concerning your access to and use of the Canvas and Clay website and any related media form, media channel, mobile website, or mobile application (collectively, the "Site").</p>
+<p>By accessing or using the Site, you represent that you have read, understood, and agree to be bound by these Terms. If you do not agree, you must not use the Site.</p>
+
+<h2>2. Changes to Terms</h2>
+<p>We may update or revise these Terms from time to time. The "Last updated" date above reflects the most recent version. Your continued use of the Site after any revisions constitutes your acceptance of the updated Terms. If you do not agree to the new Terms, you must stop using the Site.</p>
+
+<h2>3. Intellectual Property Rights</h2>
+<h3>3.1 Site Content and Marks</h3>
+<p>Unless otherwise indicated, the Site, including all source code, databases, functionality, software, website designs, audio, video, text, photographs, and graphics ("Content"), and the trademarks, service marks, and logos contained therein ("Marks"), are owned or licensed by Canvas and Clay and are protected by applicable intellectual property laws.</p>
+<p>Except as expressly permitted, no portion of the Site, Content, or Marks may be copied, reproduced, distributed, republished, archived, sold, or otherwise exploited for any commercial purpose without our prior written permission.</p>
+<h3>3.2 Artist Content</h3>
+<p>Artists retain all ownership and copyright in artwork, images, descriptions, and any other materials they upload ("Artist Content").</p>
+<p>By uploading Artist Content to the Site, you grant Canvas and Clay a worldwide, non-exclusive, royalty-free, transferable, and sublicensable license to:</p>
+<ul>
+<li>host, store, display, reproduce, modify (for technical purposes such as resizing), distribute, and</li>
+<li>use the Artist Content as necessary to operate, maintain, improve, and promote the Site.</li>
+</ul>
+<p>You represent and warrant that you own or have the necessary rights to upload the Artist Content and to grant the above license.</p>
+
+<h2>4. User Eligibility and Account Responsibilities</h2>
+<p>By using the Site, you represent and warrant that:</p>
+<ol>
+<li>You are at least 18 years old (or the age of majority in your jurisdiction).</li>
+<li>Any registration information you submit is truthful, current, and complete.</li>
+<li>You will maintain the confidentiality of your login credentials and are responsible for all activity under your account.</li>
+<li>You will comply with all applicable laws and these Terms.</li>
+</ol>
+<p>We reserve the right to refuse service, suspend accounts, or remove content at our sole discretion.</p>
+
+<h2>5. Prohibited Activities</h2>
+<p>You may use the Site only for lawful purposes and in accordance with these Terms. You agree not to:</p>
+<ul>
+<li>systematically retrieve data or content to create or compile databases without our permission;</li>
+<li>access the Site using unauthorized automated means (bots, scrapers, scripts), except for search engine indexing or tools we explicitly permit;</li>
+<li>upload or transmit viruses, malware, or any harmful code;</li>
+<li>interfere with the Site's functionality, security features, or infrastructure;</li>
+<li>delete or alter any copyright or proprietary notices;</li>
+<li>harass, threaten, or abuse any user, artist, employee, or representative;</li>
+<li>upload content that is illegal, defamatory, infringing, hateful, obscene, or otherwise objectionable.</li>
+</ul>
+<p>We may remove any content or suspend any user account at our discretion if we believe a violation has occurred.</p>
+
+<h2>6. Termination</h2>
+<p>We may suspend or terminate your access to all or part of the Site, or remove any Artist Content or user content, at any time and for any reason, including for violations of these Terms, without notice or liability.</p>
+<p>Upon termination:</p>
+<ul>
+<li>your right to use the Site ends immediately;</li>
+<li>we may retain certain data as required for legal, security, or operational reasons.</li>
+</ul>
+
+<h2>7. Disclaimer of Warranties</h2>
+<p>The Site and all Content are provided "AS IS" and "AS AVAILABLE."</p>
+<p>To the fullest extent permitted by law, we disclaim all warranties, express or implied, including:</p>
+<ul>
+<li>merchantability;</li>
+<li>fitness for a particular purpose;</li>
+<li>non-infringement;</li>
+<li>accuracy, availability, or reliability of the Site;</li>
+<li>that the Site will be uninterrupted, secure, or error-free.</li>
+</ul>
+<p>Your use of the Site is solely at your own risk.</p>
+
+<h2>8. Limitation of Liability</h2>
+<p>To the fullest extent permitted by law, Canvas and Clay and its officers, directors, employees, and agents shall not be liable for:</p>
+<ul>
+<li>any indirect, incidental, consequential, special, punitive, or exemplary damages;</li>
+<li>loss of profits, data, goodwill, or other intangible losses;</li>
+<li>any damages arising from your use or inability to use the Site.</li>
+</ul>
+<p>Our total liability for any claim shall not exceed: (a) the amount you paid to us (if any) in the last twelve months, or (b) $100, whichever is greater.</p>
+<p>Some jurisdictions do not allow certain limitations; in such cases, our liability is limited to the maximum extent permitted by law.</p>
+
+<h2>9. Indemnification</h2>
+<p>You agree to defend, indemnify, and hold harmless Canvas and Clay and its officers, directors, employees, and agents from any claims, damages, liabilities, losses, and expenses (including attorneys' fees) arising out of:</p>
+<ul>
+<li>your use of the Site,</li>
+<li>your Artist Content,</li>
+<li>your violation of these Terms or applicable law.</li>
+</ul>
+
+<h2>10. Governing Law and Dispute Resolution</h2>
+<p>These Terms are governed by the laws of the State of California, without regard to conflict of law principles.</p>
+<p>Any legal action or proceeding shall be brought exclusively in the state or federal courts located in California, and you consent to personal jurisdiction in those courts.</p>
+
+<h2>11. Privacy</h2>
+<p>Your use of the Site is also governed by our Privacy Policy, which describes how we collect, use, disclose, and protect your information.</p>
+<p>By using the Site, you consent to our data practices as described in the Privacy Policy.</p>
+
+<h2>12. Miscellaneous</h2>
+<ul>
+<li>If any provision of these Terms is held invalid, the remaining provisions will remain in full force.</li>
+<li>Our failure to enforce any right or provision does not constitute a waiver.</li>
+<li>You may not assign these Terms; we may assign them without restriction.</li>
+<li>These Terms constitute the entire agreement between you and Canvas and Clay regarding the Site.</li>
+</ul>`
+    }
+  };
+
+  const loadLegalPages = async () => {
+    legalLoading = true;
+    legalError = '';
+    try {
+      const headers = { accept: 'application/json' };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/legal-pages`, {
+        credentials: 'include',
+        headers
+      });
+      if (response.ok) {
+        const result = await response.json();
+        const fetchedPages = result.pages || [];
+
+        // For each page type, use fetched data or fall back to static content
+        for (const pageType of ['privacy_policy', 'terms_of_service']) {
+          const fetchedPage = fetchedPages.find(p => p.page_type === pageType);
+          if (fetchedPage && fetchedPage.content) {
+            legalPages[pageType] = {
+              title: fetchedPage.title,
+              content: fetchedPage.content,
+              last_updated: fetchedPage.last_updated,
+              editor_email: fetchedPage.editor_email
+            };
+          } else {
+            // Use static fallback - this is what the public page shows
+            legalPages[pageType] = {
+              title: staticFallbackContent[pageType].title,
+              content: staticFallbackContent[pageType].content,
+              last_updated: null,
+              editor_email: null
+            };
+          }
+        }
+
+        legalPages = legalPages; // Trigger reactivity
+        // Initialize Quill with current page content using Quill's API
+        if (quillEditor) {
+          const currentPage = legalPages[legalActivePage];
+          quillEditor.setContents([]);  // Clear first
+          if (currentPage.content) {
+            quillEditor.clipboard.dangerouslyPasteHTML(currentPage.content);
+          }
+        }
+      } else {
+        const err = await response.json();
+        legalError = err.error || 'Failed to load legal pages';
+      }
+    } catch (err) {
+      legalError = 'Failed to connect to server';
+      console.error('Failed to load legal pages:', err);
+    } finally {
+      legalLoading = false;
+      legalLoaded = true;
+    }
+  };
+
+  const saveLegalPage = async () => {
+    if (!quillEditor) return;
+
+    legalSaving = true;
+    legalError = '';
+    legalNotice = '';
+
+    const content = quillEditor.root.innerHTML;
+    const title = legalPages[legalActivePage].title;
+
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        accept: 'application/json'
+      };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/legal-pages/${legalActivePage}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ title, content })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        legalPages[legalActivePage].content = content;
+        legalPages[legalActivePage].last_updated = new Date().toISOString();
+        legalPages[legalActivePage].editor_email = $auth.user?.email || 'Unknown';
+        legalPages = legalPages; // Trigger reactivity
+        legalNotice = 'Page saved successfully';
+        setTimeout(() => legalNotice = '', 3000);
+      } else {
+        const err = await response.json();
+        legalError = err.error || 'Failed to save page';
+      }
+    } catch (err) {
+      legalError = 'Failed to connect to server';
+      console.error('Failed to save legal page:', err);
+    } finally {
+      legalSaving = false;
+    }
+  };
+
+  const initQuillEditor = () => {
+    if (typeof window === 'undefined' || quillLoaded) return;
+
+    // Load Quill CSS
+    if (!document.querySelector('link[href*="quill.snow.css"]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css';
+      document.head.appendChild(link);
+    }
+
+    // Load Quill JS
+    if (!window.Quill && !document.querySelector('script[src*="quill"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js';
+      script.onload = () => {
+        createQuillInstance();
+      };
+      document.body.appendChild(script);
+    } else if (window.Quill) {
+      createQuillInstance();
+    }
+  };
+
+  const createQuillInstance = () => {
+    const editorEl = document.getElementById('legal-editor');
+    if (!editorEl || quillEditor) return;
+
+    // Register custom clipboard to handle pasted plain text with Unicode bullets
+    const Clipboard = window.Quill.import('modules/clipboard');
+    const Delta = window.Quill.import('delta');
+
+    class PlainTextClipboard extends Clipboard {
+      convert(html) {
+        if (typeof html === 'string') {
+          // Convert Unicode bullet points to HTML list items
+          // Handle lines starting with bullet characters
+          const bulletPatterns = /^[\s]*[•\-\*]\s+(.+)$/gm;
+          const numberedPatterns = /^[\s]*(\d+)\.\s+(.+)$/gm;
+
+          // First, wrap bullet lists
+          let inBulletList = false;
+          let inNumberedList = false;
+          const lines = html.split('\n');
+          const processed = [];
+
+          for (let i = 0; i < lines.length; i++) {
+            let line = lines[i];
+            const bulletMatch = line.match(/^[\s]*[•\-\*]\s+(.+)$/);
+            const numberedMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
+
+            if (bulletMatch) {
+              if (!inBulletList) {
+                if (inNumberedList) { processed.push('</ol>'); inNumberedList = false; }
+                processed.push('<ul>');
+                inBulletList = true;
+              }
+              processed.push(`<li>${bulletMatch[1]}</li>`);
+            } else if (numberedMatch) {
+              if (!inNumberedList) {
+                if (inBulletList) { processed.push('</ul>'); inBulletList = false; }
+                processed.push('<ol>');
+                inNumberedList = true;
+              }
+              processed.push(`<li>${numberedMatch[1]}</li>`);
+            } else {
+              if (inBulletList) { processed.push('</ul>'); inBulletList = false; }
+              if (inNumberedList) { processed.push('</ol>'); inNumberedList = false; }
+
+              // Convert horizontal lines (⸻ or ---) to <hr>
+              if (/^[\s]*[⸻—\-]{3,}[\s]*$/.test(line)) {
+                processed.push('<hr>');
+              } else if (line.trim()) {
+                // Check if it looks like a heading (e.g., "1. Agreement to Terms")
+                const headingMatch = line.match(/^(\d+)\.\s+(.+)$/);
+                if (headingMatch && !line.includes('•') && lines[i+1]?.trim() === '') {
+                  processed.push(`<h2>${line}</h2>`);
+                } else {
+                  processed.push(`<p>${line}</p>`);
+                }
+              }
+              // Skip empty lines - don't add empty paragraphs
+            }
+          }
+
+          if (inBulletList) processed.push('</ul>');
+          if (inNumberedList) processed.push('</ol>');
+
+          html = processed.join('');
+        }
+        return super.convert(html);
+      }
+    }
+
+    window.Quill.register('modules/clipboard', PlainTextClipboard, true);
+
+    quillEditor = new window.Quill('#legal-editor', {
+      theme: 'snow',
+      modules: {
+        toolbar: [
+          [{ header: [1, 2, 3, false] }],
+          ['bold', 'italic', 'underline'],
+          [{ list: 'ordered' }, { list: 'bullet' }],
+          ['link'],
+          ['clean']
+        ],
+        clipboard: {
+          matchVisual: false
+        }
+      },
+      placeholder: 'Enter page content...'
+    });
+
+    quillLoaded = true;
+
+    // Load current page content using Quill's API
+    const currentPage = legalPages[legalActivePage];
+    if (currentPage.content) {
+      quillEditor.clipboard.dangerouslyPasteHTML(currentPage.content);
+    }
+  };
+
+  const switchLegalPage = (pageType) => {
+    // Save current content to state before switching
+    if (quillEditor) {
+      legalPages[legalActivePage].content = quillEditor.root.innerHTML;
+    }
+
+    legalActivePage = pageType;
+
+    // Load new page content into editor using Quill's API
+    if (quillEditor) {
+      const newPage = legalPages[pageType];
+      quillEditor.setContents([]);  // Clear first
+      if (newPage.content) {
+        quillEditor.clipboard.dangerouslyPasteHTML(newPage.content);
+      }
+    }
+  };
+
+  const resetToDefault = () => {
+    if (!quillEditor) return;
+    const defaultContent = staticFallbackContent[legalActivePage];
+    legalPages[legalActivePage].title = defaultContent.title;
+    legalPages[legalActivePage].content = defaultContent.content;
+    legalPages = legalPages;
+    quillEditor.setContents([]);
+    quillEditor.clipboard.dangerouslyPasteHTML(defaultContent.content);
+    legalNotice = 'Reset to default content. Remember to save.';
+    setTimeout(() => legalNotice = '', 3000);
+  };
+
+  const formatLegalDate = (isoString) => {
+    if (!isoString) return 'Never';
+    const date = new Date(isoString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Load legal pages when legal tab is selected (only once)
+  $: if (activeTab === 'legal' && !legalLoaded && !legalLoading) {
+    loadLegalPages();
+  }
+
+  // Initialize Quill when legal tab becomes active
+  $: if (activeTab === 'legal' && legalLoaded && !quillLoaded) {
+    // Use setTimeout to ensure DOM is ready
+    setTimeout(initQuillEditor, 100);
+  }
+
   // Cleanup intervals on component destroy
   onDestroy(() => {
     stopPeriodicApiCheck();
@@ -2185,6 +2618,12 @@
       on:click={() => handleTabChange('backup')}
     >
       Backup
+    </button>
+    <button
+      class:active={activeTab === 'legal'}
+      on:click={() => handleTabChange('legal')}
+    >
+      Legal
     </button>
   </div>
 
@@ -3218,6 +3657,94 @@
           </div>
         {/if}
       </div>
+    {:else if activeTab === 'legal'}
+      <div class="legal-pages">
+        <h2>Legal Pages</h2>
+        <p class="legal-description">Edit the Privacy Policy and Terms of Service pages that are displayed publicly on the site.</p>
+
+        {#if legalError}
+          <div class="inline-error">{legalError}</div>
+        {/if}
+
+        {#if legalNotice}
+          <div class="inline-notice success">{legalNotice}</div>
+        {/if}
+
+        <div class="legal-page-tabs">
+          <button
+            class="legal-tab-btn"
+            class:active={legalActivePage === 'privacy_policy'}
+            on:click={() => switchLegalPage('privacy_policy')}
+          >
+            Privacy Policy
+          </button>
+          <button
+            class="legal-tab-btn"
+            class:active={legalActivePage === 'terms_of_service'}
+            on:click={() => switchLegalPage('terms_of_service')}
+          >
+            Terms of Service
+          </button>
+        </div>
+
+        {#if legalLoading}
+          <div class="loading-indicator">Loading legal pages...</div>
+        {:else}
+          <div class="legal-editor-section">
+            <div class="legal-title-row">
+              <label for="legal-title">Page Title</label>
+              <input
+                id="legal-title"
+                type="text"
+                bind:value={legalPages[legalActivePage].title}
+                placeholder="Page title"
+              />
+            </div>
+
+            <div class="legal-editor-container">
+              <label>Content</label>
+              <div id="legal-editor"></div>
+            </div>
+
+            <div class="legal-meta">
+              {#if legalPages[legalActivePage].last_updated}
+                <span class="last-updated">
+                  Last updated: {formatLegalDate(legalPages[legalActivePage].last_updated)}
+                  {#if legalPages[legalActivePage].editor_email}
+                    by {legalPages[legalActivePage].editor_email}
+                  {/if}
+                </span>
+              {:else}
+                <span class="last-updated">Not yet published</span>
+              {/if}
+            </div>
+
+            <div class="legal-actions">
+              <button
+                class="primary"
+                on:click={saveLegalPage}
+                disabled={legalSaving || !quillLoaded}
+              >
+                {legalSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+              <a
+                href={legalActivePage === 'privacy_policy' ? '/privacy' : '/terms'}
+                target="_blank"
+                class="secondary-link"
+              >
+                View Public Page
+              </a>
+              <button
+                class="secondary"
+                on:click={resetToDefault}
+                disabled={legalSaving}
+              >
+                Reset to Default
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
   {/if}
@@ -3228,51 +3755,74 @@
     max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   h1 {
     color: var(--text-primary);
     margin-bottom: 2rem;
+    font-weight: 600;
   }
 
   h2 {
     color: var(--text-primary);
     margin-top: 2rem;
     margin-bottom: 1rem;
+    font-weight: 600;
   }
 
   h3 {
     color: var(--text-primary);
     margin-top: 1.5rem;
     margin-bottom: 0.5rem;
+    font-weight: 600;
   }
 
   .tabs {
     display: flex;
-    gap: 0.5rem;
-    border-bottom: 2px solid var(--border-color);
+    gap: 0.75rem;
+    border-bottom: none;
     margin-bottom: 2rem;
+    flex-wrap: wrap;
+    padding: 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 12px;
   }
 
   .tabs button {
-    padding: 0.75rem 1.5rem;
-    background: none;
+    padding: 0 20px;
+    height: 36px;
+    background: transparent;
     border: none;
-    border-bottom: 3px solid transparent;
+    border-radius: 18px;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: all 0.2s;
+    transition: all 0.15s ease;
+    font-weight: 500;
+    font-size: 0.875rem;
   }
 
   .tabs button:hover {
     color: var(--text-primary);
-    background: var(--bg-tertiary);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .tabs button.active {
-    color: var(--accent-color);
-    border-bottom-color: var(--accent-color);
-    font-weight: bold;
+    color: white;
+    background: var(--accent-color);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .tab-content {
@@ -3286,18 +3836,23 @@
   }
 
   .health-status {
-    padding: 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
+    padding: 1.25rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .status-badge {
-    display: inline-block;
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 16px;
+    height: 32px;
+    border-radius: 16px;
     background: var(--error-color);
     color: white;
-    font-weight: bold;
+    font-weight: 600;
+    font-size: 0.875rem;
   }
 
   .status-badge.healthy {
@@ -3311,9 +3866,17 @@
   }
 
   .stat-card {
-    padding: 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
+    padding: 1.25rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
+    transition: all 0.15s ease;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   }
 
   .stat-label {
@@ -3329,9 +3892,11 @@
   }
 
   .recent-activity {
-    padding: 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
+    padding: 1.25rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .activity-list {
@@ -3342,9 +3907,11 @@
   }
 
   .info-section {
-    padding: 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
+    padding: 1.25rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -3352,9 +3919,11 @@
   }
 
   .api-test-section {
-    padding: 1rem;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
+    padding: 1.25rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
     margin-bottom: 1.5rem;
   }
 
@@ -3371,29 +3940,37 @@
   }
 
   .test-api-btn {
-    padding: 0.5rem 1rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 36px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 18px;
     cursor: pointer;
-    font-weight: 500;
-    transition: background 0.2s;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .test-api-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
   }
 
   .test-api-btn:disabled {
     background: var(--bg-secondary);
     color: var(--text-secondary);
     cursor: not-allowed;
+    box-shadow: none;
   }
 
   .api-test-result {
-    padding: 0.75rem;
-    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
     margin-bottom: 0.5rem;
   }
 
@@ -3434,51 +4011,78 @@
 
   .filters {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.75rem;
     margin-bottom: 1rem;
   }
 
   .filters input {
-    padding: 0.5rem;
-    background: var(--bg-secondary);
+    height: 40px;
+    padding: 0 16px;
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: 8px;
     color: var(--text-primary);
     flex: 1;
+    transition: all 0.15s ease;
+  }
+
+  .filters input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
   }
 
   .filters button {
-    padding: 0.5rem 1rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 40px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 20px;
     cursor: pointer;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .filters button:hover {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
     margin-bottom: 1rem;
-    background: var(--bg-tertiary);
+    background: var(--bg-primary);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   th {
     background: var(--bg-secondary);
     color: var(--text-primary);
-    padding: 0.75rem;
+    padding: 0.875rem 1rem;
     text-align: left;
-    border-bottom: 2px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    font-size: 0.875rem;
   }
 
   td {
-    padding: 0.75rem;
+    padding: 0.875rem 1rem;
     color: var(--text-primary);
     border-bottom: 1px solid var(--border-color);
   }
 
   tr:hover {
-    background: var(--bg-secondary);
+    background: rgba(0, 122, 255, 0.04);
   }
 
   .user-summary {
@@ -3722,35 +4326,52 @@
     gap: 1rem;
     align-items: center;
     justify-content: center;
-    margin-top: 1rem;
+    margin-top: 1.5rem;
   }
 
   .pagination button {
-    padding: 0.5rem 1rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 36px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 18px;
     cursor: pointer;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .pagination button:hover:not(:disabled) {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
   }
 
   .pagination button:disabled {
     background: var(--bg-tertiary);
     color: var(--text-tertiary);
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
   }
 
   .pagination span {
     color: var(--text-primary);
+    font-weight: 500;
   }
 
   .error-message {
-    padding: 1rem;
-    background: rgba(211, 47, 47, 0.2);
+    padding: 1rem 1.25rem;
+    background: rgba(211, 47, 47, 0.08);
     color: var(--error-color);
-    border: 1px solid var(--error-color);
-    border-radius: 4px;
+    border: 1px solid rgba(211, 47, 47, 0.3);
+    border-radius: 10px;
     margin-bottom: 2rem;
+    font-weight: 500;
   }
 
   .loading {
@@ -4897,5 +5518,247 @@
       padding: 0.25rem 0.5rem;
       font-size: 0.6875rem;
     }
+  }
+
+  /* Legal Pages Styles */
+  .legal-pages {
+    max-width: 900px;
+  }
+
+  .legal-description {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .legal-page-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .legal-tab-btn {
+    padding: 0.5rem 1.25rem;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .legal-tab-btn:hover {
+    background: rgba(0, 122, 255, 0.08);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .legal-tab-btn.active {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+  }
+
+  .legal-editor-section {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
+  }
+
+  .legal-title-row {
+    margin-bottom: 1.25rem;
+  }
+
+  .legal-title-row label,
+  .legal-editor-container label {
+    display: block;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .legal-title-row input {
+    width: 100%;
+    height: 44px;
+    padding: 0 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 1rem;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-sizing: border-box;
+    transition: all 0.15s ease;
+  }
+
+  .legal-title-row input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+  }
+
+  .legal-editor-container {
+    margin-bottom: 1rem;
+  }
+
+  #legal-editor {
+    min-height: 400px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 0 0 8px 8px;
+  }
+
+  /* Quill editor theme overrides */
+  :global(.ql-toolbar.ql-snow) {
+    border: 1px solid var(--border-color);
+    border-radius: 8px 8px 0 0;
+    background: var(--bg-secondary);
+  }
+
+  :global(.ql-container.ql-snow) {
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    font-size: 1rem;
+    font-family: inherit;
+  }
+
+  :global(.ql-editor) {
+    min-height: 400px;
+    color: var(--text-primary);
+  }
+
+  :global(.ql-editor.ql-blank::before) {
+    color: var(--text-secondary);
+    font-style: normal;
+  }
+
+  :global(.ql-snow .ql-stroke) {
+    stroke: var(--text-secondary);
+  }
+
+  :global(.ql-snow .ql-fill) {
+    fill: var(--text-secondary);
+  }
+
+  :global(.ql-snow .ql-picker-label) {
+    color: var(--text-secondary);
+  }
+
+  :global(.ql-snow .ql-picker-options) {
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+  }
+
+  :global(.ql-toolbar.ql-snow .ql-picker-label:hover),
+  :global(.ql-toolbar.ql-snow button:hover) {
+    color: var(--accent-color);
+  }
+
+  :global(.ql-toolbar.ql-snow button:hover .ql-stroke) {
+    stroke: var(--accent-color);
+  }
+
+  .legal-meta {
+    margin-bottom: 1.25rem;
+    padding-top: 0.75rem;
+  }
+
+  .legal-meta .last-updated {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
+
+  .legal-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .legal-actions button.primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px;
+    height: 44px;
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 22px;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .legal-actions button.primary:hover:not(:disabled) {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+  }
+
+  .legal-actions button.primary:disabled {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .legal-actions button.secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 20px;
+    height: 40px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .legal-actions button.secondary:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .legal-actions button.secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .secondary-link {
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.9375rem;
+    transition: all 0.15s ease;
+  }
+
+  .secondary-link:hover {
+    text-decoration: underline;
+  }
+
+  .loading-indicator {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+
+  .inline-notice.success {
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid var(--success-color);
+    color: var(--success-color);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
   }
 </style>

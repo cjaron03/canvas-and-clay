@@ -79,15 +79,28 @@
     max-width: 1400px;
     margin: 0 auto;
     padding: 1.5rem;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .hero {
     text-align: center;
     padding: 4rem 2rem;
     margin-bottom: 3rem;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border-radius: 16px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
+    border: 1px solid var(--border-color);
   }
 
   .hero h1 {
@@ -126,24 +139,29 @@
 
   .btn-primary,
   .btn-secondary {
-    padding: 0.875rem 2rem;
-    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 28px;
+    height: 44px;
+    border-radius: 22px;
     text-decoration: none;
     font-weight: 600;
     font-size: 1rem;
-    transition: all 0.2s;
-    display: inline-block;
+    transition: all 0.15s ease;
+    border: none;
   }
 
   .btn-primary {
     background: var(--accent-color);
     color: white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .btn-primary:hover {
-    background: var(--accent-hover);
+    filter: brightness(1.05);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(90, 159, 212, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
   }
 
   .btn-secondary {
@@ -153,7 +171,7 @@
   }
 
   .btn-secondary:hover {
-    background: var(--bg-tertiary);
+    background: rgba(0, 122, 255, 0.08);
     border-color: var(--accent-color);
     transform: translateY(-2px);
   }
@@ -407,7 +425,6 @@
     .btn-primary,
     .btn-secondary {
       width: 100%;
-      text-align: center;
     }
     
     .stats {

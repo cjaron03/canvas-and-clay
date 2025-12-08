@@ -19,7 +19,7 @@ load_dotenv()
 from sqlalchemy.pool import StaticPool
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from flask_login import LoginManager, login_required, current_user, logout_user
+from flask_login import LoginManager, login_required, current_user, logout_user, login_user
 from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
@@ -390,6 +390,8 @@ def unauthorized():
 from models import init_models
 User, FailedLoginAttempt, AuditLog = init_models(db)
 PasswordResetRequest = init_models.PasswordResetRequest
+UserSession = init_models.UserSession
+LegalPage = init_models.LegalPage
 
 # Canonical bootstrap admin email used for safeguard checks
 BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
@@ -416,19 +418,94 @@ def load_user(user_id):
 # Enforce per-session token to allow forced logouts
 @app.before_request
 def enforce_session_token():
+    """Validate session token against UserSession table for multi-account support.
+
+    This replaces the old single-token validation with per-device session tracking.
+    If the current session is invalid, attempts to switch to another valid account.
+    """
     # Only enforce when authenticated; avoid masking errors for anonymous requests
     if not current_user.is_authenticated:
         return
-    
+
     # Allow auth flows that establish or refresh the session token
-    if request.endpoint in {'auth.login', 'auth.register', 'auth.get_csrf_token'}:
+    if request.endpoint in {
+        'auth.login', 'auth.register', 'auth.get_csrf_token',
+        'auth.add_account', 'auth.switch_account', 'auth.remove_account', 'auth.list_accounts'
+    }:
         return
 
     token = session.get('session_token')
-    if not token or token != current_user.remember_token:
+    if not token:
         logout_user()
         session.clear()
         return jsonify({'error': 'Session expired. Please log in again.'}), 401
+
+    # Look up session in database
+    user_session = UserSession.query.filter_by(session_token=token).first()
+
+    if user_session and user_session.is_valid() and user_session.user_id == current_user.id:
+        # Valid session - update last activity
+        user_session.touch()
+        db.session.commit()
+        return
+
+    # Backwards compatibility: check legacy remember_token for pre-migration sessions
+    if not user_session and token == current_user.remember_token:
+        # Migrate legacy session to UserSession table
+        new_session = UserSession(
+            id=secrets.token_hex(32),
+            user_id=current_user.id,
+            session_token=token,
+            user_agent=request.headers.get('User-Agent', '')[:500],
+            ip_address=request.remote_addr,
+            created_at=datetime.now(timezone.utc),
+            last_active_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            is_active=True
+        )
+        db.session.add(new_session)
+        # Initialize accounts dict if not present
+        if 'accounts' not in session:
+            session['accounts'] = {}
+        session['accounts'][str(current_user.id)] = {
+            'session_token': token,
+            'email': current_user.email,
+            'role': current_user.role
+        }
+        session['active_account_id'] = current_user.id
+        db.session.commit()
+        return
+
+    # Current session is invalid - try to find another valid account
+    accounts = session.get('accounts', {})
+    for account_id, account_data in accounts.items():
+        if int(account_id) == current_user.id:
+            continue  # Skip the current (invalid) account
+
+        account_token = account_data.get('session_token')
+        if not account_token:
+            continue
+
+        alt_session = UserSession.query.filter_by(session_token=account_token).first()
+        if alt_session and alt_session.is_valid():
+            # Found a valid alternative - switch to it
+            alt_user = db.session.get(User, alt_session.user_id)
+            if alt_user and alt_user.is_active:
+                login_user(alt_user)
+                session['session_token'] = account_token
+                session['active_account_id'] = alt_user.id
+                alt_session.touch()
+                db.session.commit()
+                # Remove the invalid account from session
+                if str(current_user.id) in accounts:
+                    del accounts[str(current_user.id)]
+                    session['accounts'] = accounts
+                return
+
+    # No valid sessions found - full logout
+    logout_user()
+    session.clear()
+    return jsonify({'error': 'Session expired. Please log in again.'}), 401
 
 # Register blueprints
 # Do NOT move this auth import. Will break the Docker build on startup.
@@ -4449,6 +4526,161 @@ def delete_password_reset_request(request_id):
     }), 200
 
 
+# ============================================================================
+# Legal Pages API Endpoints
+# ============================================================================
+
+@app.route('/api/legal-pages/<page_type>', methods=['GET'])
+def get_public_legal_page(page_type):
+    """Public endpoint to fetch legal page content (privacy policy, terms of service)."""
+    valid_types = ['privacy_policy', 'terms_of_service']
+    if page_type not in valid_types:
+        return jsonify({'error': 'Invalid page type'}), 400
+
+    page = LegalPage.query.filter_by(page_type=page_type).first()
+    if not page:
+        return jsonify({'error': 'Page not found'}), 404
+
+    return jsonify({
+        'page_type': page.page_type,
+        'title': page.title,
+        'content': page.content,
+        'last_updated': (page.last_updated.isoformat() + 'Z') if page.last_updated else None
+    }), 200
+
+
+@app.route('/api/admin/legal-pages', methods=['GET'])
+@login_required
+@admin_required
+def list_legal_pages():
+    """Admin endpoint to list all legal pages."""
+    pages = LegalPage.query.all()
+
+    result = []
+    for page in pages:
+        editor_email = None
+        if page.updated_by:
+            editor = db.session.get(User, page.updated_by)
+            if editor:
+                editor_email = editor.email
+
+        result.append({
+            'id': page.id,
+            'page_type': page.page_type,
+            'title': page.title,
+            'content': page.content,
+            'last_updated': (page.last_updated.isoformat() + 'Z') if page.last_updated else None,
+            'updated_by': page.updated_by,
+            'editor_email': editor_email
+        })
+
+    return jsonify({'pages': result}), 200
+
+
+@app.route('/api/admin/legal-pages/<page_type>', methods=['GET'])
+@login_required
+@admin_required
+def get_legal_page_for_edit(page_type):
+    """Admin endpoint to get a legal page for editing."""
+    valid_types = ['privacy_policy', 'terms_of_service']
+    if page_type not in valid_types:
+        return jsonify({'error': 'Invalid page type'}), 400
+
+    page = LegalPage.query.filter_by(page_type=page_type).first()
+
+    if not page:
+        # Return empty content for new page
+        return jsonify({
+            'page_type': page_type,
+            'title': page_type.replace('_', ' ').title(),
+            'content': '',
+            'last_updated': None,
+            'updated_by': None,
+            'editor_email': None
+        }), 200
+
+    editor_email = None
+    if page.updated_by:
+        editor = db.session.get(User, page.updated_by)
+        if editor:
+            editor_email = editor.email
+
+    return jsonify({
+        'id': page.id,
+        'page_type': page.page_type,
+        'title': page.title,
+        'content': page.content,
+        'last_updated': (page.last_updated.isoformat() + 'Z') if page.last_updated else None,
+        'updated_by': page.updated_by,
+        'editor_email': editor_email
+    }), 200
+
+
+@app.route('/api/admin/legal-pages/<page_type>', methods=['POST'])
+@login_required
+@admin_required
+@limiter.limit("20 per minute")
+def update_legal_page(page_type):
+    """Admin endpoint to create or update a legal page."""
+    valid_types = ['privacy_policy', 'terms_of_service']
+    if page_type not in valid_types:
+        return jsonify({'error': 'Invalid page type'}), 400
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+
+    content = data.get('content', '').strip()
+    if not content:
+        return jsonify({'error': 'Content is required'}), 400
+
+    title = data.get('title', '').strip() or page_type.replace('_', ' ').title()
+
+    page = LegalPage.query.filter_by(page_type=page_type).first()
+
+    try:
+        if page:
+            # Update existing page
+            page.title = title
+            page.content = content
+            page.last_updated = datetime.now(timezone.utc)
+            page.updated_by = current_user.id
+        else:
+            # Create new page
+            page = LegalPage(
+                page_type=page_type,
+                title=title,
+                content=content,
+                last_updated=datetime.now(timezone.utc),
+                updated_by=current_user.id
+            )
+            db.session.add(page)
+
+        db.session.commit()
+
+        log_audit_event(
+            'legal_page_updated',
+            user_id=current_user.id,
+            email=current_user.email,
+            details={'page_type': page_type, 'title': title}
+        )
+
+        return jsonify({
+            'message': f'{title} updated successfully',
+            'page': {
+                'id': page.id,
+                'page_type': page.page_type,
+                'title': page.title,
+                'last_updated': page.last_updated.isoformat() + 'Z'
+            }
+        }), 200
+
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(f"Failed to update legal page: {page_type}")
+        return jsonify({'error': 'Failed to update legal page'}), 500
+
+
 @app.route('/api/account/admin-info', methods=['GET'])
 @login_required
 @admin_required
@@ -5561,6 +5793,120 @@ def stop_deletion_scheduler():
 # ensure scheduler not running during testing - uncomment to run schedular
 if not app.config.get("TESTING", False):
     start_deletion_scheduler()
+
+
+# ============================================================================
+# Flask CLI Commands
+# ============================================================================
+
+@app.cli.command("seed-legal-pages")
+def seed_legal_pages():
+    """Seed default legal pages (Privacy Policy and Terms of Service)."""
+    import click
+
+    privacy_content = """<h2>1. Introduction</h2>
+<p>Welcome to Canvas and Clay. We respect your privacy and are committed to protecting your personal data. This privacy policy will inform you as to how we look after your personal data when you visit our website and tell you about your privacy rights.</p>
+
+<h2>2. The Data We Collect</h2>
+<p>We may collect, use, store and transfer different kinds of personal data about you which we have grouped together follows:</p>
+<ul>
+<li><strong>Identity Data:</strong> includes first name, last name, username or similar identifier.</li>
+<li><strong>Contact Data:</strong> includes email address.</li>
+<li><strong>Content Data:</strong> includes the photos, artwork images, and descriptions you upload to the platform.</li>
+<li><strong>Technical Data:</strong> includes internet protocol (IP) address, browser type and version, time zone setting and location, and operating system.</li>
+</ul>
+
+<h2>3. How We Use Your Data</h2>
+<p>We will only use your personal data when the law allows us to. Most commonly, we will use your personal data in the following circumstances:</p>
+<ul>
+<li>To register you as a new customer or artist.</li>
+<li>To manage and display your artwork portfolio.</li>
+<li>To manage our relationship with you (including notifying you about changes to our terms or privacy policy).</li>
+<li>To administer and protect our business and this website.</li>
+</ul>
+
+<h2>4. Data Security</h2>
+<p>We have put in place appropriate security measures to prevent your personal data from being accidentally lost, used, or accessed in an unauthorized way. We limit access to your personal data to those employees, agents, contractors, and other third parties who have a business need to know.</p>
+
+<h2>5. Your Legal Rights</h2>
+<p>Under certain circumstances, you have rights under data protection laws in relation to your personal data, including the right to request access, correction, erasure, restriction, transfer, to object to processing, to portability of data and (where the lawful ground of processing is consent) to withdraw consent.</p>
+
+<h2>6. Contact Us</h2>
+<p>If you have any questions about this privacy policy or our privacy practices, please contact us through the administrative channels on the platform.</p>"""
+
+    terms_content = """<h2>1. Agreement to Terms</h2>
+<p>These Terms of Service constitute a legally binding agreement made between you, whether personally or on behalf of an entity ("you") and Canvas and Clay ("we," "us" or "our"), concerning your access to and use of the Canvas and Clay website as well as any other media form, media channel, mobile website or mobile application related, linked, or otherwise connected thereto (collectively, the "Site").</p>
+
+<h2>2. Intellectual Property Rights</h2>
+<p>Unless otherwise indicated, the Site is our proprietary property and all source code, databases, functionality, software, website designs, audio, video, text, photographs, and graphics on the Site (collectively, the "Content") and the trademarks, service marks, and logos contained therein (the "Marks") are owned or controlled by us or licensed to us, and are protected by copyright and trademark laws.</p>
+<p><strong>Artist Content:</strong> Artists retain full ownership and copyright of the artwork images they upload to the Site. By uploading content, you grant Canvas and Clay a non-exclusive license to display, reproduce, and distribute your content solely for the purpose of operating and promoting the Site.</p>
+
+<h2>3. User Representations</h2>
+<p>By using the Site, you represent and warrant that:</p>
+<ul>
+<li>All registration information you submit will be true, accurate, current, and complete.</li>
+<li>You have the legal capacity and you agree to comply with these Terms of Service.</li>
+<li>You are not a minor in the jurisdiction in which you reside.</li>
+<li>You will not access the Site through automated or non-human means, whether through a bot, script or otherwise.</li>
+<li>Your use of the Site will not violate any applicable law or regulation.</li>
+</ul>
+
+<h2>4. Prohibited Activities</h2>
+<p>You may not access or use the Site for any purpose other than that for which we make the Site available. As a user of the Site, you agree not to:</p>
+<ul>
+<li>Systematically retrieve data or other content from the Site to create or compile, directly or indirectly, a collection, compilation, database, or directory without written permission from us.</li>
+<li>Upload or transmit viruses, Trojan horses, or other material that interferes with any party's uninterrupted use and enjoyment of the Site.</li>
+<li>Delete the copyright or other proprietary rights notice from any Content.</li>
+<li>Harass, annoy, intimidate, or threaten any of our employees or agents.</li>
+<li>Upload content that is illegal, infringing, defamatory, or otherwise objectionable.</li>
+</ul>
+
+<h2>5. Termination</h2>
+<p>We may terminate or suspend your account and bar access to the Service immediately, without prior notice or liability, under our sole discretion, for any reason whatsoever and without limitation, including but not limited to a breach of the Terms.</p>
+
+<h2>6. Contact Us</h2>
+<p>In order to resolve a complaint regarding the Site or to receive further information regarding use of the Site, please contact us via the administration portal.</p>"""
+
+    # Check if pages already exist
+    privacy_page = LegalPage.query.filter_by(page_type='privacy_policy').first()
+    terms_page = LegalPage.query.filter_by(page_type='terms_of_service').first()
+
+    created = []
+    skipped = []
+
+    if not privacy_page:
+        privacy_page = LegalPage(
+            page_type='privacy_policy',
+            title='Privacy Policy',
+            content=privacy_content,
+            last_updated=datetime.now(timezone.utc)
+        )
+        db.session.add(privacy_page)
+        created.append('Privacy Policy')
+    else:
+        skipped.append('Privacy Policy (already exists)')
+
+    if not terms_page:
+        terms_page = LegalPage(
+            page_type='terms_of_service',
+            title='Terms of Service',
+            content=terms_content,
+            last_updated=datetime.now(timezone.utc)
+        )
+        db.session.add(terms_page)
+        created.append('Terms of Service')
+    else:
+        skipped.append('Terms of Service (already exists)')
+
+    db.session.commit()
+
+    if created:
+        click.echo(f"Created: {', '.join(created)}")
+    if skipped:
+        click.echo(f"Skipped: {', '.join(skipped)}")
+    if not created and not skipped:
+        click.echo("No legal pages to seed.")
+
 
 if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'

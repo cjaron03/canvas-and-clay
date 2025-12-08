@@ -678,6 +678,18 @@
     min-height: calc(100vh - 64px);
     background: var(--bg-primary);
     padding: 0;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .account-container {
@@ -714,7 +726,7 @@
     cursor: pointer;
     font-size: 0.9375rem;
     font-weight: 500;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
   }
 
   .nav-item:hover {
@@ -723,12 +735,12 @@
   }
 
   .nav-item.active {
-    background: #e8f0fe; /* Light blue background for active state, common in Google UI */
+    background: rgba(0, 122, 255, 0.1);
     color: var(--accent-color);
   }
 
   :global([data-theme='dark']) .nav-item.active {
-    background: rgba(66, 133, 244, 0.2);
+    background: rgba(0, 122, 255, 0.15);
   }
 
   .nav-icon {
@@ -742,7 +754,7 @@
   .account-content {
     padding: 2rem 2rem 4rem;
   }
-  
+
   .content-header {
     margin-bottom: 2rem;
     text-align: center;
@@ -753,23 +765,24 @@
     font-weight: 400;
     color: var(--text-primary);
     margin: 0 0 0.5rem;
+    letter-spacing: -0.5px;
   }
-  
+
   .content-header .subtitle {
-    font-size: 1rem;
+    font-size: 0.95rem;
     color: var(--text-secondary);
   }
 
   /* Cards */
   .card {
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: 12px;
     overflow: hidden;
     margin-bottom: 1.5rem;
-    box-shadow: 0 1px 2px rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
-  
+
   :global([data-theme='dark']) .card {
     box-shadow: none;
     background: var(--bg-secondary);
@@ -912,41 +925,55 @@
   }
 
   .primary-button {
-    padding: 0.625rem 1.5rem;
+    padding: 0 28px;
+    height: 44px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
-    font-size: 0.875rem;
+    border-radius: 22px;
+    font-size: 0.95rem;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
   }
 
   .primary-button:hover:not(:disabled) {
-    background: var(--accent-hover);
+    filter: brightness(1.05);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .primary-button:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   .primary-button:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+    filter: none;
   }
 
   /* Messages */
   .message {
-    padding: 0.75rem 1rem;
-    border-radius: 4px;
-    font-size: 0.875rem;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.9rem;
   }
 
   .message.success {
     background: rgba(52, 168, 83, 0.1);
-    color: #137333;
+    color: #34a853;
   }
 
   .message.error {
-    background: rgba(234, 67, 53, 0.1);
-    color: #c5221f;
+    background: rgba(234, 67, 53, 0.08);
+    color: #ea4335;
   }
 
   /* Admin Section */

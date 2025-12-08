@@ -260,6 +260,18 @@
     max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .header {
@@ -273,69 +285,88 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: var(--accent-color);
+    color: var(--text-secondary);
     text-decoration: none;
-    transition: color 0.2s;
+    transition: all 0.15s ease;
     font-weight: 500;
+    padding: 8px 12px;
+    margin: -8px -12px;
+    border-radius: 8px;
   }
 
   .back-link:hover {
-    color: var(--accent-hover);
+    color: var(--accent-color);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .actions {
     display: flex;
-    gap: 1rem;
+    gap: 0.75rem;
     align-items: center;
   }
 
   .btn-primary {
-    padding: 0.5rem 1rem;
+    padding: 0 20px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 20px;
     cursor: pointer;
     text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
+    transition: all 0.15s ease;
+    font-weight: 500;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .btn-primary:hover {
-    background: var(--accent-hover);
+    filter: brightness(1.05);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+    transform: translateY(-1px);
   }
 
   .btn-secondary {
-    padding: 0.5rem 1rem;
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    padding: 0 20px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    background: transparent;
+    color: var(--accent-color);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: 20px;
     cursor: pointer;
     text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
+    transition: all 0.15s ease;
+    font-weight: 500;
   }
 
   .btn-secondary:hover:not(:disabled) {
-    background: var(--bg-secondary);
+    background: rgba(0, 122, 255, 0.08);
     border-color: var(--accent-color);
   }
 
   .btn-danger {
-    padding: 0.5rem 1rem;
+    padding: 0 20px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
     background: var(--error-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 20px;
     cursor: pointer;
     text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
+    transition: all 0.15s ease;
+    font-weight: 500;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .btn-danger:hover:not(:disabled) {
-    background: #b71c1c;
+    filter: brightness(1.1);
+    box-shadow: 0 2px 8px rgba(211, 47, 47, 0.3);
+    transform: translateY(-1px);
   }
 
   .btn-secondary:disabled,
@@ -345,11 +376,13 @@
   }
 
   .error {
-    padding: 1rem;
-    background: var(--error-color);
-    color: white;
-    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    background: rgba(211, 47, 47, 0.08);
+    color: var(--error-color);
+    border: 1px solid rgba(211, 47, 47, 0.3);
+    border-radius: 10px;
     margin-bottom: 1rem;
+    font-weight: 500;
   }
 
   .artist-detail {
@@ -359,19 +392,22 @@
   }
 
   .artworks-section {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
+    background: var(--bg-primary);
+    border-radius: 12px;
     padding: 1.5rem;
     min-height: 400px;
     display: flex;
     flex-direction: column;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .artworks-error {
-    padding: 1rem;
-    background: var(--error-color);
-    color: white;
-    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    background: rgba(211, 47, 47, 0.08);
+    color: var(--error-color);
+    border: 1px solid rgba(211, 47, 47, 0.3);
+    border-radius: 10px;
   }
 
   .artwork-grid {
@@ -382,21 +418,23 @@
   }
 
   .artwork-card {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
+    background: var(--bg-secondary);
+    border-radius: 12px;
     overflow: hidden;
     text-decoration: none;
     color: inherit;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100%;
+    border: 1px solid var(--border-color);
   }
 
   .artwork-card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.08);
+    border-color: var(--accent-color);
   }
 
   .artwork-thumbnail {
@@ -436,12 +474,12 @@
   }
 
   .artwork-id code {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     color: var(--accent-color);
     padding: 0.25rem 0.5rem;
-    border-radius: 3px;
+    border-radius: 6px;
     font-family: monospace;
-    font-weight: bold;
+    font-weight: 600;
   }
 
   .medium,
@@ -473,12 +511,14 @@
   }
 
   .info-section {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
+    background: var(--bg-primary);
+    border-radius: 12px;
     padding: 1.5rem;
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   h1 {
@@ -490,7 +530,7 @@
   .artist-thumbnail {
     width: 100%;
     aspect-ratio: 1.5 / 1;
-    border-radius: 8px;
+    border-radius: 10px;
     overflow: hidden;
     background: var(--bg-secondary);
     display: flex;
@@ -539,12 +579,12 @@
   }
 
   .meta-value code {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     color: var(--accent-color);
     padding: 0.25rem 0.5rem;
-    border-radius: 3px;
+    border-radius: 6px;
     font-family: monospace;
-    font-weight: bold;
+    font-weight: 600;
     font-size: 0.875rem;
   }
 
