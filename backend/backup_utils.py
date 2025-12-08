@@ -176,15 +176,40 @@ def run_pg_restore(input_path, clean=True):
         )
 
         # pg_restore returns non-zero for warnings too, check stderr for real failures
-        # Look for fatal errors, not just warnings about existing objects
+        # Look for fatal errors, not just warnings about existing objects or version mismatches
         stderr_lower = result.stderr.lower()
-        fatal_indicators = ["fatal", "error", "failed", "could not connect", "password authentication"]
+
+        # These indicate actual connection/auth failures
+        fatal_indicators = [
+            "fatal",
+            "could not connect",
+            "password authentication failed",
+            "connection refused",
+            "no pg_hba.conf entry",
+            "database .* does not exist"
+        ]
+
+        # These are harmless warnings (version mismatches, already exists, etc.)
+        harmless_patterns = [
+            "errors ignored on restore",
+            "unrecognized configuration parameter",
+            "transaction_timeout",
+            "already exists",
+            "does not exist, skipping"
+        ]
 
         if result.returncode != 0:
             # Check if it's a real failure or just warnings
-            if any(indicator in stderr_lower for indicator in fatal_indicators):
+            has_fatal = any(indicator in stderr_lower for indicator in fatal_indicators)
+            all_harmless = all(
+                any(pattern in line.lower() for pattern in harmless_patterns)
+                for line in result.stderr.strip().split('\n')
+                if line.strip() and 'error' in line.lower()
+            )
+
+            if has_fatal or (not all_harmless and 'error' in stderr_lower):
                 return False, f"pg_restore failed: {result.stderr}"
-            # Non-zero but no fatal indicators = likely just warnings (e.g., "table already exists")
+            # Non-zero but only harmless warnings = success
 
         return True, "Database restored successfully"
 
