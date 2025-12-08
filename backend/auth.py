@@ -21,9 +21,70 @@ _DUMMY_BCRYPT_HASH = '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.VTtYI1rUqK.A
 
 def get_dependencies():
     """Get dependencies from app context to avoid circular imports."""
-    from app import db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter
+    from app import db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, UserSession, limiter
     from create_tbls import init_tables
-    return db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter, init_tables
+    return db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, UserSession, limiter, init_tables
+
+
+# Maximum number of accounts per browser session
+MAX_ACCOUNTS_PER_SESSION = 5
+
+
+def create_user_session(db, UserSession, user, remember=False):
+    """Create a new UserSession record for a user.
+
+    Args:
+        db: Database instance
+        UserSession: UserSession model class
+        user: User object
+        remember: Whether this is a "remember me" session
+
+    Returns:
+        UserSession: The created session object
+    """
+    from flask_limiter.util import get_remote_address
+
+    session_id = secrets.token_hex(32)
+    session_token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+
+    # Set expiry based on remember option
+    if remember:
+        expires_at = now + timedelta(days=30)
+    else:
+        expires_at = now + timedelta(hours=24)
+
+    user_session = UserSession(
+        id=session_id,
+        user_id=user.id,
+        session_token=session_token,
+        user_agent=request.headers.get('User-Agent', '')[:500],
+        ip_address=get_remote_address(),
+        created_at=now,
+        last_active_at=now,
+        expires_at=expires_at,
+        is_active=True
+    )
+
+    db.session.add(user_session)
+    return user_session
+
+
+def invalidate_user_sessions(db, UserSession, user_id, exclude_token=None):
+    """Invalidate all sessions for a user, optionally excluding one.
+
+    Args:
+        db: Database instance
+        UserSession: UserSession model class
+        user_id: ID of user whose sessions to invalidate
+        exclude_token: Optional session token to keep valid
+    """
+    query = UserSession.query.filter_by(user_id=user_id, is_active=True)
+    if exclude_token:
+        query = query.filter(UserSession.session_token != exclude_token)
+
+    query.update({'is_active': False}, synchronize_session=False)
+    db.session.commit()
 
 
 def find_user_by_email(email):
@@ -42,7 +103,7 @@ def find_user_by_email(email):
     Returns:
         User object if found, None otherwise
     """
-    db, _, User, _, _, _, _, _ = get_dependencies()
+    db, _, User, _, _, _, _, _, _ = get_dependencies()
 
     # Normalize email for comparison (encryption normalizes too)
     normalized_email = email.strip().lower()
@@ -303,7 +364,7 @@ def register():
         400: Validation error or duplicate email
         415: Unsupported media type (missing Content-Type: application/json)
     """
-    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter, _ = get_dependencies()
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, _, limiter, _ = get_dependencies()
     
     data = request.get_json()
     
@@ -380,7 +441,7 @@ def log_audit_event(event_type, user_id=None, email=None, details=None):
         email: Email address associated with the event (optional)
         details: Additional details as dict (will be JSON serialized)
     """
-    db, _, _, _, AuditLog, _, _, _ = get_dependencies()
+    db, _, _, _, AuditLog, _, _, _, _ = get_dependencies()
     
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
@@ -413,7 +474,7 @@ def check_account_locked(email):
     Returns:
         tuple: (is_locked: bool, lockout_expires_at: datetime or None)
     """
-    db, _, _, FailedLoginAttempt, _, _, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _, _, _ = get_dependencies()
     
     # check failed attempts in last 15 minutes
     lockout_window = datetime.now(timezone.utc) - timedelta(minutes=15)
@@ -437,7 +498,7 @@ def record_failed_login(email):
     Args:
         email: Email address that failed login
     """
-    db, _, _, FailedLoginAttempt, _, _, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _, _, _ = get_dependencies()
     
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
@@ -463,7 +524,7 @@ def _maybe_alert_failed_login_spike(email):
     Threshold: >= 3 failures in the last 10 minutes by email or IP.
     """
     from models import init_models
-    db, _, _, _, _, _, _, _ = get_dependencies()
+    db, _, _, _, _, _, _, _, _ = get_dependencies()
     FailedLoginAttempt = init_models(db)[1]
 
     if not request:
@@ -513,7 +574,7 @@ def clear_failed_login_attempts(email):
     Args:
         email: Email address to clear attempts for
     """
-    db, _, _, FailedLoginAttempt, _, _, _, _ = get_dependencies()
+    db, _, _, FailedLoginAttempt, _, _, _, _, _ = get_dependencies()
     
     try:
         FailedLoginAttempt.query.filter_by(email=email).delete()
@@ -545,10 +606,10 @@ def login():
         401: Invalid credentials
         403: Account disabled or locked
     """
-    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, limiter, _ = get_dependencies()
-    
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, UserSession, limiter, _ = get_dependencies()
+
     data = request.get_json()
-    
+
     # Accept empty JSON object but still validate required fields
     if data is None:
         return jsonify({'error': 'No data provided'}), 400
@@ -624,56 +685,98 @@ def login():
         'remember_me': remember
     })
     
-    # Issue a fresh session token so admins can forcibly revoke active sessions
-    session_token = user.remember_token or secrets.token_urlsafe(32)
+    # Create UserSession record for per-device session tracking
+    user_session = create_user_session(db, UserSession, user, remember=remember)
 
     # Login user with remember me option (must be called before session modification)
     login_user(user, remember=remember)
 
-    # Persist token on user and in session to detect forced logout
-    user.remember_token = session_token
-    session['session_token'] = session_token
+    # Store session token and account info in Flask session
+    session['session_token'] = user_session.session_token
+    session['active_account_id'] = user.id
+
+    # Initialize or update accounts dict
+    accounts = session.get('accounts', {})
+    accounts[str(user.id)] = {
+        'session_token': user_session.session_token,
+        'email': user.email,
+        'role': user.normalized_role
+    }
+    session['accounts'] = accounts
+
     try:
         db.session.commit()
     except Exception:
         db.session.rollback()
         return jsonify({'error': 'Login failed, please try again'}), 500
-    
+
     # Regenerate session to prevent session fixation attacks
     session.permanent = True
     session.modified = True
-    
+
+    # Return response with all accounts for frontend
+    all_accounts = []
+    for account_id, account_data in accounts.items():
+        all_accounts.append({
+            'id': int(account_id),
+            'email': account_data.get('email'),
+            'role': account_data.get('role'),
+            'is_active': int(account_id) == user.id
+        })
+
     return jsonify({
         'message': 'Login successful',
         'user': {
             'id': user.id,
             'email': user.email,
             'role': user.normalized_role
-        }
+        },
+        'accounts': all_accounts
     }), 200
 
 
 @auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
-    """Logout the current user and clear session.
-    
+    """Logout ALL accounts and clear entire session.
+
+    For signing out of a single account while keeping others, use /auth/remove-account.
+
     Returns:
         200: Logout successful
         401: No active session
     """
+    db, _, _, _, _, _, UserSession, _, _ = get_dependencies()
+
+    # Invalidate all UserSessions for accounts in this browser session
+    accounts = session.get('accounts', {})
+    for account_id in accounts:
+        try:
+            account_token = accounts[account_id].get('session_token')
+            if account_token:
+                user_session = UserSession.query.filter_by(session_token=account_token).first()
+                if user_session:
+                    user_session.is_active = False
+        except Exception:
+            pass
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
     logout_user()
-    
+
     # Clear all session data and mark as modified
     for key in list(session.keys()):
         session.pop(key)
     session.modified = True
-    
+
     response = jsonify({'message': 'Logout successful'})
-    
+
     # Clear the session cookie by setting it to expire
     response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
-    
+
     return response, 200
 
 
@@ -681,7 +784,7 @@ def logout():
 @login_required
 def delete_account():
     """Self-service soft delete for the current user."""
-    db, _, User, _, AuditLog, _, _, _ = get_dependencies()
+    db, _, User, _, AuditLog, _, _, _, _ = get_dependencies()
 
     if is_bootstrap_email(current_user.email):
         return jsonify({'error': 'Cannot delete the bootstrap admin account'}), 403
@@ -716,7 +819,7 @@ def get_current_user():
         200: User info (includes linked artist for artist role)
         401: Not authenticated
     """
-    db, _, _, _, _, _, _, init_tables = get_dependencies()
+    db, _, _, _, _, _, _, _, init_tables = get_dependencies()
 
     user_data = {
         'id': current_user.id,
@@ -736,6 +839,356 @@ def get_current_user():
             }
 
     return jsonify({'user': user_data}), 200
+
+
+# ============================================================================
+# Multi-Account Endpoints
+# ============================================================================
+
+
+@auth_bp.route('/accounts', methods=['GET'])
+@rate_limit("100 per minute")
+@login_required
+def list_accounts():
+    """List all authenticated accounts in this browser session.
+
+    Returns:
+        200: List of accounts with active status
+        401: Not authenticated
+    """
+    accounts = session.get('accounts', {})
+    active_id = session.get('active_account_id')
+
+    account_list = []
+    for account_id, account_data in accounts.items():
+        account_list.append({
+            'id': int(account_id),
+            'email': account_data.get('email'),
+            'role': account_data.get('role'),
+            'is_active': int(account_id) == active_id
+        })
+
+    return jsonify({'accounts': account_list}), 200
+
+
+@auth_bp.route('/add-account', methods=['POST'])
+@rate_limit("10 per minute")
+def add_account():
+    """Login an additional account without logging out existing accounts.
+
+    Expected JSON body:
+        {
+            "email": "user@example.com",
+            "password": "SecurePassword123",
+            "remember": true  # Optional
+        }
+
+    Returns:
+        200: Account added successfully
+        400: Validation error
+        401: Invalid credentials
+        403: Account locked/disabled
+        409: Account already logged in
+    """
+    db, bcrypt, User, FailedLoginAttempt, AuditLog, PasswordResetRequest, UserSession, limiter, _ = get_dependencies()
+
+    # Check max accounts limit
+    accounts = session.get('accounts', {})
+    if len(accounts) >= MAX_ACCOUNTS_PER_SESSION:
+        return jsonify({
+            'error': f'Maximum of {MAX_ACCOUNTS_PER_SESSION} accounts per browser session'
+        }), 400
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({'error': 'No data provided'}), 400
+
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+    remember = data.get('remember', False)
+
+    if not email or not password:
+        return jsonify({'error': 'Email and password are required'}), 400
+
+    # Validate email
+    is_valid, error_msg = validate_email(email)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
+
+    # Check if this account is already logged in
+    user = find_user_by_email(email)
+    if user and str(user.id) in accounts:
+        return jsonify({'error': 'This account is already signed in'}), 409
+
+    # Check account lockout
+    is_locked, lockout_expires_at = check_account_locked(email)
+    if is_locked:
+        return jsonify({
+            'error': 'Account temporarily locked due to too many failed login attempts.'
+        }), 403
+
+    # Verify password
+    password_valid = False
+    if user:
+        password_valid = bcrypt.check_password_hash(user.hashed_password, password)
+
+    if not user or not password_valid:
+        record_failed_login(email)
+        log_audit_event('login_failure', email=email, details={
+            'reason': 'invalid_credentials',
+            'context': 'add_account'
+        })
+        return jsonify({'error': 'Invalid email or password'}), 401
+
+    # Check if account is active
+    if not user.is_active or is_user_deleted(user):
+        return jsonify({'error': 'Account is disabled or deleted'}), 403
+
+    clear_failed_login_attempts(email)
+
+    # Create UserSession for the new account
+    user_session = create_user_session(db, UserSession, user, remember=remember)
+
+    # Add to accounts dict
+    accounts[str(user.id)] = {
+        'session_token': user_session.session_token,
+        'email': user.email,
+        'role': user.normalized_role
+    }
+    session['accounts'] = accounts
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to add account'}), 500
+
+    log_audit_event('account_added', user_id=user.id, email=email, details={
+        'total_accounts': len(accounts)
+    })
+
+    session.modified = True
+
+    # Return updated accounts list
+    account_list = []
+    active_id = session.get('active_account_id')
+    for account_id, account_data in accounts.items():
+        account_list.append({
+            'id': int(account_id),
+            'email': account_data.get('email'),
+            'role': account_data.get('role'),
+            'is_active': int(account_id) == active_id
+        })
+
+    return jsonify({
+        'message': 'Account added successfully',
+        'accounts': account_list
+    }), 200
+
+
+@auth_bp.route('/switch-account', methods=['POST'])
+@rate_limit("30 per minute")
+@login_required
+def switch_account():
+    """Switch to another authenticated account.
+
+    Expected JSON body:
+        {
+            "account_id": 123
+        }
+
+    Returns:
+        200: Switched successfully
+        400: Invalid request
+        404: Account not found in session
+    """
+    db, _, User, _, _, _, UserSession, _, _ = get_dependencies()
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({'error': 'No data provided'}), 400
+
+    account_id = data.get('account_id')
+    if not account_id:
+        return jsonify({'error': 'account_id is required'}), 400
+
+    accounts = session.get('accounts', {})
+    account_key = str(account_id)
+
+    if account_key not in accounts:
+        return jsonify({'error': 'Account not found in session'}), 404
+
+    account_data = accounts[account_key]
+    account_token = account_data.get('session_token')
+
+    # Verify session is still valid
+    user_session = UserSession.query.filter_by(session_token=account_token).first()
+    if not user_session or not user_session.is_valid():
+        # Remove invalid account from session
+        del accounts[account_key]
+        session['accounts'] = accounts
+        session.modified = True
+        return jsonify({'error': 'Session for this account has expired'}), 401
+
+    # Load and switch to the user
+    user = db.session.get(User, int(account_id))
+    if not user or not user.is_active:
+        del accounts[account_key]
+        session['accounts'] = accounts
+        session.modified = True
+        return jsonify({'error': 'Account is no longer available'}), 404
+
+    # Perform the switch
+    login_user(user)
+    session['session_token'] = account_token
+    session['active_account_id'] = user.id
+    user_session.touch()
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    session.modified = True
+
+    log_audit_event('account_switched', user_id=user.id, email=user.email)
+
+    # Return updated accounts list
+    account_list = []
+    for acc_id, acc_data in accounts.items():
+        account_list.append({
+            'id': int(acc_id),
+            'email': acc_data.get('email'),
+            'role': acc_data.get('role'),
+            'is_active': int(acc_id) == user.id
+        })
+
+    return jsonify({
+        'message': 'Switched account successfully',
+        'user': {
+            'id': user.id,
+            'email': user.email,
+            'role': user.normalized_role
+        },
+        'accounts': account_list
+    }), 200
+
+
+@auth_bp.route('/remove-account', methods=['POST'])
+@rate_limit("20 per minute")
+@login_required
+def remove_account():
+    """Sign out of a single account while keeping other accounts.
+
+    Expected JSON body:
+        {
+            "account_id": 123
+        }
+
+    If removing the active account, will auto-switch to another account.
+    If no accounts remain, performs full logout.
+
+    Returns:
+        200: Account removed successfully
+        400: Invalid request
+        404: Account not found
+    """
+    db, _, User, _, _, _, UserSession, _, _ = get_dependencies()
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({'error': 'No data provided'}), 400
+
+    account_id = data.get('account_id')
+    if not account_id:
+        return jsonify({'error': 'account_id is required'}), 400
+
+    accounts = session.get('accounts', {})
+    account_key = str(account_id)
+
+    if account_key not in accounts:
+        return jsonify({'error': 'Account not found in session'}), 404
+
+    # Invalidate the UserSession
+    account_data = accounts[account_key]
+    account_token = account_data.get('session_token')
+    if account_token:
+        user_session = UserSession.query.filter_by(session_token=account_token).first()
+        if user_session:
+            user_session.is_active = False
+
+    # Remove from accounts dict
+    del accounts[account_key]
+    session['accounts'] = accounts
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    log_audit_event('account_removed', user_id=int(account_id), email=account_data.get('email'))
+
+    # Check if we removed the active account
+    active_id = session.get('active_account_id')
+    if int(account_id) == active_id:
+        if accounts:
+            # Switch to another available account
+            next_account_id = list(accounts.keys())[0]
+            next_account = accounts[next_account_id]
+            next_token = next_account.get('session_token')
+
+            next_user = db.session.get(User, int(next_account_id))
+            if next_user and next_user.is_active:
+                login_user(next_user)
+                session['session_token'] = next_token
+                session['active_account_id'] = next_user.id
+                session.modified = True
+
+                account_list = []
+                for acc_id, acc_data in accounts.items():
+                    account_list.append({
+                        'id': int(acc_id),
+                        'email': acc_data.get('email'),
+                        'role': acc_data.get('role'),
+                        'is_active': int(acc_id) == next_user.id
+                    })
+
+                return jsonify({
+                    'message': 'Account removed, switched to another account',
+                    'user': {
+                        'id': next_user.id,
+                        'email': next_user.email,
+                        'role': next_user.normalized_role
+                    },
+                    'accounts': account_list
+                }), 200
+
+        # No accounts left - full logout
+        logout_user()
+        for key in list(session.keys()):
+            session.pop(key)
+        session.modified = True
+
+        response = jsonify({'message': 'Account removed, no accounts remaining'})
+        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+        return response, 200
+
+    # Removed a non-active account
+    session.modified = True
+
+    account_list = []
+    for acc_id, acc_data in accounts.items():
+        account_list.append({
+            'id': int(acc_id),
+            'email': acc_data.get('email'),
+            'role': acc_data.get('role'),
+            'is_active': int(acc_id) == active_id
+        })
+
+    return jsonify({
+        'message': 'Account removed successfully',
+        'accounts': account_list
+    }), 200
 
 
 @auth_bp.route('/protected', methods=['GET'])
@@ -774,7 +1227,7 @@ def admin_only_route():
 @rate_limit("5 per hour")
 def request_password_reset():
     """Allow users to file a manual password reset request for admin review."""
-    db, _, User, _, _, PasswordResetRequest, _, _ = get_dependencies()
+    db, _, User, _, _, PasswordResetRequest, _, _, _ = get_dependencies()
 
     data = request.get_json()
     if data is None:
@@ -840,7 +1293,7 @@ def request_password_reset():
 @rate_limit("20 per hour")
 def verify_reset_code():
     """Verify a reset code without changing the password."""
-    db, bcrypt, User, _, _, PasswordResetRequest, _, _ = get_dependencies()
+    db, bcrypt, User, _, _, PasswordResetRequest, _, _, _ = get_dependencies()
 
     data = request.get_json()
     if data is None:
@@ -920,7 +1373,7 @@ def verify_reset_code():
 @rate_limit("10 per hour")
 def confirm_password_reset():
     """Redeem an admin-issued reset code and set a new password."""
-    db, bcrypt, User, _, _, PasswordResetRequest, _, _ = get_dependencies()
+    db, bcrypt, User, _, _, PasswordResetRequest, _, _, _ = get_dependencies()
 
     data = request.get_json()
     if data is None:
@@ -1029,63 +1482,73 @@ def confirm_password_reset():
 
 @auth_bp.route('/change-password', methods=['POST', 'OPTIONS'])
 def change_password():
-    """Change user's password (requires current password)."""
+    """Change user's password (requires current password).
+
+    Security: Invalidates ALL sessions for this user except the current one.
+    """
     if request.method == 'OPTIONS':
         # handle CORS preflight
         return '', 200
-    
+
     # apply decorators manually for POST method
     if not current_user.is_authenticated:
         return jsonify({'error': 'Authentication required'}), 401
-    
-    db, bcrypt, User, _, _, _, _, _ = get_dependencies()
-    
+
+    db, bcrypt, _, _, _, _, UserSession, _, _ = get_dependencies()
+
     data = request.get_json(silent=True) or {}
     current_password = data.get('current_password', '').strip()
     new_password = data.get('new_password', '').strip()
-    
+
     if not current_password:
         return jsonify({'error': 'Current password is required'}), 400
-    
+
     if not new_password:
         return jsonify({'error': 'New password is required'}), 400
-    
+
     # validate new password
     is_valid, error_msg = validate_password(new_password)
     if not is_valid:
         return jsonify({'error': error_msg}), 400
-    
+
     # block common passwords
     if is_common_password(new_password):
         log_audit_event('alert_common_password_blocked', user_id=current_user.id, email=current_user.email, details={'reason': 'common_password'})
         return jsonify({'error': 'Password is too common. Please choose a stronger password.'}), 400
-    
+
     # verify current password
     if not bcrypt.check_password_hash(current_user.hashed_password, current_password):
         log_audit_event('password_change_failed', user_id=current_user.id, email=current_user.email, details={'reason': 'incorrect_current_password'})
         return jsonify({'error': 'Current password is incorrect'}), 400
-    
+
     # check if new password is same as current
     if bcrypt.check_password_hash(current_user.hashed_password, new_password):
         return jsonify({'error': 'New password must be different from current password'}), 400
-    
+
+    # Get current session token to preserve it
+    current_token = session.get('session_token')
+
     # update password
     try:
         current_user.hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
-        # invalidate remember token to force re-login
+        # invalidate remember token for backwards compatibility
         current_user.remember_token = None
+
+        # Invalidate all UserSessions except the current one
+        invalidate_user_sessions(db, UserSession, current_user.id, exclude_token=current_token)
+
         db.session.commit()
     except Exception:
         db.session.rollback()
         return jsonify({'error': 'Failed to update password'}), 500
-    
+
     log_audit_event(
         'password_changed',
         user_id=current_user.id,
         email=current_user.email,
-        details={'self_change': True}
+        details={'self_change': True, 'other_sessions_invalidated': True}
     )
-    
+
     return jsonify({'message': 'Password updated successfully'}), 200
 
 
@@ -1100,7 +1563,7 @@ def change_email():
     if not current_user.is_authenticated:
         return jsonify({'error': 'Authentication required'}), 401
     
-    db, bcrypt, User, _, _, _, _, _ = get_dependencies()
+    db, bcrypt, User, _, _, _, _, _, _ = get_dependencies()
     
     data = request.get_json(silent=True) or {}
     new_email = data.get('new_email', '').strip().lower()

@@ -362,26 +362,47 @@
     max-width: 800px;
     margin: 0 auto;
     padding: 2rem;
+    animation: pageEnter 0.3s ease-out;
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .header {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
   }
 
   .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     color: var(--accent-color);
     text-decoration: none;
-    transition: color 0.2s;
+    font-weight: 500;
+    font-size: 0.9rem;
+    padding: 8px 12px;
+    margin-left: -12px;
+    border-radius: 8px;
+    transition: background 0.15s ease;
   }
 
   .back-link:hover {
-    color: var(--accent-hover);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .form-container {
-    background: var(--bg-tertiary);
-    border-radius: 8px;
-    padding: 2rem;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    padding: 2.5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
   }
 
   .profile-photo-section {
@@ -392,17 +413,23 @@
     position: relative;
     width: 180px;
     height: 180px;
-    border-radius: 12px;
-    border: 1px dashed var(--border-color);
+    border-radius: 16px;
+    border: 2px dashed var(--border-color);
     background: var(--bg-secondary);
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: border-color 0.15s ease;
+  }
+
+  .profile-photo-container:hover {
+    border-color: var(--accent-color);
   }
 
   .profile-photo-container[data-has-photo='true'] {
     border-style: solid;
+    border-width: 1px;
   }
 
   .profile-photo-container img {
@@ -413,7 +440,7 @@
 
   .photo-placeholder-text {
     color: var(--text-secondary);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     text-align: center;
     padding: 0 1rem;
   }
@@ -433,12 +460,16 @@
     justify-content: center;
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.15s ease, transform 0.15s ease;
   }
 
   .profile-photo-container:hover .photo-edit-btn,
   .photo-edit-btn:focus-visible {
     opacity: 1;
+  }
+
+  .photo-edit-btn:hover:not(:disabled) {
+    transform: scale(1.05);
   }
 
   .photo-edit-btn:disabled {
@@ -455,7 +486,7 @@
 
   .photo-hint {
     margin-top: 0.75rem;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--text-secondary);
   }
 
@@ -464,15 +495,15 @@
   }
 
   .photo-error {
-    color: var(--error-color);
+    color: #ea4335;
     margin: 0;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
 
   .photo-success {
-    color: var(--success-color, #2e7d32);
+    color: #34a853;
     margin: 0.25rem 0 0;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
 
   .visually-hidden,
@@ -492,21 +523,24 @@
     margin: 0 0 0.5rem 0;
     color: var(--text-primary);
     font-size: 1.75rem;
+    font-weight: 500;
+    letter-spacing: -0.5px;
   }
 
   .artist-id {
-    margin: 0 0 2rem 0;
+    margin: 0 0 1.5rem 0;
     color: var(--text-secondary);
     font-size: 0.875rem;
   }
 
   .artist-id code {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     color: var(--accent-color);
     padding: 0.25rem 0.5rem;
-    border-radius: 3px;
-    font-family: monospace;
-    font-weight: bold;
+    border-radius: 6px;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-weight: 600;
+    font-size: 0.8rem;
   }
 
   .form-group {
@@ -517,7 +551,8 @@
     display: block;
     margin-bottom: 0.5rem;
     color: var(--text-primary);
-    font-weight: bold;
+    font-weight: 500;
+    font-size: 0.9rem;
   }
 
   .required {
@@ -527,19 +562,34 @@
   .form-group input,
   .form-group textarea {
     width: 100%;
-    padding: 0.75rem;
+    padding: 0 16px;
+    height: 48px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: 8px;
     color: var(--text-primary);
     font-size: 1rem;
     font-family: inherit;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .form-group textarea {
+    height: auto;
+    padding: 14px 16px;
+    resize: vertical;
   }
 
   .form-group input:focus,
   .form-group textarea:focus {
     outline: none;
     border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+  }
+
+  .form-group input::placeholder,
+  .form-group textarea::placeholder {
+    color: var(--text-tertiary);
   }
 
   .form-group input:disabled,
@@ -550,68 +600,87 @@
 
   .form-group small {
     display: block;
-    margin-top: 0.25rem;
+    margin-top: 6px;
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 0.8rem;
   }
 
   .form-actions {
     display: flex;
-    gap: 1rem;
+    gap: 12px;
     margin-top: 2rem;
     padding-top: 1.5rem;
     border-top: 1px solid var(--border-color);
   }
 
   .btn-primary {
-    padding: 0.75rem 1.5rem;
+    padding: 0 28px;
+    height: 44px;
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 22px;
     cursor: pointer;
-    font-size: 1rem;
-    font-weight: bold;
-    transition: background 0.2s;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
     text-decoration: none;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
+    filter: brightness(1.05);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   .btn-primary:disabled {
     background: var(--bg-tertiary);
     color: var(--text-tertiary);
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+    filter: none;
   }
 
   .btn-secondary {
-    padding: 0.75rem 1.5rem;
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
+    padding: 0 20px;
+    height: 44px;
+    background: transparent;
+    color: var(--accent-color);
+    border: none;
+    border-radius: 8px;
     cursor: pointer;
     text-decoration: none;
-    display: inline-block;
-    transition: background 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 500;
+    font-size: 0.95rem;
+    transition: background 0.15s ease;
   }
 
   .btn-secondary:hover {
-    background: var(--bg-secondary);
-    border-color: var(--accent-color);
+    background: rgba(0, 122, 255, 0.08);
   }
 
   .error-message {
-    padding: 1rem;
-    margin-bottom: 1rem;
-    background: rgba(211, 47, 47, 0.2);
-    color: var(--error-color);
-    border: 1px solid var(--error-color);
-    border-radius: 4px;
-    font-weight: bold;
+    padding: 12px 16px;
+    margin-bottom: 1.5rem;
+    background: rgba(234, 67, 53, 0.08);
+    color: #ea4335;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   @media (max-width: 768px) {
@@ -621,6 +690,8 @@
 
     .form-container {
       padding: 1.5rem;
+      border-radius: 0;
+      box-shadow: none;
     }
 
     .form-actions {
@@ -630,7 +701,6 @@
     .btn-primary,
     .btn-secondary {
       width: 100%;
-      text-align: center;
     }
   }
 </style>

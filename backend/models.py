@@ -202,6 +202,92 @@ def init_models(database):
         def __repr__(self):
             return f'<PasswordResetRequest {self.email} #{self.id} ({self.status})>'
 
+    class UserSession(database.Model):
+        """Model for tracking individual user sessions across devices.
+
+        Enables multi-account sign-in by storing session tokens per-device
+        instead of a single global remember_token on the User model.
+
+        Attributes:
+            id: Primary key (64-char hex string)
+            user_id: Foreign key to users table
+            session_token: Unique token for session validation
+            user_agent: Browser/device information
+            ip_address: IP address of session origin
+            created_at: When the session was created
+            last_active_at: Last request timestamp (for session activity)
+            expires_at: When the session expires (nullable for non-remember sessions)
+            is_active: Whether session is valid (for admin force-logout)
+        """
+        __tablename__ = 'user_sessions'
+
+        id = database.Column(database.String(64), primary_key=True)
+        user_id = database.Column(
+            database.Integer,
+            database.ForeignKey('users.id', ondelete='CASCADE'),
+            nullable=False,
+            index=True
+        )
+        session_token = database.Column(database.String(255), nullable=False, unique=True, index=True)
+        user_agent = database.Column(database.String(500), nullable=True)
+        ip_address = database.Column(database.String(45), nullable=True)
+        created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+        last_active_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+        expires_at = database.Column(database.DateTime, nullable=True)
+        is_active = database.Column(database.Boolean, nullable=False, default=True)
+
+        # Relationship to User
+        user = database.relationship('User', backref=database.backref('sessions', lazy='dynamic', cascade='all, delete-orphan'))
+
+        def __repr__(self):
+            return f'<UserSession {self.id[:8]}... user_id={self.user_id}>'
+
+        def is_expired(self):
+            """Check if session has expired."""
+            if self.expires_at is None:
+                return False
+            # Handle both naive and aware datetimes from database
+            expires = self.expires_at
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            return datetime.now(timezone.utc) > expires
+
+        def is_valid(self):
+            """Check if session is both active and not expired."""
+            return self.is_active and not self.is_expired()
+
+        def touch(self):
+            """Update last_active_at to current time."""
+            self.last_active_at = datetime.now(timezone.utc)
+
+    class LegalPage(database.Model):
+        """Model for storing editable legal pages (privacy policy, terms of service).
+
+        Attributes:
+            id: Primary key
+            page_type: Type identifier (e.g., 'privacy_policy', 'terms_of_service')
+            title: Display title of the page
+            content: HTML content of the page
+            last_updated: Timestamp of last update
+            updated_by: User ID of admin who last updated
+        """
+        __tablename__ = 'legal_pages'
+
+        id = database.Column(database.Integer, primary_key=True)
+        page_type = database.Column(database.String(50), nullable=False, unique=True, index=True)
+        title = database.Column(database.String(255), nullable=False)
+        content = database.Column(database.Text, nullable=False)
+        last_updated = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+        updated_by = database.Column(database.Integer, database.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+        # Relationship to User for displaying editor name
+        editor = database.relationship('User', foreign_keys=[updated_by])
+
+        def __repr__(self):
+            return f'<LegalPage {self.page_type}>'
+
     init_models._models_cache = (User, FailedLoginAttempt, AuditLog)
     init_models.PasswordResetRequest = PasswordResetRequest
+    init_models.UserSession = UserSession
+    init_models.LegalPage = LegalPage
     return init_models._models_cache
