@@ -147,5 +147,4 @@ docker compose -f infra/docker-compose.yml exec backend bash /app/tools/backup.s
 
 ## Documentation
 
-- `CLAUDE.md` - Development guide and codebase overview
 - `docs/` - Additional technical documentation
