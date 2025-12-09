@@ -28,6 +28,7 @@ from flask_limiter.util import get_remote_address
 from utils import sanitize_html
 from upload_utils import process_upload, process_artist_profile_upload
 from upload_utils import FileValidationError, delete_photo_files, sanitize_filename
+from upload_utils import check_disk_space, validate_upload_quota, QuotaExceededError
 from encryption import KEY_SOURCE
 
 # Check if we're running in a test environment
@@ -2782,6 +2783,17 @@ def upload_artwork_photo(artwork_id):
 
     # Read file data
     file_data = file.read()
+    file_size = len(file_data)
+
+    # Check global disk space (reject if disk critically low)
+    disk_ok, disk_msg, _ = check_disk_space(file_size)
+    if not disk_ok:
+        return jsonify({'error': disk_msg}), 503  # Service Unavailable
+
+    # Check user's upload quota (non-admins only)
+    quota_ok, quota_msg = validate_upload_quota(current_user, file_size)
+    if not quota_ok:
+        return jsonify({'error': quota_msg}), 413  # Payload Too Large
 
     try:
         # Process upload with full security validation
@@ -2814,6 +2826,10 @@ def upload_artwork_photo(artwork_id):
         )
 
         db.session.add(photo)
+
+        # Record upload against user's quota
+        current_user.record_upload(photo_metadata['file_size'])
+
         db.session.commit()
 
         return jsonify({
@@ -2832,7 +2848,7 @@ def upload_artwork_photo(artwork_id):
 
     except FileValidationError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
+    except Exception:
         app.logger.exception("Photo upload failed")
         return jsonify({'error': 'Upload failed. Please try again.'}), 500
 
@@ -2870,6 +2886,12 @@ def upload_orphaned_photo():
         return jsonify({'error': 'No file selected'}), 400
 
     file_data = file.read()
+    file_size = len(file_data)
+
+    # Check global disk space (even admins can't upload if disk is critically low)
+    disk_ok, disk_msg, _ = check_disk_space(file_size)
+    if not disk_ok:
+        return jsonify({'error': disk_msg}), 503
 
     try:
         photo_metadata = process_upload(file_data, file.filename)
@@ -2891,6 +2913,10 @@ def upload_orphaned_photo():
         )
 
         db.session.add(photo)
+
+        # Record upload against user's quota (even for admins, for tracking)
+        current_user.record_upload(photo_metadata['file_size'])
+
         db.session.commit()
 
         return jsonify({
@@ -2908,7 +2934,7 @@ def upload_orphaned_photo():
 
     except FileValidationError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
+    except Exception:
         app.logger.exception("Photo upload failed")
         return jsonify({'error': 'Upload failed. Please try again.'}), 500
 
@@ -3291,8 +3317,18 @@ def delete_photo(photo_id):
         log_rbac_denial('photo', photo_id, 'not_owner')
         return jsonify({'error': 'Permission denied'}), 403
 
+    # Store file size and uploader for quota reclamation
+    file_size = photo.file_size or 0
+    uploader_id = photo.uploaded_by
+
     # Delete files from filesystem
     delete_photo_files(photo.file_path, photo.thumbnail_path)
+
+    # Reclaim quota for the original uploader
+    if uploader_id and file_size > 0:
+        uploader = db.session.get(User, uploader_id)
+        if uploader:
+            uploader.record_deletion(file_size)
 
     # Delete database record
     db.session.delete(photo)

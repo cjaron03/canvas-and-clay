@@ -6,18 +6,23 @@ This module provides comprehensive file upload validation including:
 - File size validation
 - Image dimension validation
 - Thumbnail generation
+- Disk space monitoring (exhaustion protection)
 """
 import os
 import re
 import io
 import secrets
-from datetime import datetime, timezone
+import shutil
 from PIL import Image
 import magic
 
 
 # Configuration
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB in bytes
+
+# Disk space protection thresholds
+MIN_DISK_FREE_PERCENT = 10  # Reject uploads when disk is < 10% free
+MIN_DISK_FREE_BYTES = 100 * 1024 * 1024  # Minimum 100MB free regardless of percentage
 MAX_IMAGE_DIMENSION = 8000  # Maximum width or height in pixels
 THUMBNAIL_SIZE = (200, 200)  # Thumbnail dimensions
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -62,6 +67,125 @@ MIME_TO_EXTENSION = {
 class FileValidationError(Exception):
     """Custom exception for file validation errors."""
     pass
+
+
+class DiskSpaceError(Exception):
+    """Raised when disk space is critically low."""
+    pass
+
+
+class QuotaExceededError(Exception):
+    """Raised when user's upload quota would be exceeded."""
+    pass
+
+
+def get_disk_usage(path=None):
+    """Get disk usage statistics for the upload directory.
+
+    Args:
+        path: Directory to check (defaults to UPLOAD_DIR)
+
+    Returns:
+        dict: {
+            'total': Total disk space in bytes,
+            'used': Used space in bytes,
+            'free': Free space in bytes,
+            'free_percent': Percentage of disk that is free
+        }
+    """
+    check_path = path or UPLOAD_DIR
+    # Ensure directory exists
+    os.makedirs(check_path, exist_ok=True)
+
+    usage = shutil.disk_usage(check_path)
+    free_percent = (usage.free / usage.total) * 100 if usage.total > 0 else 0
+
+    return {
+        'total': usage.total,
+        'used': usage.used,
+        'free': usage.free,
+        'free_percent': free_percent
+    }
+
+
+def check_disk_space(required_bytes=0):
+    """Check if there's sufficient disk space for an upload.
+
+    Args:
+        required_bytes: Additional bytes needed for the upload
+
+    Returns:
+        tuple: (ok: bool, message: str, disk_info: dict)
+
+    Raises:
+        DiskSpaceError: If disk space is critically low
+    """
+    disk_info = get_disk_usage()
+
+    # Check minimum percentage threshold
+    if disk_info['free_percent'] < MIN_DISK_FREE_PERCENT:
+        return (
+            False,
+            f"Disk space critically low ({disk_info['free_percent']:.1f}% free). "
+            f"Uploads temporarily disabled.",
+            disk_info
+        )
+
+    # Check minimum absolute free space
+    if disk_info['free'] < MIN_DISK_FREE_BYTES:
+        return (
+            False,
+            f"Disk space critically low ({disk_info['free'] // (1024*1024)}MB free). "
+            f"Uploads temporarily disabled.",
+            disk_info
+        )
+
+    # Check if upload would push us below threshold
+    if disk_info['free'] - required_bytes < MIN_DISK_FREE_BYTES:
+        return (
+            False,
+            f"Upload would exceed available disk space. "
+            f"Only {disk_info['free'] // (1024*1024)}MB free.",
+            disk_info
+        )
+
+    return (True, "OK", disk_info)
+
+
+def validate_upload_quota(user, file_size_bytes):
+    """Validate that upload won't exceed user's quota.
+
+    Args:
+        user: User object with quota tracking
+        file_size_bytes: Size of file to upload
+
+    Returns:
+        tuple: (ok: bool, message: str)
+
+    Raises:
+        QuotaExceededError: If upload would exceed quota
+    """
+    # Admins have unlimited quota
+    if hasattr(user, 'is_admin') and user.is_admin:
+        return (True, "OK")
+
+    # Check if user has quota attributes (backwards compatibility)
+    if not hasattr(user, 'upload_quota_bytes') or not hasattr(user, 'bytes_uploaded'):
+        return (True, "OK")  # No quota tracking, allow upload
+
+    quota = user.upload_quota_bytes or 0
+    used = user.bytes_uploaded or 0
+
+    if used + file_size_bytes > quota:
+        remaining = max(0, quota - used)
+        return (
+            False,
+            f"Upload would exceed your quota. "
+            f"Remaining: {remaining // (1024*1024)}MB, "
+            f"File size: {file_size_bytes // (1024*1024)}MB"
+        )
+
+    return (True, "OK")
 
 
 def validate_magic_bytes(file_data):
