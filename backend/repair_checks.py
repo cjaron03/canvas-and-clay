@@ -54,11 +54,18 @@ def scan_orphaned_files():
     """
     Find files on disk that are not referenced in the database.
 
+    SAFETY: Will NOT report files as orphaned if:
+    - Database query fails
+    - Database returns zero photos (likely a bug, not legitimate empty state)
+    - More than 50% of files would be marked orphaned (suspicious)
+
     Returns:
         dict: {
             'artworks': [list of orphaned artwork files],
             'thumbnails': [list of orphaned thumbnail files],
-            'count': total count
+            'count': total count,
+            'skipped': bool - True if scan was skipped due to safety checks
+            'skip_reason': str - Reason for skipping (if applicable)
         }
     """
     app, db, ArtworkPhoto = get_app_context()
@@ -66,12 +73,20 @@ def scan_orphaned_files():
     orphaned = {
         'artworks': [],
         'thumbnails': [],
-        'count': 0
+        'count': 0,
+        'skipped': False,
+        'skip_reason': None
     }
 
     with app.app_context():
         # Get all photo records from database
-        photos = ArtworkPhoto.query.all()
+        try:
+            photos = ArtworkPhoto.query.all()
+        except Exception as e:
+            orphaned['skipped'] = True
+            orphaned['skip_reason'] = f'Database query failed: {str(e)[:50]}'
+            return orphaned
+
         db_artwork_files = set()
         db_thumbnail_files = set()
 
@@ -81,18 +96,37 @@ def scan_orphaned_files():
             if photo.thumbnail_path:
                 db_thumbnail_files.add(os.path.basename(photo.thumbnail_path))
 
+        # SAFETY CHECK: If database has no photos but files exist, don't delete anything
+        files_on_disk = 0
+        if os.path.exists(ARTWORKS_DIR):
+            files_on_disk += len([f for f in os.listdir(ARTWORKS_DIR) if os.path.isfile(os.path.join(ARTWORKS_DIR, f))])
+
+        if len(db_artwork_files) == 0 and files_on_disk > 0:
+            orphaned['skipped'] = True
+            orphaned['skip_reason'] = f'Database has 0 photos but {files_on_disk} files exist on disk - refusing to mark all as orphaned'
+            return orphaned
+
         # Scan artworks directory
+        potential_orphans = []
         if os.path.exists(ARTWORKS_DIR):
             for filename in os.listdir(ARTWORKS_DIR):
                 filepath = os.path.join(ARTWORKS_DIR, filename)
                 if os.path.isfile(filepath) and filename not in db_artwork_files:
-                    orphaned['artworks'].append({
+                    potential_orphans.append({
                         'filename': filename,
                         'path': filepath,
                         'size': os.path.getsize(filepath)
                     })
 
-        # Scan thumbnails directory
+        # SAFETY CHECK: If more than 50% of files would be orphaned, something is wrong
+        if files_on_disk > 0 and len(potential_orphans) > (files_on_disk * 0.5):
+            orphaned['skipped'] = True
+            orphaned['skip_reason'] = f'{len(potential_orphans)}/{files_on_disk} files would be orphaned (>50%) - this seems wrong, skipping'
+            return orphaned
+
+        orphaned['artworks'] = potential_orphans
+
+        # Scan thumbnails directory (same logic)
         if os.path.exists(THUMBNAILS_DIR):
             for filename in os.listdir(THUMBNAILS_DIR):
                 filepath = os.path.join(THUMBNAILS_DIR, filename)
@@ -207,8 +241,17 @@ def fix_orphaned_files(dry_run=False):
         'deleted_artworks': [],
         'deleted_thumbnails': [],
         'bytes_freed': 0,
-        'dry_run': dry_run
+        'dry_run': dry_run,
+        'skipped': False,
+        'skip_reason': None
     }
+
+    # SAFETY: If scan was skipped due to safety checks, don't delete anything
+    if orphaned.get('skipped'):
+        results['skipped'] = True
+        results['skip_reason'] = orphaned.get('skip_reason', 'Scan was skipped')
+        print(f"SAFETY: Refusing to delete files - {results['skip_reason']}", file=sys.stderr)
+        return results
 
     for item in orphaned['artworks']:
         if dry_run:

@@ -256,6 +256,71 @@ run_setup_flow() {
   local total_steps=5
   local issues=()
 
+  # Pre-check: Detect existing database setup
+  if docker info &>/dev/null; then
+    local compose_status
+    compose_status=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || echo "")
+    if echo "$compose_status" | grep -q "backend.*Up"; then
+      # Show scanning animation
+      draw_header "CANVAS & CLAY" "Setup"
+      print_at 8 4 "Scanning for existing database..."
+
+      local frames='|/-\'
+      local i=0
+      local user_count=""
+
+      # Run database check in background
+      local tmp_file=$(mktemp)
+      docker exec canvas_backend python3 -c "
+from app import app, db
+from models import init_models
+User = init_models(db)[0]
+with app.app_context():
+    print(User.query.count())
+" > "$tmp_file" 2>/dev/null &
+      local check_pid=$!
+
+      # Animate while checking
+      while kill -0 "$check_pid" 2>/dev/null; do
+        print_at 10 4 "    [${CYAN}${frames:i++%4:1}${RESET}] Checking database..."
+        sleep 0.1
+      done
+
+      # Get result
+      wait "$check_pid" 2>/dev/null || true
+      user_count=$(cat "$tmp_file" 2>/dev/null || echo "0")
+      rm -f "$tmp_file"
+
+      # Clear the spinner line
+      print_at 10 4 "                                        "
+
+      if [[ "$user_count" -gt 0 ]]; then
+        draw_header "CANVAS & CLAY" "Setup"
+        print_at 8 4 "${GREEN}${BOLD}Database detected, no setup required!${RESET}"
+        draw_hline 9 4 "$((TERM_COLS-8))" "─"
+
+        print_at 11 4 "An existing database with ${CYAN}$user_count user(s)${RESET} was found."
+        print_at 12 4 "The system appears to be already configured."
+
+        print_at 14 4 "Services are running at:"
+        print_at 15 6 "${CYAN}Frontend:${RESET} http://localhost:5173"
+        print_at 16 6 "${CYAN}Backend:${RESET}  http://localhost:5001"
+
+        print_at 18 4 "${DIM}If you need to reconfigure, stop containers first:${RESET}"
+        print_at 19 6 "${DIM}docker compose -f infra/docker-compose.yml down -v${RESET}"
+
+        get_term_size
+        print_at "$((TERM_ROWS-4))" 4 "[${GREEN}C${RESET}] Continue setup anyway   [${YELLOW}R${RESET}] Return to menu"
+
+        local key=$(wait_for_key)
+        case "$key" in
+          c|C) ;; # Continue with setup
+          *) return 0 ;; # Return to menu
+        esac
+      fi
+    fi
+  fi
+
   # Step 1: Prerequisites
   draw_header "CANVAS & CLAY" "Setup"
   print_at 8 4 "${BOLD}Step $step of $total_steps: Prerequisites${RESET}"
@@ -653,7 +718,7 @@ run_repair_flow() {
   # Check for malformed .env lines (non-empty, non-comment lines without =)
   if [[ -f "$ENV_FILE" ]]; then
     local malformed_lines
-    malformed_lines=$(grep -n "^[^#]" "$ENV_FILE" 2>/dev/null | grep -v "=" | head -5)
+    malformed_lines=$(grep -n "^[^#]" "$ENV_FILE" 2>/dev/null | grep -v "=" | head -5 || true)
     if [[ -n "$malformed_lines" ]]; then
       local line_nums=$(echo "$malformed_lines" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
       print_at "$row" 8 ""; print_status warn "Malformed .env lines: $line_nums"
@@ -705,54 +770,199 @@ run_repair_flow() {
     ((row++))
 
     # Check migrations (use -T to prevent TTY output bleeding through)
-    local heads_output=$(docker exec canvas_backend flask db heads 2>&1)
+    local heads_output=$(docker exec canvas_backend flask db heads 2>&1 || echo "migration_check_failed")
     if echo "$heads_output" | grep -q "Multiple head"; then
       print_at "$row" 8 ""; print_status warn "Multiple migration heads detected"
       issues+=("Multiple migration heads - run: docker exec canvas_backend flask db merge -m 'merge' heads")
+    elif echo "$heads_output" | grep -q "migration_check_failed"; then
+      print_at "$row" 8 ""; print_status warn "Could not check migrations (database may still be initializing)"
     else
       print_at "$row" 8 ""; print_status ok "Migrations OK"
     fi
     ((row+=2))
 
-    # Check 5: Data integrity (if database is accessible)
+    # Check 5: Data integrity (comprehensive scan)
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking data integrity..."
     sleep 0.3
     ((row++))
 
-    # Run integrity scan (use -T to prevent TTY output issues)
-    local integrity_json=$(docker exec canvas_backend python3 repair_checks.py --scan --json 2>/dev/null || echo '{}')
+    # Run comprehensive scan using repair_scan.py (bash-friendly output)
+    local scan_output
+    scan_output=$(docker exec canvas_backend python3 repair_scan.py 2>/dev/null || echo "")
 
-    # Parse orphaned files count
-    local orphaned_count=$(echo "$integrity_json" | grep -o '"count": [0-9]*' | head -1 | grep -o '[0-9]*' || echo "0")
-    if [[ "$orphaned_count" -gt 0 ]]; then
-      print_at "$row" 8 ""; print_status warn "$orphaned_count orphaned files found"
+    # Initialize defaults
+    local ORPHANED_COUNT=0 MISSING_FILES_COUNT=0 MISSING_THUMBNAILS_COUNT=0
+    local ORPHANED_SCAN_SKIPPED=false ORPHANED_SKIP_REASON=""
+    local DISK_SPACE_OK=unknown DISK_SPACE_FREE_MB=0
+    local MIGRATION_STATUS=unknown MIGRATION_HEADS=0
+    local PII_KEY_STATUS=unknown PII_KEY_SOURCE=none
+
+    # Parse the key=value output safely
+    if [[ -n "$scan_output" ]]; then
+      while IFS='=' read -r key value; do
+        case "$key" in
+          ORPHANED_COUNT) ORPHANED_COUNT="$value" ;;
+          ORPHANED_SCAN_SKIPPED) ORPHANED_SCAN_SKIPPED="$value" ;;
+          ORPHANED_SKIP_REASON) ORPHANED_SKIP_REASON="$value" ;;
+          MISSING_FILES_COUNT) MISSING_FILES_COUNT="$value" ;;
+          MISSING_THUMBNAILS_COUNT) MISSING_THUMBNAILS_COUNT="$value" ;;
+          DISK_SPACE_OK) DISK_SPACE_OK="$value" ;;
+          DISK_SPACE_FREE_MB) DISK_SPACE_FREE_MB="$value" ;;
+          MIGRATION_STATUS) MIGRATION_STATUS="$value" ;;
+          MIGRATION_HEADS) MIGRATION_HEADS="$value" ;;
+          PII_KEY_STATUS) PII_KEY_STATUS="$value" ;;
+          PII_KEY_SOURCE) PII_KEY_SOURCE="$value" ;;
+        esac
+      done <<< "$scan_output"
+    fi
+
+    # Report orphaned files
+    if [[ "$ORPHANED_SCAN_SKIPPED" == "true" ]]; then
+      print_at "$row" 8 ""; print_status info "Orphan scan skipped (safety check)"
+      ((row++))
+      print_at "$row" 8 ""; print_status info "${DIM}$ORPHANED_SKIP_REASON${RESET}"
+    elif [[ "$ORPHANED_COUNT" -gt 0 ]]; then
+      print_at "$row" 8 ""; print_status warn "$ORPHANED_COUNT orphaned files found"
       fixable+=("fix_orphaned_files")
-      issues+=("$orphaned_count orphaned files [auto-fixable]")
+      issues+=("$ORPHANED_COUNT orphaned files [auto-fixable]")
     else
       print_at "$row" 8 ""; print_status ok "No orphaned files"
     fi
     ((row++))
 
-    # Parse missing files count
-    local missing_count=$(echo "$integrity_json" | grep -A2 '"missing_files"' | grep '"count"' | grep -o '[0-9]*' || echo "0")
-    if [[ "$missing_count" -gt 0 ]]; then
-      print_at "$row" 8 ""; print_status warn "$missing_count missing file records"
+    # Report missing files
+    if [[ "$MISSING_FILES_COUNT" -gt 0 ]]; then
+      print_at "$row" 8 ""; print_status warn "$MISSING_FILES_COUNT missing file records"
       fixable+=("fix_missing_files")
-      issues+=("$missing_count missing file records [auto-fixable]")
+      issues+=("$MISSING_FILES_COUNT missing file records [auto-fixable]")
     else
       print_at "$row" 8 ""; print_status ok "No missing file records"
     fi
     ((row++))
 
-    # Parse missing thumbnails count
-    local thumbs_count=$(echo "$integrity_json" | grep -A2 '"missing_thumbnails"' | grep '"count"' | grep -o '[0-9]*' || echo "0")
-    if [[ "$thumbs_count" -gt 0 ]]; then
-      print_at "$row" 8 ""; print_status warn "$thumbs_count missing thumbnails"
+    # Report missing thumbnails
+    if [[ "$MISSING_THUMBNAILS_COUNT" -gt 0 ]]; then
+      print_at "$row" 8 ""; print_status warn "$MISSING_THUMBNAILS_COUNT missing thumbnails"
       fixable+=("fix_missing_thumbnails")
-      issues+=("$thumbs_count missing thumbnails [auto-fixable]")
+      issues+=("$MISSING_THUMBNAILS_COUNT missing thumbnails [auto-fixable]")
     else
       print_at "$row" 8 ""; print_status ok "All thumbnails present"
     fi
+    ((row+=2))
+
+    # Check 6: Disk space
+    print_at "$row" 4 "[${CYAN}/${RESET}] Checking disk space..."
+    sleep 0.2
+    ((row++))
+
+    if [[ "$DISK_SPACE_OK" == "false" ]]; then
+      print_at "$row" 8 ""; print_status warn "Low disk space (${DISK_SPACE_FREE_MB}MB free)"
+      issues+=("Low disk space - free up space in uploads/")
+    elif [[ "$DISK_SPACE_OK" == "true" ]]; then
+      print_at "$row" 8 ""; print_status ok "Disk space OK (${DISK_SPACE_FREE_MB}MB free)"
+    else
+      print_at "$row" 8 ""; print_status info "Could not check disk space"
+    fi
+    ((row+=2))
+
+    # Check 7: Migration status (from scan results)
+    print_at "$row" 4 "[${CYAN}/${RESET}] Checking migration status..."
+    sleep 0.2
+    ((row++))
+
+    if [[ "$MIGRATION_STATUS" == "multiple_heads" ]]; then
+      print_at "$row" 8 ""; print_status warn "Multiple migration heads detected ($MIGRATION_HEADS heads)"
+      fixable+=("fix_migrations")
+      issues+=("Multiple migration heads [auto-fixable]")
+    elif [[ "$MIGRATION_STATUS" == "ok" ]]; then
+      print_at "$row" 8 ""; print_status ok "Migrations OK"
+    else
+      print_at "$row" 8 ""; print_status info "Could not check migrations"
+    fi
+    ((row+=2))
+
+    # Check 8: Port availability
+    print_at "$row" 4 "[${CYAN}/${RESET}] Checking port availability..."
+    sleep 0.2
+    ((row++))
+
+    local ports_ok=true
+    for port in 5001 5173 5432; do
+      # Check if port is in use by non-Docker process
+      if command -v lsof &>/dev/null; then
+        local port_user=$(lsof -i :"$port" -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND\|docker\|com.dock" | head -1 || true)
+        if [[ -n "$port_user" ]]; then
+          local proc_name=$(echo "$port_user" | awk '{print $1}')
+          print_at "$row" 8 ""; print_status warn "Port $port in use by: $proc_name"
+          issues+=("Port $port blocked by $proc_name [manual fix]")
+          ports_ok=false
+          ((row++))
+        fi
+      fi
+    done
+    if $ports_ok; then
+      print_at "$row" 8 ""; print_status ok "All ports available"
+    fi
+    ((row+=2))
+
+    # Check 9: Container health
+    print_at "$row" 4 "[${CYAN}/${RESET}] Checking container health..."
+    sleep 0.2
+    ((row++))
+
+    local unhealthy_count=0
+    local container_health=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || echo "")
+    if echo "$container_health" | grep -qi "unhealthy"; then
+      unhealthy_count=$(echo "$container_health" | grep -ci "unhealthy" || echo "0")
+    fi
+
+    if [[ "$unhealthy_count" -gt 0 ]]; then
+      print_at "$row" 8 ""; print_status warn "$unhealthy_count unhealthy container(s)"
+      fixable+=("fix_stale_containers")
+      issues+=("$unhealthy_count unhealthy containers [auto-fixable]")
+    else
+      print_at "$row" 8 ""; print_status ok "All containers healthy"
+    fi
+    ((row+=2))
+
+    # Check 10: PII Encryption Key validation
+    print_at "$row" 4 "[${CYAN}/${RESET}] Validating PII encryption key..."
+    sleep 0.2
+    ((row++))
+
+    case "$PII_KEY_STATUS" in
+      ok)
+        print_at "$row" 8 ""; print_status ok "PII encryption key valid (source: $PII_KEY_SOURCE)"
+        ;;
+      missing)
+        print_at "$row" 8 ""; print_status fail "PII encryption key missing"
+        fixable+=("gen_pii_key")
+        issues+=("PII_ENCRYPTION_KEY not configured [auto-fixable]")
+        ;;
+      empty)
+        print_at "$row" 8 ""; print_status warn "PII encryption key is empty"
+        fixable+=("gen_pii_key")
+        issues+=("PII_ENCRYPTION_KEY is empty [auto-fixable]")
+        ;;
+      placeholder)
+        print_at "$row" 8 ""; print_status warn "PII encryption key is a placeholder value"
+        fixable+=("gen_pii_key")
+        issues+=("PII_ENCRYPTION_KEY is placeholder [auto-fixable]")
+        ;;
+      too_short)
+        print_at "$row" 8 ""; print_status warn "PII encryption key too short (<16 chars)"
+        fixable+=("gen_pii_key")
+        issues+=("PII_ENCRYPTION_KEY too short [auto-fixable]")
+        ;;
+      invalid|error)
+        print_at "$row" 8 ""; print_status fail "PII encryption key failed validation"
+        fixable+=("gen_pii_key")
+        issues+=("PII_ENCRYPTION_KEY invalid [auto-fixable]")
+        ;;
+      *)
+        print_at "$row" 8 ""; print_status info "Could not validate PII encryption key"
+        ;;
+    esac
     ((row+=2))
   fi
 
@@ -866,6 +1076,19 @@ apply_fixes() {
         print_at "$row" 4 "Regenerating thumbnails..."
         docker exec canvas_backend python3 repair_checks.py --fix-thumbnails &>/dev/null
         print_at "$row" 4 ""; print_status ok "Regenerated thumbnails"
+        ;;
+      fix_migrations)
+        print_at "$row" 4 "Merging migration heads..."
+        docker exec canvas_backend flask db merge -m "auto-merge by repair wizard" heads &>/dev/null || true
+        docker exec canvas_backend flask db upgrade &>/dev/null || true
+        print_at "$row" 4 ""; print_status ok "Merged migration heads"
+        ;;
+      fix_stale_containers)
+        print_at "$row" 4 "Recreating unhealthy containers..."
+        cd "$INFRA_DIR"
+        docker compose down &>/dev/null
+        docker compose up -d &>/dev/null
+        print_at "$row" 4 ""; print_status ok "Recreated containers"
         ;;
     esac
     ((row++))

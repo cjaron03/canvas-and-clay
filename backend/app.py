@@ -3536,7 +3536,7 @@ def admin_console_stats():
 def admin_console_artists():
     """Admin console endpoint to list artists with assignment info."""
     try:
-        artists = Artist.query.order_by(Artist.artist_fname, Artist.artist_lname).all()
+        artists = Artist.query.filter(Artist.is_deleted == False).order_by(Artist.artist_fname, Artist.artist_lname).all()
         artist_data = []
         for artist in artists:
             user = db.session.get(User, artist.user_id) if artist.user_id else None
@@ -4456,6 +4456,16 @@ def hard_delete_user(user_id):
         return jsonify({'error': 'You cannot delete your own account here. Use self-delete instead.'}), 403
 
     try:
+        # Delete password reset requests where user is the requester
+        PasswordResetRequest.query.filter(
+            PasswordResetRequest.user_id == target.id
+        ).delete(synchronize_session=False)
+
+        # Null out approved_by_id references (where this user approved resets)
+        PasswordResetRequest.query.filter(
+            PasswordResetRequest.approved_by_id == target.id
+        ).update({'approved_by_id': None}, synchronize_session=False)
+
         # Null out artist links
         Artist = globals().get('Artist')
         if Artist:
