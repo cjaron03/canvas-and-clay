@@ -4,8 +4,12 @@
   import { goto } from '$app/navigation';
   import { extractErrorMessage } from '$lib/utils/errorMessages';
   import ArtworkDeleteModal from '$lib/components/ArtworkDeleteModal.svelte';
+  import { auth } from '$lib/stores/auth';
 
   export let data;
+
+  // Check if logged-in user is admin - only admins can change artist field
+  $: isAdmin = $auth.user?.role === 'admin';
 
   let csrfToken = '';
   let isSubmitting = false;
@@ -213,31 +217,45 @@
       <div class="form-group artwork-selector">
         <label for="artist-search">Artist <span class="required">*</span></label>
         <div class="search-wrapper">
-          <input
-            id="artist-search"
-            type="text"
-            bind:value={artistSearch}
-            on:input={handleArtistSearch}
-            on:focus={() => { if (artistSearch.length > 0) showArtistDropdown = true; }}
-            placeholder="Search by ID or name..."
-            autocomplete="off"
-            required
-            disabled={isSubmitting}
-          />
-          {#if showArtistDropdown && filteredArtists.length > 0}
-            <div class="dropdown">
-              {#each filteredArtists.slice(0, 10) as artist}
-                <button
-                  type="button"
-                  class="dropdown-item"
-                  on:click={() => selectArtist(artist)}
-                >
-                  <div class="option-content">
-                    <div class="option-id"><code>{artist.id}</code></div>
-                    <div class="option-name">{artist.name}</div>
-                  </div>
-                </button>
-              {/each}
+          {#if isAdmin}
+            <!-- Admins can change the artist (transfer ownership) -->
+            <input
+              id="artist-search"
+              type="text"
+              bind:value={artistSearch}
+              on:input={handleArtistSearch}
+              on:focus={() => { if (artistSearch.length > 0) showArtistDropdown = true; }}
+              placeholder="Search by ID or name..."
+              autocomplete="off"
+              required
+              disabled={isSubmitting}
+            />
+            {#if showArtistDropdown && filteredArtists.length > 0}
+              <div class="dropdown">
+                {#each filteredArtists.slice(0, 10) as artist}
+                  <button
+                    type="button"
+                    class="dropdown-item"
+                    on:click={() => selectArtist(artist)}
+                  >
+                    <div class="option-content">
+                      <div class="option-id"><code>{artist.id}</code></div>
+                      <div class="option-name">{artist.name}</div>
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {:else}
+            <!-- Non-admins see a locked display showing current artist (cannot change) -->
+            <div class="artist-display-card">
+              <div class="artist-info">
+                <span class="artist-name">{data.artwork.artist?.name || 'Unknown'}</span>
+                <span class="artist-id-badge">#{data.artwork.artist?.id || artistId}</span>
+              </div>
+              <div class="artist-status">
+                <span class="status-text">Linked Profile</span>
+              </div>
             </div>
           {/if}
         </div>
@@ -246,8 +264,10 @@
           bind:value={artistId}
           required
         />
-        {#if artistId && !data.artists.find(a => a.id === artistId)}
+        {#if isAdmin && artistId && !data.artists.find(a => a.id === artistId)}
           <small class="warning">⚠ This artist ID was not found in the list above</small>
+        {:else if !isAdmin}
+          <small>Only administrators can change artwork ownership.</small>
         {/if}
       </div>
 
@@ -672,6 +692,47 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  /* Locked artist display card (for non-admin users) */
+  .artist-display-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 48px;
+    padding: 0 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent-color);
+    border-radius: 8px;
+  }
+
+  .artist-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .artist-name {
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .artist-id-badge {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-weight: 600;
+  }
+
+  .artist-status {
+    font-size: 0.75rem;
+    color: var(--accent-color);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   @media (max-width: 768px) {
