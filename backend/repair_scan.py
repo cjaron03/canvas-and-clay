@@ -27,6 +27,8 @@ import shutil
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from repair_checks import repair_lock, RepairLockError  # noqa: E402
+
 UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 
 
@@ -107,7 +109,7 @@ def check_pii_encryption_key():
             results['PII_KEY_STATUS'] = 'ok'
         else:
             results['PII_KEY_STATUS'] = 'invalid'
-    except Exception as e:
+    except Exception:
         results['PII_KEY_STATUS'] = 'error'
 
     return results
@@ -247,29 +249,52 @@ def main():
     """Run all checks and output bash-friendly results."""
     results = {}
 
-    # 1. Database connection
-    results['DB_CONNECTION'] = check_database_connection()
+    try:
+        # Acquire exclusive lock to prevent race conditions with concurrent repair operations
+        with repair_lock(blocking=False):
+            # 1. Database connection
+            results['DB_CONNECTION'] = check_database_connection()
 
-    # 2. Data integrity (only if DB is connected)
-    if results['DB_CONNECTION'] == 'ok':
-        results.update(check_data_integrity())
-        results.update(check_migrations())
-    else:
+            # 2. Data integrity (only if DB is connected)
+            if results['DB_CONNECTION'] == 'ok':
+                results.update(check_data_integrity())
+                results.update(check_migrations())
+            else:
+                results['ORPHANED_COUNT'] = 0
+                results['MISSING_FILES_COUNT'] = 0
+                results['MISSING_THUMBNAILS_COUNT'] = 0
+                results['MIGRATION_STATUS'] = 'unknown'
+                results['MIGRATION_HEADS'] = 0
+                results['PENDING_MIGRATIONS'] = 0
+
+            # 3. Disk space
+            results.update(check_disk_space())
+
+            # 4. Directories
+            results.update(check_directories())
+
+            # 5. PII Encryption Key validation
+            results.update(check_pii_encryption_key())
+
+    except RepairLockError:
+        # Another repair operation is running - output lock status
+        results['REPAIR_LOCK'] = 'locked'
+        results['DB_CONNECTION'] = 'skipped'
         results['ORPHANED_COUNT'] = 0
+        results['ORPHANED_SCAN_SKIPPED'] = 'true'
+        results['ORPHANED_SKIP_REASON'] = 'Another repair operation in progress'
         results['MISSING_FILES_COUNT'] = 0
         results['MISSING_THUMBNAILS_COUNT'] = 0
-        results['MIGRATION_STATUS'] = 'unknown'
+        results['MIGRATION_STATUS'] = 'skipped'
         results['MIGRATION_HEADS'] = 0
         results['PENDING_MIGRATIONS'] = 0
-
-    # 3. Disk space
-    results.update(check_disk_space())
-
-    # 4. Directories
-    results.update(check_directories())
-
-    # 5. PII Encryption Key validation
-    results.update(check_pii_encryption_key())
+        results['DISK_SPACE_OK'] = 'unknown'
+        results['DISK_SPACE_FREE_MB'] = 0
+        results['UPLOADS_DIR_EXISTS'] = 'unknown'
+        results['ARTWORKS_DIR_EXISTS'] = 'unknown'
+        results['THUMBNAILS_DIR_EXISTS'] = 'unknown'
+        results['PII_KEY_STATUS'] = 'skipped'
+        results['PII_KEY_SOURCE'] = 'none'
 
     # Output in bash-friendly format
     for key, value in sorted(results.items()):
