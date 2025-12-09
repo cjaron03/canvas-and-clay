@@ -8,12 +8,17 @@ Usage:
     python3 restore.py --input backup.tar.gz --photos-only
     python3 restore.py --input backup.tar.gz --force
 
+    # Encrypted backups
+    python3 restore.py --input backup.tar.gz.enc --passphrase "MySecurePass123!"
+    python3 restore.py --input backup.tar.gz.enc --use-env-key
+
 Features:
     - Validates backup integrity before restore
     - Checks PII encryption key compatibility
     - Creates automatic pre-restore backup (safety)
     - Supports dry-run mode to preview restore
     - Uses pg_restore for database restoration
+    - Supports decryption of AES-256-GCM encrypted backups
 """
 
 import argparse
@@ -34,16 +39,21 @@ from backup_utils import (  # noqa: E402
     run_pg_restore,
     extract_photos,
     validate_manifest,
-    verify_archive_checksums,
-    get_pii_key_fingerprint,
     ensure_backups_dir,
-    generate_backup_filename,
     run_pg_dump,
     archive_photos,
     create_manifest,
     compute_sha256,
     BACKUPS_DIR,
-    UPLOADS_DIR
+)
+from backup_encryption import (  # noqa: E402
+    decrypt_backup,
+    decrypt_backup_with_env_key,
+    is_encrypted_backup,
+    read_encrypted_header,
+    DecryptionError,
+    InvalidBackupFormatError,
+    BackupEncryptionError,
 )
 
 
@@ -174,17 +184,21 @@ def restore_backup(
     photos_only=False,
     dry_run=False,
     force=False,
-    no_pre_backup=False
+    no_pre_backup=False,
+    passphrase=None,
+    use_env_key=False
 ):
     """Restore from a backup archive.
 
     Args:
-        input_path: Path to the backup archive
+        input_path: Path to the backup archive (can be encrypted .tar.gz.enc)
         db_only: Only restore database
         photos_only: Only restore photos
         dry_run: Preview restore without making changes
         force: Skip confirmation prompts
         no_pre_backup: Skip creating pre-restore backup
+        passphrase: Decryption passphrase (required if encrypted and not use_env_key)
+        use_env_key: Use BACKUP_ENCRYPTION_KEY env var for decryption
 
     Returns:
         Tuple of (success: bool, message: str)
@@ -193,10 +207,72 @@ def restore_backup(
     if not os.path.exists(input_path):
         return False, f"Backup file not found: {input_path}"
 
-    # Read manifest
+    # Check if backup is encrypted
+    encrypted = is_encrypted_backup(input_path)
+    decrypted_path = None
+    temp_decrypt_dir = None
+
+    if encrypted:
+        print("Detected encrypted backup")
+
+        # Show encryption info
+        try:
+            header = read_encrypted_header(input_path)
+            if header:
+                print(f"  Algorithm: {header.get('algorithm', 'Unknown')}")
+                print(f"  KDF: {header.get('kdf', 'Unknown')}")
+        except InvalidBackupFormatError as e:
+            return False, f"Invalid encrypted backup: {e}"
+
+        # Validate decryption parameters
+        if use_env_key:
+            if not os.getenv("BACKUP_ENCRYPTION_KEY"):
+                return False, "BACKUP_ENCRYPTION_KEY environment variable not set"
+        elif not passphrase:
+            return False, "Passphrase required for encrypted backup (or use --use-env-key)"
+
+        # Decrypt to temp file
+        print("Decrypting backup...")
+        temp_decrypt_dir = tempfile.mkdtemp()
+        decrypted_path = os.path.join(temp_decrypt_dir, "decrypted_backup.tar.gz")
+
+        try:
+            if use_env_key:
+                decrypt_info = decrypt_backup_with_env_key(input_path, decrypted_path)
+            else:
+                decrypt_info = decrypt_backup(input_path, decrypted_path, passphrase)
+
+            if decrypt_info.get('checksum_verified'):
+                print("  Decryption successful, checksum verified")
+            else:
+                print("  Decryption successful")
+
+            # Use decrypted file for the rest of the restore
+            archive_path = decrypted_path
+        except DecryptionError as e:
+            if temp_decrypt_dir and os.path.exists(temp_decrypt_dir):
+                import shutil
+                shutil.rmtree(temp_decrypt_dir)
+            return False, f"Decryption failed: {e}"
+        except BackupEncryptionError as e:
+            if temp_decrypt_dir and os.path.exists(temp_decrypt_dir):
+                import shutil
+                shutil.rmtree(temp_decrypt_dir)
+            return False, f"Decryption error: {e}"
+    else:
+        archive_path = input_path
+
+    # Helper function to clean up decrypted temp file (defined early to handle all exit paths)
+    def cleanup_decrypted():
+        if temp_decrypt_dir and os.path.exists(temp_decrypt_dir):
+            import shutil
+            shutil.rmtree(temp_decrypt_dir)
+
+    # Read manifest (from decrypted archive if applicable)
     print("Reading backup manifest...")
-    manifest, error = read_manifest_from_archive(input_path)
+    manifest, error = read_manifest_from_archive(archive_path)
     if error:
+        cleanup_decrypted()
         return False, error
 
     # Validate manifest
@@ -204,6 +280,7 @@ def restore_backup(
     if errors:
         for e in errors:
             print(f"  Error: {e}")
+        cleanup_decrypted()
         return False, "Manifest validation failed"
 
     for w in warnings:
@@ -214,6 +291,8 @@ def restore_backup(
     print(f"  Created: {manifest.get('created_at', 'Unknown')}")
     print(f"  Type: {manifest.get('type', 'Unknown')}")
     print(f"  Created by: {manifest.get('created_by', 'Unknown')}")
+    if encrypted:
+        print("  Encrypted: Yes")
 
     contents = manifest.get("contents", {})
     db_info = contents.get("database", {})
@@ -236,6 +315,7 @@ def restore_backup(
     restore_photos = not db_only and photos_info.get("included", False)
 
     if not restore_db and not restore_photos:
+        cleanup_decrypted()
         return False, "Nothing to restore based on options and backup contents"
 
     print("\nRestore Plan:")
@@ -247,6 +327,7 @@ def restore_backup(
     # Dry run stops here
     if dry_run:
         print("\nDRY RUN - No changes made")
+        cleanup_decrypted()
         return True, "Dry run complete"
 
     # Confirmation
@@ -256,6 +337,7 @@ def restore_backup(
         print("=" * 60)
         response = input("\nType 'RESTORE' to confirm: ")
         if response != "RESTORE":
+            cleanup_decrypted()
             return False, "Restore cancelled by user"
 
     # Create pre-restore backup
@@ -266,12 +348,13 @@ def restore_backup(
             if not force:
                 response = input("Continue without pre-restore backup? (y/N): ")
                 if response.lower() != 'y':
+                    cleanup_decrypted()
                     return False, "Restore cancelled"
 
     # Extract archive to temp directory
     print("\nExtracting backup archive...")
     with tempfile.TemporaryDirectory() as temp_dir:
-        with tarfile.open(input_path, "r:gz") as tar:
+        with tarfile.open(archive_path, "r:gz") as tar:
             tar.extractall(temp_dir)
 
         # Restore database
@@ -280,17 +363,20 @@ def restore_backup(
             db_dump_path = os.path.join(temp_dir, "database", "canvas_clay.dump")
 
             if not os.path.exists(db_dump_path):
+                cleanup_decrypted()
                 return False, "Database dump not found in archive"
 
             # Verify checksum
             if db_info.get("checksum"):
                 actual_checksum = compute_sha256(db_dump_path)
                 if actual_checksum != db_info["checksum"]:
+                    cleanup_decrypted()
                     return False, "Database dump checksum mismatch"
                 print("  Checksum verified")
 
             success, message = run_pg_restore(db_dump_path)
             if not success:
+                cleanup_decrypted()
                 return False, f"Database restore failed: {message}"
             print("  Database restored successfully")
 
@@ -300,12 +386,14 @@ def restore_backup(
             photos_archive_path = os.path.join(temp_dir, "uploads.tar.gz")
 
             if not os.path.exists(photos_archive_path):
+                cleanup_decrypted()
                 return False, "Photos archive not found in backup"
 
             # Verify checksum
             if photos_info.get("checksum"):
                 actual_checksum = compute_sha256(photos_archive_path)
                 if actual_checksum != photos_info["checksum"]:
+                    cleanup_decrypted()
                     return False, "Photos archive checksum mismatch"
                 print("  Checksum verified")
 
@@ -314,13 +402,18 @@ def restore_backup(
                 progress_callback=lambda c, t: print_progress(c, t, "  Extracting")
             )
             if not success:
+                cleanup_decrypted()
                 return False, f"Photos restore failed: {message}"
             print("  Photos restored successfully")
 
+    # Clean up decrypted temp file
+    cleanup_decrypted()
     return True, "Restore completed successfully"
 
 
 def main():
+    import getpass
+
     parser = argparse.ArgumentParser(
         description="Restore Canvas & Clay database and photos from backup",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -356,12 +449,28 @@ def main():
         action="store_true",
         help="Skip creating pre-restore safety backup"
     )
+    # Decryption arguments
+    parser.add_argument(
+        "--passphrase",
+        help="Decryption passphrase (will prompt if encrypted backup detected)"
+    )
+    parser.add_argument(
+        "--use-env-key",
+        action="store_true",
+        help="Use BACKUP_ENCRYPTION_KEY environment variable for decryption"
+    )
 
     args = parser.parse_args()
 
     # Validate mutually exclusive options
     if args.db_only and args.photos_only:
         parser.error("Cannot specify both --db-only and --photos-only")
+
+    # Check if backup is encrypted and prompt for passphrase if needed
+    passphrase = args.passphrase
+    if is_encrypted_backup(args.input) and not args.use_env_key and not passphrase:
+        # Prompt for passphrase interactively
+        passphrase = getpass.getpass("Enter decryption passphrase: ")
 
     print(f"\n{'=' * 60}")
     print("Canvas & Clay Restore")
@@ -376,7 +485,9 @@ def main():
         photos_only=args.photos_only,
         dry_run=args.dry_run,
         force=args.force,
-        no_pre_backup=args.no_pre_backup
+        no_pre_backup=args.no_pre_backup,
+        passphrase=passphrase,
+        use_env_key=args.use_env_key
     )
 
     if success:

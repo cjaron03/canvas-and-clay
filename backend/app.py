@@ -5293,7 +5293,7 @@ def list_backups_endpoint():
     """List available backup files.
 
     Returns:
-        200: List of backups with metadata
+        200: List of backups with metadata, including encryption status
         500: Server error
     """
     try:
@@ -5314,7 +5314,9 @@ def list_backups_endpoint():
                 'created_by': manifest.get('created_by', 'unknown'),
                 'has_database': contents.get('database', {}).get('included', False),
                 'has_photos': contents.get('photos', {}).get('included', False),
-                'photo_count': contents.get('photos', {}).get('count', 0)
+                'photo_count': contents.get('photos', {}).get('count', 0),
+                'encrypted': backup.get('encrypted', False),
+                'encryption_info': backup.get('encryption_info')
             })
 
         return jsonify({'backups': formatted}), 200
@@ -5336,6 +5338,9 @@ def create_backup_endpoint():
         exclude_audit_logs: bool (default False)
         db_only: bool (default False)
         photos_only: bool (default False)
+        encrypt: bool (default False) - encrypt the backup
+        passphrase: str (optional) - passphrase for encryption
+        use_env_key: bool (default False) - use BACKUP_ENCRYPTION_KEY env var
 
     Returns:
         200: Backup created successfully
@@ -5355,11 +5360,39 @@ def create_backup_endpoint():
         if db_only and photos_only:
             return jsonify({'error': 'Cannot specify both db_only and photos_only'}), 400
 
+        # Encryption options
+        encrypt = data.get('encrypt', False)
+        passphrase = data.get('passphrase')
+        use_env_key = data.get('use_env_key', False)
+
+        # Validate encryption options
+        if encrypt:
+            if use_env_key:
+                if not os.getenv('BACKUP_ENCRYPTION_KEY'):
+                    return jsonify({
+                        'error': 'BACKUP_ENCRYPTION_KEY environment variable not set'
+                    }), 400
+            elif not passphrase:
+                return jsonify({
+                    'error': 'Passphrase required for encryption (or use use_env_key)'
+                }), 400
+            else:
+                # Validate passphrase strength
+                from backup_encryption import validate_passphrase
+                is_valid, errors = validate_passphrase(passphrase)
+                if not is_valid:
+                    return jsonify({
+                        'error': f"Passphrase validation failed: {'; '.join(errors)}"
+                    }), 400
+
         # Generate backup ID and filename
         backup_id = str(uuid.uuid4())[:8]
         backup_type = 'db_only' if db_only else ('photos_only' if photos_only else 'full')
         ensure_backups_dir()
-        output_path = os.path.join(BACKUPS_DIR, generate_backup_filename(backup_type))
+        filename = generate_backup_filename(backup_type)
+        if encrypt:
+            filename += '.enc'
+        output_path = os.path.join(BACKUPS_DIR, filename)
 
         # Initialize operation status
         _backup_operations[backup_id] = {
@@ -5367,6 +5400,7 @@ def create_backup_endpoint():
             'progress': 0,
             'current_step': 'Starting backup...',
             'filename': os.path.basename(output_path),
+            'encrypted': encrypt,
             'error': None
         }
 
@@ -5385,31 +5419,38 @@ def create_backup_endpoint():
 
                 _backup_operations[backup_id]['current_step'] = 'Creating backup...'
 
-                success, message = create_backup(
+                success, message, encryption_info = create_backup(
                     output_path=output_path,
                     db_only=db_only,
                     photos_only=photos_only,
                     include_thumbnails=include_thumbnails,
                     exclude_audit_logs=exclude_audit_logs,
-                    created_by=user_email
+                    created_by=user_email,
+                    encrypt=encrypt,
+                    passphrase=passphrase,
+                    use_env_key=use_env_key
                 )
 
                 if success:
                     _backup_operations[backup_id]['status'] = 'completed'
                     _backup_operations[backup_id]['progress'] = 100
                     _backup_operations[backup_id]['current_step'] = 'Backup complete'
+                    if encryption_info:
+                        _backup_operations[backup_id]['encryption_info'] = encryption_info
 
                     # Add audit log
+                    audit_details = {
+                        'filename': os.path.basename(output_path),
+                        'type': backup_type,
+                        'encrypted': encrypt
+                    }
                     audit_log = AuditLog(
                         user_id=user_id,
                         email=user_email,
                         event_type='backup_created',
                         ip_address=client_ip,
                         user_agent=user_agent,
-                        details=json.dumps({
-                            'filename': os.path.basename(output_path),
-                            'type': backup_type
-                        })
+                        details=json.dumps(audit_details)
                     )
                     with app.app_context():
                         db.session.add(audit_log)
@@ -5430,12 +5471,33 @@ def create_backup_endpoint():
         return jsonify({
             'backup_id': backup_id,
             'status': 'in_progress',
-            'filename': os.path.basename(output_path)
+            'filename': os.path.basename(output_path),
+            'encrypted': encrypt
         }), 200
 
     except Exception as e:
         app.logger.exception("Failed to start backup")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/console/backups/encryption-config', methods=['GET'])
+@login_required
+@admin_required
+def get_encryption_config():
+    """Get backup encryption configuration status.
+
+    Returns:
+        200: Encryption configuration info
+    """
+    from backup_utils import get_backup_key_fingerprint, is_backup_encryption_configured
+
+    env_key_configured = is_backup_encryption_configured()
+    fingerprint = get_backup_key_fingerprint() if env_key_configured else None
+
+    return jsonify({
+        'env_key_configured': env_key_configured,
+        'env_key_fingerprint': fingerprint
+    }), 200
 
 
 @app.route('/api/admin/console/backups/<backup_id>/status', methods=['GET'])
@@ -5542,17 +5604,27 @@ def validate_restore_endpoint():
 
     Body:
         filename: str - Name of backup file to validate
+        passphrase: str (optional) - Passphrase for encrypted backups
+        use_env_key: bool (optional) - Use BACKUP_ENCRYPTION_KEY env var
 
     Returns:
-        200: Validation result
+        200: Validation result (includes encryption info if encrypted)
         400: Invalid request
         404: Backup not found
     """
     import tarfile
+    import tempfile
     from backup_utils import BACKUPS_DIR, validate_manifest, get_pii_key_fingerprint
+    from backup_encryption import (
+        is_encrypted_backup, read_encrypted_header,
+        decrypt_backup, decrypt_backup_with_env_key,
+        DecryptionError, BackupEncryptionError
+    )
 
     data = request.get_json() or {}
     filename = data.get('filename')
+    passphrase = data.get('passphrase')
+    use_env_key = data.get('use_env_key', False)
 
     if not filename:
         return jsonify({'error': 'filename is required'}), 400
@@ -5567,13 +5639,59 @@ def validate_restore_endpoint():
         return jsonify({'error': 'Backup not found'}), 404
 
     try:
-        # Read manifest
-        with tarfile.open(filepath, "r:gz") as tar:
-            manifest_member = tar.getmember("manifest.json")
-            f = tar.extractfile(manifest_member)
-            if not f:
-                return jsonify({'error': 'Cannot read manifest'}), 400
-            manifest = json.loads(f.read().decode('utf-8'))
+        # Check if encrypted
+        encrypted = is_encrypted_backup(filepath)
+        encryption_info = None
+
+        if encrypted:
+            # Get encryption header info
+            try:
+                header = read_encrypted_header(filepath)
+                encryption_info = {
+                    'algorithm': header.get('algorithm', 'unknown'),
+                    'kdf': header.get('kdf', 'unknown'),
+                    'original_size': header.get('original_size'),
+                }
+            except Exception:
+                encryption_info = {'algorithm': 'unknown'}
+
+            # If credentials provided, try to validate by decrypting
+            if passphrase or use_env_key:
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    decrypted_path = os.path.join(temp_dir, 'decrypted.tar.gz')
+                    if use_env_key:
+                        decrypt_backup_with_env_key(filepath, decrypted_path)
+                    else:
+                        decrypt_backup(filepath, decrypted_path, passphrase)
+
+                    # Read manifest from decrypted backup
+                    with tarfile.open(decrypted_path, "r:gz") as tar:
+                        manifest_member = tar.getmember("manifest.json")
+                        f = tar.extractfile(manifest_member)
+                        if not f:
+                            return jsonify({'error': 'Cannot read manifest'}), 400
+                        manifest = json.loads(f.read().decode('utf-8'))
+                finally:
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            else:
+                # Encrypted but no credentials - return partial info
+                return jsonify({
+                    'valid': True,
+                    'encrypted': True,
+                    'encryption_info': encryption_info,
+                    'requires_passphrase': True,
+                    'message': 'Encrypted backup detected. Provide passphrase to validate contents.'
+                }), 200
+        else:
+            # Read manifest from unencrypted backup
+            with tarfile.open(filepath, "r:gz") as tar:
+                manifest_member = tar.getmember("manifest.json")
+                f = tar.extractfile(manifest_member)
+                if not f:
+                    return jsonify({'error': 'Cannot read manifest'}), 400
+                manifest = json.loads(f.read().decode('utf-8'))
 
         # Validate
         valid, warnings, errors = validate_manifest(manifest)
@@ -5587,6 +5705,8 @@ def validate_restore_endpoint():
             'valid': valid,
             'warnings': warnings,
             'errors': errors,
+            'encrypted': encrypted,
+            'encryption_info': encryption_info,
             'manifest': {
                 'type': manifest.get('type'),
                 'created_at': manifest.get('created_at'),
@@ -5598,6 +5718,10 @@ def validate_restore_endpoint():
             'current_fingerprint': current_fingerprint
         }), 200
 
+    except DecryptionError as e:
+        return jsonify({'error': f'Decryption failed: {str(e)}'}), 400
+    except BackupEncryptionError as e:
+        return jsonify({'error': f'Encryption error: {str(e)}'}), 400
     except Exception as e:
         app.logger.exception("Failed to validate backup")
         return jsonify({'error': str(e)}), 500
@@ -5616,6 +5740,8 @@ def start_restore_endpoint():
         photos_only: bool - Only restore photos
         skip_pre_backup: bool - Skip creating pre-restore backup
         confirmation_token: str - Must be 'RESTORE' to confirm
+        passphrase: str (optional) - Passphrase for encrypted backups
+        use_env_key: bool (optional) - Use BACKUP_ENCRYPTION_KEY env var
 
     Returns:
         200: Restore started
@@ -5626,6 +5752,7 @@ def start_restore_endpoint():
     import threading
     import uuid
     from backup_utils import BACKUPS_DIR
+    from backup_encryption import is_encrypted_backup
 
     data = request.get_json() or {}
     filename = data.get('filename')
@@ -5652,6 +5779,22 @@ def start_restore_endpoint():
     if db_only and photos_only:
         return jsonify({'error': 'Cannot specify both db_only and photos_only'}), 400
 
+    # Check for encryption and validate credentials
+    encrypted = is_encrypted_backup(filepath)
+    passphrase = data.get('passphrase')
+    use_env_key = data.get('use_env_key', False)
+
+    if encrypted:
+        if use_env_key:
+            if not os.getenv('BACKUP_ENCRYPTION_KEY'):
+                return jsonify({
+                    'error': 'BACKUP_ENCRYPTION_KEY environment variable not set'
+                }), 400
+        elif not passphrase:
+            return jsonify({
+                'error': 'Passphrase required for encrypted backup (or use use_env_key)'
+            }), 400
+
     # Generate restore ID
     restore_id = str(uuid.uuid4())[:8]
 
@@ -5661,6 +5804,7 @@ def start_restore_endpoint():
         'progress': 0,
         'current_step': 'Starting restore...',
         'filename': filename,
+        'encrypted': encrypted,
         'error': None
     }
 
@@ -5683,7 +5827,8 @@ def start_restore_endpoint():
             'filename': filename,
             'restore_id': restore_id,
             'db_only': db_only,
-            'photos_only': photos_only
+            'photos_only': photos_only,
+            'encrypted': encrypted
         })
     )
     db.session.add(audit_log)
@@ -5700,7 +5845,9 @@ def start_restore_endpoint():
                 db_only=db_only,
                 photos_only=photos_only,
                 force=True,  # Already confirmed via API
-                no_pre_backup=skip_pre_backup
+                no_pre_backup=skip_pre_backup,
+                passphrase=passphrase,
+                use_env_key=use_env_key
             )
 
             if success:

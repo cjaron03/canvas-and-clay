@@ -19,6 +19,10 @@ backend/instance/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# Backup files (keep .gitkeep)
+backend/backups/*
+!backend/backups/.gitkeep
+
 # Testing files
 infra/cookies.txt
 infra/cookies2.txt

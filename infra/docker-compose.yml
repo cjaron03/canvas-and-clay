@@ -16,7 +16,7 @@ services:
     volumes:
       - ../backend:/app
       - uploads_data:/app/uploads
-      - backups_data:/app/backups
+      - ../backend/backups:/app/backups
       # Optional: mount sync files for auto-import (uncomment to enable)
       # - ./users.json:/app/users.json:ro
       # - ./images.zip:/app/images.zip:ro
@@ -73,6 +73,4 @@ volumes:
   postgres_data:
     driver: local
   uploads_data:
-    driver: local
-  backups_data:
     driver: local

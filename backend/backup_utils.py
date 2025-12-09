@@ -11,10 +11,8 @@ This module provides common functions used by backup.py and restore.py:
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import tarfile
-import tempfile
 from datetime import datetime, timezone
 from hashlib import sha256
 
@@ -23,7 +21,9 @@ UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads'
 BACKUPS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backups')
 
 # Manifest version for compatibility checking
-MANIFEST_VERSION = "1.0"
+# 1.0 - Initial version
+# 1.1 - Added encryption support
+MANIFEST_VERSION = "1.1"
 
 
 def compute_sha256(file_path):
@@ -467,33 +467,60 @@ def list_backups():
     """List available backup files.
 
     Returns:
-        List of dicts with backup info
+        List of dicts with backup info, including encrypted status
     """
     ensure_backups_dir()
     backups = []
 
+    # Import encryption detection lazily to avoid circular imports
+    try:
+        from backup_encryption import is_encrypted_backup, read_encrypted_header
+        encryption_available = True
+    except ImportError:
+        encryption_available = False
+
     for filename in os.listdir(BACKUPS_DIR):
-        if filename.endswith('.tar.gz'):
+        # Support both .tar.gz and .tar.gz.enc files
+        if filename.endswith('.tar.gz') or filename.endswith('.tar.gz.enc'):
             filepath = os.path.join(BACKUPS_DIR, filename)
             stat = os.stat(filepath)
 
-            # Try to read manifest
+            # Check if encrypted
+            encrypted = False
+            encryption_info = None
+            if encryption_available:
+                encrypted = is_encrypted_backup(filepath)
+                if encrypted:
+                    try:
+                        header = read_encrypted_header(filepath)
+                        encryption_info = {
+                            "algorithm": header.get("algorithm", "unknown"),
+                            "kdf": header.get("kdf", "unknown"),
+                            "original_size": header.get("original_size"),
+                        }
+                    except Exception:
+                        encryption_info = {"algorithm": "unknown"}
+
+            # Try to read manifest (only possible for unencrypted backups)
             manifest = None
-            try:
-                with tarfile.open(filepath, "r:gz") as tar:
-                    manifest_member = tar.getmember("manifest.json")
-                    f = tar.extractfile(manifest_member)
-                    if f:
-                        manifest = json.loads(f.read().decode('utf-8'))
-            except Exception:
-                pass
+            if not encrypted:
+                try:
+                    with tarfile.open(filepath, "r:gz") as tar:
+                        manifest_member = tar.getmember("manifest.json")
+                        f = tar.extractfile(manifest_member)
+                        if f:
+                            manifest = json.loads(f.read().decode('utf-8'))
+                except Exception:
+                    pass
 
             backups.append({
                 "filename": filename,
                 "filepath": filepath,
                 "size": stat.st_size,
                 "created_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-                "manifest": manifest
+                "manifest": manifest,
+                "encrypted": encrypted,
+                "encryption_info": encryption_info
             })
 
     # Sort by creation time, newest first
@@ -505,7 +532,7 @@ def delete_backup(filename):
     """Delete a backup file.
 
     Args:
-        filename: Name of backup file to delete
+        filename: Name of backup file to delete (can be .tar.gz or .tar.gz.enc)
 
     Returns:
         Tuple of (success: bool, message: str)
@@ -513,6 +540,10 @@ def delete_backup(filename):
     # Security: prevent path traversal
     if '/' in filename or '\\' in filename or '..' in filename:
         return False, "Invalid filename"
+
+    # Validate file extension
+    if not (filename.endswith('.tar.gz') or filename.endswith('.tar.gz.enc')):
+        return False, "Invalid backup file extension"
 
     filepath = os.path.join(BACKUPS_DIR, filename)
 
@@ -524,6 +555,27 @@ def delete_backup(filename):
         return True, f"Deleted {filename}"
     except Exception as e:
         return False, f"Failed to delete: {str(e)}"
+
+
+def get_backup_key_fingerprint():
+    """Get fingerprint of the backup encryption key if configured.
+
+    Returns first 8 characters of SHA256 hash of BACKUP_ENCRYPTION_KEY,
+    or None if not configured.
+    """
+    key_env = os.getenv("BACKUP_ENCRYPTION_KEY")
+    if not key_env:
+        return None
+    return sha256(key_env.encode()).hexdigest()[:8]
+
+
+def is_backup_encryption_configured():
+    """Check if backup encryption key is configured in environment.
+
+    Returns:
+        bool: True if BACKUP_ENCRYPTION_KEY is set
+    """
+    return bool(os.getenv("BACKUP_ENCRYPTION_KEY"))
 
 
 def generate_backup_filename(backup_type="full"):
