@@ -11,6 +11,19 @@
 	let seedResult = null;
 	let error = null;
 	let confirmProduction = false;
+	let redirecting = false;
+	let redirectCountdown = 3;
+
+	// Admin management state
+	let showAdminPanel = false;
+	let deleteCount = '5';
+	let deleteType = 'soft';
+	let includeArtists = false;
+	let includePhotos = false;
+	let deleting = false;
+	let deleteResult = null;
+	let restoring = false;
+	let restoreResult = null;
 
 	onMount(async () => {
 		await auth.init();
@@ -27,9 +40,16 @@
 			}
 			setupStatus = await response.json();
 
-			// If setup not required and not viewing results, redirect
+			// If setup not required and not viewing results, show message then redirect
 			if (!setupStatus.setup_required && !seedResult) {
-				goto('/');
+				redirecting = true;
+				const countdown = setInterval(() => {
+					redirectCountdown--;
+					if (redirectCountdown <= 0) {
+						clearInterval(countdown);
+						goto('/');
+					}
+				}, 1000);
 			}
 		} catch (err) {
 			error = err.message || 'Failed to connect to server';
@@ -98,6 +118,105 @@
 			error = err.message || 'Failed to seed demo data';
 		} finally {
 			seeding = false;
+		}
+	}
+
+	async function getHeaders() {
+		let csrfToken = $auth?.csrfToken;
+		if (!csrfToken) {
+			const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+				credentials: 'include'
+			});
+			if (csrfResponse.ok) {
+				const csrfData = await csrfResponse.json();
+				csrfToken = csrfData.csrf_token;
+			}
+		}
+		const headers = { 'Content-Type': 'application/json' };
+		if (csrfToken) {
+			headers['X-CSRFToken'] = csrfToken;
+		}
+		return headers;
+	}
+
+	async function bulkDelete() {
+		if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
+			error = 'Admin access required.';
+			return;
+		}
+
+		deleting = true;
+		error = null;
+		deleteResult = null;
+
+		try {
+			const headers = await getHeaders();
+			const response = await fetch(`${PUBLIC_API_BASE_URL}/api/setup/bulk-delete`, {
+				method: 'POST',
+				headers,
+				credentials: 'include',
+				body: JSON.stringify({
+					count: deleteCount === 'all' ? 'all' : parseInt(deleteCount),
+					delete_type: deleteType,
+					include_artists: includeArtists,
+					include_photos: includePhotos
+				})
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json();
+				throw new Error(errorData.error || errorData.detail || 'Failed to delete');
+			}
+
+			deleteResult = await response.json();
+			// Refresh status
+			await checkSetupStatus();
+		} catch (err) {
+			error = err.message || 'Failed to perform bulk delete';
+		} finally {
+			deleting = false;
+		}
+	}
+
+	async function restoreDeleted() {
+		if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
+			error = 'Admin access required.';
+			return;
+		}
+
+		restoring = true;
+		error = null;
+		restoreResult = null;
+
+		try {
+			const headers = await getHeaders();
+			const response = await fetch(`${PUBLIC_API_BASE_URL}/api/setup/restore-deleted`, {
+				method: 'POST',
+				headers,
+				credentials: 'include',
+				body: JSON.stringify({ count: 'all' })
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json();
+				throw new Error(errorData.error || errorData.detail || 'Failed to restore');
+			}
+
+			restoreResult = await response.json();
+			// Refresh status
+			await checkSetupStatus();
+		} catch (err) {
+			error = err.message || 'Failed to restore deleted items';
+		} finally {
+			restoring = false;
+		}
+	}
+
+	function toggleAdminPanel() {
+		showAdminPanel = !showAdminPanel;
+		// Stop redirect countdown when admin panel is opened
+		if (showAdminPanel) {
+			redirecting = false;
 		}
 	}
 </script>
@@ -220,8 +339,167 @@
 					</div>
 				{/if}
 			</div>
+		{:else if redirecting || showAdminPanel}
+			<!-- Already setup - with admin panel option -->
+			<div class="card-header" in:fade>
+				<div class="logo">Canvas & Clay</div>
+				<h1>{showAdminPanel ? 'Data Management' : 'Already Set Up'}</h1>
+			</div>
+			<div class="card-body" in:fade>
+				{#if !showAdminPanel}
+					<p class="subtitle">
+						Your instance is already configured and ready to go.
+					</p>
+					{#if redirecting}
+						<p class="redirect-notice">Redirecting to home in {redirectCountdown}...</p>
+					{/if}
+					<div class="actions">
+						<a href="/" class="primary-btn">Go Now</a>
+					</div>
+					{#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
+						<div class="admin-toggle">
+							<button class="text-btn" on:click={toggleAdminPanel}>
+								Manage Data
+							</button>
+						</div>
+					{/if}
+				{:else}
+					<!-- Admin Panel -->
+					<div class="admin-panel">
+						<div class="stats-grid">
+							<div class="stat-item">
+								<span class="stat-value">{setupStatus?.artworks_count || 0}</span>
+								<span class="stat-label">Artworks</span>
+							</div>
+							<div class="stat-item">
+								<span class="stat-value">{setupStatus?.artists_count || 0}</span>
+								<span class="stat-label">Artists</span>
+							</div>
+							<div class="stat-item">
+								<span class="stat-value">{setupStatus?.photos_count || 0}</span>
+								<span class="stat-label">Photos</span>
+							</div>
+							{#if setupStatus?.deleted_artworks_count > 0}
+								<div class="stat-item deleted">
+									<span class="stat-value">{setupStatus?.deleted_artworks_count || 0}</span>
+									<span class="stat-label">Soft Deleted</span>
+								</div>
+							{/if}
+						</div>
+
+						<div class="delete-section">
+							<h3>Bulk Delete</h3>
+
+							<div class="form-group">
+								<label>Number to delete:</label>
+								<div class="radio-group">
+									<label class="radio-label">
+										<input type="radio" bind:group={deleteCount} value="5" />
+										<span>5</span>
+									</label>
+									<label class="radio-label">
+										<input type="radio" bind:group={deleteCount} value="10" />
+										<span>10</span>
+									</label>
+									<label class="radio-label">
+										<input type="radio" bind:group={deleteCount} value="25" />
+										<span>25</span>
+									</label>
+									<label class="radio-label">
+										<input type="radio" bind:group={deleteCount} value="all" />
+										<span>All</span>
+									</label>
+								</div>
+							</div>
+
+							<div class="form-group">
+								<label>Delete type:</label>
+								<div class="radio-group">
+									<label class="radio-label">
+										<input type="radio" bind:group={deleteType} value="soft" />
+										<span>Soft Delete</span>
+										<small>Mark as deleted, can restore</small>
+									</label>
+									<label class="radio-label">
+										<input type="radio" bind:group={deleteType} value="hard" />
+										<span>Hard Delete</span>
+										<small>Permanent, cannot restore</small>
+									</label>
+								</div>
+							</div>
+
+							<div class="form-group">
+								<label>Options:</label>
+								<div class="checkbox-group">
+									<label class="checkbox-label">
+										<input type="checkbox" bind:checked={includeArtists} />
+										<span>Also delete artists (if no artworks remain)</span>
+									</label>
+									<label class="checkbox-label">
+										<input type="checkbox" bind:checked={includePhotos} />
+										<span>Also delete photos</span>
+									</label>
+								</div>
+							</div>
+
+							<div class="action-row">
+								<button
+									class="danger-btn"
+									on:click={bulkDelete}
+									disabled={deleting}
+								>
+									{deleting ? 'Deleting...' : `Delete ${deleteCount === 'all' ? 'All' : deleteCount} Artworks`}
+								</button>
+							</div>
+
+							{#if deleteResult?.success}
+								<div class="result-msg success">
+									Deleted: {deleteResult.deleted.artworks} artworks
+									{#if deleteResult.deleted.artists > 0}, {deleteResult.deleted.artists} artists{/if}
+									{#if deleteResult.deleted.photos > 0}, {deleteResult.deleted.photos} photos{/if}
+									({deleteResult.delete_type})
+								</div>
+							{/if}
+						</div>
+
+						{#if setupStatus?.deleted_artworks_count > 0}
+							<div class="restore-section">
+								<h3>Restore Soft-Deleted</h3>
+								<p class="section-desc">
+									{setupStatus.deleted_artworks_count} soft-deleted artworks can be restored.
+								</p>
+								<div class="action-row">
+									<button
+										class="secondary-btn"
+										on:click={restoreDeleted}
+										disabled={restoring}
+									>
+										{restoring ? 'Restoring...' : 'Restore All'}
+									</button>
+								</div>
+
+								{#if restoreResult?.success}
+									<div class="result-msg success">
+										Restored: {restoreResult.restored.artworks} artworks
+										{#if restoreResult.restored.artists > 0}, {restoreResult.restored.artists} artists{/if}
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						{#if error}
+							<div class="error-msg">{error}</div>
+						{/if}
+
+						<div class="actions">
+							<button class="text-btn" on:click={toggleAdminPanel}>Back</button>
+							<a href="/" class="primary-btn">Done</a>
+						</div>
+					</div>
+				{/if}
+			</div>
 		{:else}
-			<!-- Setup not required -->
+			<!-- Setup not required (fallback) -->
 			<div class="card-header" in:fade>
 				<div class="logo">Canvas & Clay</div>
 				<h1>Setup Complete</h1>
@@ -559,6 +837,193 @@
 		color: var(--text-secondary);
 		font-size: 14px;
 		margin: 0;
+	}
+
+	.redirect-notice {
+		color: var(--text-secondary);
+		font-size: 14px;
+		text-align: center;
+		margin: 8px 0 0;
+	}
+
+	/* Admin Panel Styles */
+	.admin-toggle {
+		margin-top: 24px;
+		text-align: center;
+		padding-top: 16px;
+		border-top: 1px solid var(--border-color);
+	}
+
+	.admin-panel {
+		text-align: left;
+	}
+
+	.stats-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+		gap: 12px;
+		margin-bottom: 24px;
+		padding: 16px;
+		background: var(--bg-tertiary);
+		border-radius: 8px;
+	}
+
+	.stat-item {
+		text-align: center;
+	}
+
+	.stat-value {
+		display: block;
+		font-size: 24px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.stat-label {
+		display: block;
+		font-size: 11px;
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.stat-item.deleted .stat-value {
+		color: var(--error-color);
+	}
+
+	.delete-section,
+	.restore-section {
+		background: var(--bg-tertiary);
+		border-radius: 8px;
+		padding: 20px;
+		margin-bottom: 16px;
+	}
+
+	.delete-section h3,
+	.restore-section h3 {
+		margin-top: 0;
+	}
+
+	.section-desc {
+		color: var(--text-secondary);
+		font-size: 14px;
+		margin: 0 0 16px;
+	}
+
+	.form-group {
+		margin-bottom: 16px;
+	}
+
+	.form-group > label {
+		display: block;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--text-secondary);
+		margin-bottom: 8px;
+	}
+
+	.radio-group,
+	.checkbox-group {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.radio-label,
+	.checkbox-label {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 10px 14px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		cursor: pointer;
+		transition: all 0.15s ease;
+		font-size: 14px;
+	}
+
+	.radio-label:hover,
+	.checkbox-label:hover {
+		border-color: var(--accent-color);
+	}
+
+	.radio-label input,
+	.checkbox-label input {
+		margin-top: 2px;
+	}
+
+	.radio-label span,
+	.checkbox-label span {
+		color: var(--text-primary);
+	}
+
+	.radio-label small {
+		display: block;
+		font-size: 11px;
+		color: var(--text-secondary);
+		margin-top: 2px;
+	}
+
+	.action-row {
+		margin-top: 16px;
+	}
+
+	.danger-btn {
+		background: #d32f2f;
+		color: white;
+		border: none;
+		padding: 10px 20px;
+		border-radius: 6px;
+		font-weight: 500;
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.danger-btn:hover {
+		background: #b71c1c;
+	}
+
+	.danger-btn:disabled {
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		cursor: default;
+	}
+
+	.secondary-btn {
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		border: 1px solid var(--border-color);
+		padding: 10px 20px;
+		border-radius: 6px;
+		font-weight: 500;
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.secondary-btn:hover {
+		border-color: var(--accent-color);
+		color: var(--accent-color);
+	}
+
+	.secondary-btn:disabled {
+		color: var(--text-secondary);
+		cursor: default;
+	}
+
+	.result-msg {
+		margin-top: 12px;
+		padding: 10px 14px;
+		border-radius: 6px;
+		font-size: 13px;
+	}
+
+	.result-msg.success {
+		background: rgba(76, 175, 80, 0.1);
+		color: #4caf50;
+		border: 1px solid rgba(76, 175, 80, 0.3);
 	}
 
 	.footer {

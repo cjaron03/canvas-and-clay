@@ -1,7 +1,7 @@
 <script>
   import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { auth } from '$lib/stores/auth';
-  import { goto } from '$app/navigation';
+  import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/stores';
   import { onMount, onDestroy } from 'svelte';
 
@@ -11,6 +11,14 @@
   let showSuggestions = false;
   let searchContainer;
   let debounceTimer;
+
+  // Selection mode state
+  let selectMode = false;
+  let selectedIds = new Set();
+  let deleting = false;
+  let deleteError = null;
+  let showDeleteModal = false;
+  let deleteType = 'soft';
 
   // Reactive filter state initialized from URL data
   let filters = {
@@ -134,15 +142,130 @@
       document.removeEventListener('click', handleClickOutside);
     }
   });
+
+  // Selection mode functions
+  const toggleSelectMode = () => {
+    selectMode = !selectMode;
+    if (!selectMode) {
+      selectedIds = new Set();
+      deleteError = null;
+    }
+  };
+
+  const toggleSelection = (id, event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    selectedIds = newSet;
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === data.artists.length) {
+      selectedIds = new Set();
+    } else {
+      selectedIds = new Set(data.artists.map(a => a.id));
+    }
+  };
+
+  const confirmDelete = () => {
+    if (selectedIds.size === 0) return;
+    showDeleteModal = true;
+  };
+
+  const cancelDelete = () => {
+    showDeleteModal = false;
+    deleteType = 'soft';
+  };
+
+  const executeDelete = async () => {
+    if (selectedIds.size === 0) return;
+
+    deleting = true;
+    deleteError = null;
+
+    try {
+      // Get CSRF token
+      let csrfToken = $auth?.csrfToken;
+      if (!csrfToken) {
+        const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
+          credentials: 'include'
+        });
+        if (csrfResponse.ok) {
+          const csrfData = await csrfResponse.json();
+          csrfToken = csrfData.csrf_token;
+        }
+      }
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/artists/bulk-delete`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          artist_ids: Array.from(selectedIds),
+          delete_type: deleteType
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || errorData.detail || 'Failed to delete');
+      }
+
+      // Success - refresh data and exit selection mode
+      showDeleteModal = false;
+      selectMode = false;
+      selectedIds = new Set();
+      await invalidateAll();
+    } catch (err) {
+      deleteError = err.message || 'Failed to delete artists';
+    } finally {
+      deleting = false;
+    }
+  };
 </script>
 
 <div class="container">
   <header>
     <h1>Artists</h1>
-    {#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
-      <a href="/artists/new" class="btn-primary">Add a new artist</a>
-    {/if}
+    <div class="header-actions">
+      {#if $auth.isAuthenticated && $auth.user?.role === 'admin'}
+        <button
+          class="btn-select"
+          class:active={selectMode}
+          on:click={toggleSelectMode}
+        >
+          {selectMode ? 'Cancel' : 'Select'}
+        </button>
+        <a href="/artists/new" class="btn-primary">Add a new artist</a>
+      {/if}
+    </div>
   </header>
+
+  {#if selectMode && selectedIds.size > 0}
+    <div class="selection-toolbar">
+      <div class="selection-info">
+        <button class="btn-select-all" on:click={selectAll}>
+          {selectedIds.size === data.artists.length ? 'Deselect All' : 'Select All'}
+        </button>
+        <span>{selectedIds.size} selected</span>
+      </div>
+      <div class="selection-actions">
+        <button class="btn-delete" on:click={confirmDelete}>
+          Delete Selected
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <div class="filters-container">
     <div class="search-bar" bind:this={searchContainer}>
@@ -214,7 +337,22 @@
   {:else}
     <div class="artist-grid">
       {#each data.artists as artist}
-        <a href="/artists/{artist.id}" class="artist-card">
+        <a
+          href={selectMode ? undefined : `/artists/${artist.id}`}
+          class="artist-card"
+          class:selected={selectedIds.has(artist.id)}
+          class:select-mode={selectMode}
+          on:click={selectMode ? (e) => toggleSelection(artist.id, e) : undefined}
+        >
+          {#if selectMode}
+            <div class="checkbox-overlay" on:click={(e) => toggleSelection(artist.id, e)}>
+              <div class="checkbox" class:checked={selectedIds.has(artist.id)}>
+                {#if selectedIds.has(artist.id)}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                {/if}
+              </div>
+            </div>
+          {/if}
           <div class="artist-thumbnail">
             {#if artist.photo}
               <img
@@ -278,6 +416,46 @@
   {/if}
 </div>
 
+{#if showDeleteModal}
+  <div class="modal-overlay" on:click={cancelDelete}>
+    <div class="modal" on:click|stopPropagation>
+      <h2>Delete {selectedIds.size} Artist{selectedIds.size === 1 ? '' : 's'}</h2>
+
+      <div class="delete-options">
+        <label class="radio-option">
+          <input type="radio" bind:group={deleteType} value="soft" />
+          <div class="option-content">
+            <span class="option-title">Soft Delete</span>
+            <span class="option-desc">Mark as deleted. Can be restored later.</span>
+          </div>
+        </label>
+        <label class="radio-option">
+          <input type="radio" bind:group={deleteType} value="hard" />
+          <div class="option-content">
+            <span class="option-title">Hard Delete</span>
+            <span class="option-desc">Permanently remove. Cannot be undone.</span>
+          </div>
+        </label>
+      </div>
+
+      {#if deleteError}
+        <div class="modal-error">{deleteError}</div>
+      {/if}
+
+      <div class="modal-actions">
+        <button class="btn-cancel" on:click={cancelDelete} disabled={deleting}>Cancel</button>
+        <button
+          class="btn-confirm-delete"
+          on:click={executeDelete}
+          disabled={deleting}
+        >
+          {deleting ? 'Deleting...' : `Delete ${selectedIds.size} Artist${selectedIds.size === 1 ? '' : 's'}`}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .container {
     max-width: 1400px;
@@ -307,6 +485,285 @@
   h1 {
     margin: 0;
     color: var(--text-primary);
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  /* Selection Mode Styles */
+  .btn-select {
+    padding: 0 18px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 22px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .btn-select:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .btn-select.active {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+  }
+
+  .selection-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background: var(--accent-color);
+    color: white;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    animation: slideDown 0.2s ease-out;
+  }
+
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .selection-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .btn-select-all {
+    padding: 6px 14px;
+    background: rgba(255,255,255,0.2);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: background 0.15s ease;
+  }
+
+  .btn-select-all:hover {
+    background: rgba(255,255,255,0.3);
+  }
+
+  .selection-actions {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .btn-delete {
+    padding: 8px 18px;
+    background: #d32f2f;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .btn-delete:hover {
+    background: #b71c1c;
+  }
+
+  /* Checkbox Overlay */
+  .checkbox-overlay {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 10;
+  }
+
+  .checkbox {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    cursor: pointer;
+  }
+
+  .checkbox.checked {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+  }
+
+  .checkbox svg {
+    color: white;
+  }
+
+  .artist-card.select-mode {
+    cursor: pointer;
+  }
+
+  .artist-card.selected {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px var(--accent-color), 0 8px 24px rgba(0, 122, 255, 0.2);
+  }
+
+  /* Modal Styles */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal {
+    background: var(--bg-primary);
+    padding: 2rem;
+    border-radius: 16px;
+    max-width: 420px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .modal h2 {
+    margin: 0 0 1.5rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+  }
+
+  .delete-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .radio-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .radio-option:hover {
+    border-color: var(--accent-color);
+  }
+
+  .radio-option input[type="radio"] {
+    margin-top: 2px;
+  }
+
+  .option-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .option-title {
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .option-desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+
+  .modal-error {
+    background: rgba(211, 47, 47, 0.1);
+    color: #d32f2f;
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+  }
+
+  .btn-cancel {
+    padding: 10px 20px;
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .btn-cancel:hover {
+    background: var(--bg-secondary);
+  }
+
+  .btn-cancel:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .btn-confirm-delete {
+    padding: 10px 20px;
+    background: #d32f2f;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .btn-confirm-delete:hover {
+    background: #b71c1c;
+  }
+
+  .btn-confirm-delete:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    cursor: default;
   }
 
   /* Modern Filters Layout */
@@ -559,6 +1016,7 @@
   }
 
   .artist-card {
+    position: relative;
     background: var(--bg-primary);
     border-radius: 12px;
     overflow: hidden;

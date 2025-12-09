@@ -374,10 +374,15 @@ def check_setup_status():
     with app.app_context():
         Artist, Artwork, Storage, _, _, _, ArtworkPhoto = init_tables(db)
 
-        # Count existing data
+        # Count existing data (active)
         users_count = User.query.filter(User.role != 'admin').count()
         artists_count = Artist.query.filter_by(is_deleted=False).count()
         artworks_count = Artwork.query.filter_by(is_deleted=False).count()
+        photos_count = ArtworkPhoto.query.count()
+
+        # Count soft-deleted data
+        deleted_artists_count = Artist.query.filter_by(is_deleted=True).count()
+        deleted_artworks_count = Artwork.query.filter_by(is_deleted=True).count()
 
         # Check for demo data
         has_demo = check_demo_data_exists(Artist, Artwork)
@@ -394,6 +399,9 @@ def check_setup_status():
             "users_count": users_count,
             "artists_count": artists_count,
             "artworks_count": artworks_count,
+            "photos_count": photos_count,
+            "deleted_artists_count": deleted_artists_count,
+            "deleted_artworks_count": deleted_artworks_count,
             "has_demo_data": has_demo,
             "environment": flask_env,
             "production_warning": is_production and setup_required,

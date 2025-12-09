@@ -2493,6 +2493,208 @@ def delete_artwork(artwork_id):
         app.logger.exception("Artwork deletion failed")
         return jsonify({'error': 'Failed to delete artwork. Please try again.'}), 500
 
+
+@app.route('/api/artworks/bulk-delete', methods=['POST'])
+@login_required
+def bulk_delete_artworks():
+    """Bulk delete multiple artworks.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Supports soft and hard delete
+        - Audit logged
+
+    Request JSON:
+        artwork_ids: list of artwork IDs to delete
+        delete_type: "soft" or "hard"
+
+    Returns:
+        200: Artworks deleted successfully
+        403: Permission denied (not admin)
+        400: Invalid request
+    """
+    # Admin only
+    if not current_user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.get_json() or {}
+    artwork_ids = data.get('artwork_ids', [])
+    delete_type = data.get('delete_type', 'soft')
+
+    if not artwork_ids:
+        return jsonify({'error': 'No artwork IDs provided'}), 400
+
+    if delete_type not in ('soft', 'hard'):
+        return jsonify({'error': 'Invalid delete_type. Must be "soft" or "hard"'}), 400
+
+    try:
+        deleted_count = 0
+        photos_deleted = 0
+        deletion_date = date.today()
+
+        for artwork_id in artwork_ids:
+            artwork = db.session.get(Artwork, artwork_id)
+            if not artwork:
+                continue
+
+            if delete_type == 'soft':
+                # Soft delete - mark as deleted
+                artwork.is_deleted = True
+                artwork.date_deleted = deletion_date
+                deleted_count += 1
+            else:
+                # Hard delete - remove permanently
+                photos = ArtworkPhoto.query.filter_by(artwork_num=artwork_id).all()
+                for photo in photos:
+                    try:
+                        delete_photo_files(photo.file_path, photo.thumbnail_path)
+                    except Exception as e:
+                        app.logger.warning(f"Failed to delete photo files for {photo.photo_id}: {e}")
+                    db.session.delete(photo)
+                    photos_deleted += 1
+
+                db.session.delete(artwork)
+                deleted_count += 1
+
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='bulk_artwork_deleted',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artwork_ids': artwork_ids,
+                'delete_type': delete_type,
+                'deleted_count': deleted_count,
+                'photos_deleted': photos_deleted,
+                'deletion_date': deletion_date.isoformat()
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} bulk deleted {deleted_count} artworks ({delete_type})")
+
+        return jsonify({
+            'success': True,
+            'deleted': {
+                'artworks': deleted_count,
+                'photos': photos_deleted
+            },
+            'delete_type': delete_type
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Bulk artwork deletion failed")
+        return jsonify({'error': 'Failed to delete artworks. Please try again.'}), 500
+
+
+@app.route('/api/artists/bulk-delete', methods=['POST'])
+@login_required
+def bulk_delete_artists():
+    """Bulk delete multiple artists.
+
+    Security:
+        - Requires authentication
+        - Requires admin role
+        - Supports soft and hard delete
+        - Audit logged
+
+    Request JSON:
+        artist_ids: list of artist IDs to delete
+        delete_type: "soft" or "hard"
+
+    Returns:
+        200: Artists deleted successfully
+        403: Permission denied (not admin)
+        400: Invalid request
+    """
+    # Admin only
+    if not current_user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.get_json() or {}
+    artist_ids = data.get('artist_ids', [])
+    delete_type = data.get('delete_type', 'soft')
+
+    if not artist_ids:
+        return jsonify({'error': 'No artist IDs provided'}), 400
+
+    if delete_type not in ('soft', 'hard'):
+        return jsonify({'error': 'Invalid delete_type. Must be "soft" or "hard"'}), 400
+
+    try:
+        deleted_count = 0
+        artworks_affected = 0
+        deletion_date = date.today()
+
+        for artist_id in artist_ids:
+            artist = db.session.get(Artist, artist_id)
+            if not artist:
+                continue
+
+            if delete_type == 'soft':
+                # Soft delete - mark as deleted
+                artist.is_deleted = True
+                artist.date_deleted = deletion_date
+                deleted_count += 1
+            else:
+                # Hard delete - remove permanently
+                # First count artworks that will be orphaned
+                artworks = Artwork.query.filter_by(artist_id=artist_id).all()
+                artworks_affected += len(artworks)
+
+                # Note: artworks are NOT deleted, they become orphaned (artist_id will be null
+                # due to FK SET NULL or the constraint prevents deletion)
+                # For now, we prevent hard delete if artist has artworks
+                if artworks:
+                    return jsonify({
+                        'error': f'Cannot hard delete artist {artist_id}: has {len(artworks)} artworks. Delete artworks first or use soft delete.'
+                    }), 400
+
+                db.session.delete(artist)
+                deleted_count += 1
+
+        db.session.commit()
+
+        # Audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            email=current_user.email,
+            event_type='bulk_artist_deleted',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', 'Unknown'),
+            details=json.dumps({
+                'artist_ids': artist_ids,
+                'delete_type': delete_type,
+                'deleted_count': deleted_count,
+                'deletion_date': deletion_date.isoformat()
+            })
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+
+        app.logger.info(f"Admin {current_user.email} bulk deleted {deleted_count} artists ({delete_type})")
+
+        return jsonify({
+            'success': True,
+            'deleted': {
+                'artists': deleted_count
+            },
+            'delete_type': delete_type
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Bulk artist deletion failed")
+        return jsonify({'error': 'Failed to delete artists. Please try again.'}), 500
+
+
 from auth import admin_required
 
 # Photo Upload Endpoints
