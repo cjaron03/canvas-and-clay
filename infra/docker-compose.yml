@@ -12,6 +12,7 @@ services:
       - AUTO_IMPORT_USERS=0   # Set to 1 to auto-import from users.json on fresh DB
       - AUTO_IMPORT_IMAGES=0  # Set to 1 to auto-import from images.zip
       - SEED_USERS=0          # Set to 1 to seed from SEED_USER_* env vars
+      - AUTO_SEED_DEMO=0      # Set to 1 to auto-seed demo data on empty DB
     volumes:
       - ../backend:/app
       - uploads_data:/app/uploads

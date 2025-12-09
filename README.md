@@ -11,54 +11,188 @@ A local-first digital gallery and artwork management system. Admins manage artwo
 - **Dark/Light Mode** - Theme toggle for comfortable viewing
 - **Help Center** - FAQ, guides, and contact form
 - **Admin-Editable Legal Pages** - Privacy Policy and Terms of Service management
+- **Setup Wizard** - Interactive TUI for easy installation and troubleshooting
 
 ## Getting Started
 
-### Step 1: Prerequisites
+### Prerequisites
 
 Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
-### Step 2: Clone the Repository
+### Step 1: Clone the Repository
 
 ```bash
 git clone https://github.com/cjaron03/canvas-and-clay.git
 cd canvas-and-clay
 ```
 
-### Step 3: Configure Environment
+### Step 2: Run the Setup Wizard
 
 ```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
+./setup.sh
 ```
 
-### Step 4: Start the Application
+You'll see the main menu:
 
-```bash
-docker compose -f infra/docker-compose.yml up --build
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                        Local-First Digital Gallery                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│          A secure artwork management system for artists and collectors.      │
+│                                                                              │
+│          ┌──────────────────────────────────────────────────────┐           │
+│          │                                                      │           │
+│          │  [1]  Setup      Configure environment and start     │           │
+│          │                  services                            │           │
+│          │  [2]  Repair     Scan for and fix common issues      │           │
+│          │                                                      │           │
+│          │  [q]  Quit                                           │           │
+│          │                                                      │           │
+│          └──────────────────────────────────────────────────────┘           │
+│                                                                              │
+│                           Press 1, 2, or q                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Wait for the containers to start (first build takes 2-3 minutes).
+Press `1` to start the setup process.
 
-### Step 5: Seed Demo Data (Optional)
+### Step 3: Prerequisites Check
 
-In a new terminal, populate the database with sample artists and artworks:
+The wizard checks your system:
 
-```bash
-docker compose -f infra/docker-compose.yml exec backend python seed_artworks.py
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                                 Setup                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Step 1 of 5: Checking Prerequisites                                        │
+│   ──────────────────────────────────────────────────────────────────────     │
+│                                                                              │
+│       [OK]  Docker installed                                                 │
+│       [OK]  Docker daemon running                                            │
+│       [OK]  docker-compose available                                         │
+│                                                                              │
+│                        Press any key to continue...                          │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Step 6: Access the Application
+### Step 4: Environment Configuration
 
-Open http://localhost:5173 in your browser
+The wizard creates your `.env` file with secure keys:
 
-### Step 7: Sign In as Admin
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                                 Setup                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Step 2 of 5: Environment Configuration                                     │
+│   ──────────────────────────────────────────────────────────────────────     │
+│                                                                              │
+│       [OK]  Created .env from template                                       │
+│       [OK]  Generated SECRET_KEY                                             │
+│       [OK]  Generated PII_ENCRYPTION_KEY                                     │
+│                                                                              │
+│   Admin Credentials:                                                         │
+│       Email:    admin@canvas-clay.local                                      │
+│       Password: ********                                                     │
+│                                                                              │
+│                        Press any key to continue...                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-- Click "Sign in" in the top right
-- Email: `admin@canvas-clay.local`
-- Password: `ChangeMe123`
+### Step 5: Building Containers
+
+Docker builds and starts the services:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                                 Setup                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Step 3 of 5: Building Containers                                           │
+│   ──────────────────────────────────────────────────────────────────────     │
+│                                                                              │
+│   Building and starting Docker containers...                                 │
+│   This may take a few minutes on first run.                                  │
+│                                                                              │
+│    ✔ Network infra_default        Created                                    │
+│    ✔ Container canvas_db          Started                                    │
+│    ✔ Container canvas_backend     Started                                    │
+│    ✔ Container canvas_frontend    Started                                    │
+│                                                                              │
+│       [OK]  Containers started                                               │
+│                                                                              │
+│                        Press any key to continue...                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Step 6: Health Check
+
+The wizard verifies services are running:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                                 Setup                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Step 4 of 5: Health Check                                                  │
+│   ──────────────────────────────────────────────────────────────────────     │
+│                                                                              │
+│   Waiting for services to be ready...                                        │
+│                                                                              │
+│       [OK]  Backend is healthy                                               │
+│       [OK]  Services are ready                                               │
+│                                                                              │
+│                        Press any key to continue...                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Step 7: Setup Complete
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                            Setup Complete                                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Setup completed successfully!                                              │
+│   ──────────────────────────────────────────────────────────────────────     │
+│                                                                              │
+│   Canvas & Clay is now running.                                              │
+│                                                                              │
+│   Open your browser to:                                                      │
+│   http://localhost:5173                                                      │
+│                                                                              │
+│   Admin email: admin@canvas-clay.local                                       │
+│                                                                              │
+│   Useful commands:                                                           │
+│     View logs:        docker compose -f infra/docker-compose.yml logs -f     │
+│     Stop:             docker compose -f infra/docker-compose.yml down        │
+│     Restart backend:  docker compose -f infra/docker-compose.yml restart     │
+│                                                                              │
+│                         Press any key to exit...                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Step 8: Sign In
+
+1. Open http://localhost:5173 in your browser
+2. Click **"Sign in"** in the top right
+3. Enter your admin credentials:
+   - **Email:** `admin@canvas-clay.local`
+   - **Password:** (the password you set during setup, or check `backend/.env`)
 
 You now have full admin access to manage users, artworks, and settings.
+
+### Step 9: Seed Demo Data (Optional)
+
+After signing in, visit http://localhost:5173/setup to seed demo artists and artworks.
 
 ## User Roles
 
@@ -106,6 +240,81 @@ The wizard guides you through:
 ```bash
 docker compose -f infra/docker-compose.yml exec backend bash /app/tools/backup.sh
 ```
+
+### Repair Wizard
+
+Diagnose and fix common issues:
+
+```bash
+./setup.sh
+# Then press 2 for Repair
+```
+
+Or run directly:
+
+```bash
+./setup.sh --repair
+```
+
+The repair wizard scans and can auto-fix:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS & CLAY                                   │
+│                             Repair Wizard                                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Scanning for issues...                                                     │
+│                                                                              │
+│   [/] Checking Docker status...                                              │
+│       [OK]  Docker installed                                                 │
+│       [OK]  Docker daemon running                                            │
+│       [OK]  All containers running                                           │
+│                                                                              │
+│   [/] Checking environment...                                                │
+│       [OK]  .env file exists                                                 │
+│       [OK]  SECRET_KEY set                                                   │
+│       [OK]  PII_ENCRYPTION_KEY set                                           │
+│       [OK]  .env syntax valid                                                │
+│                                                                              │
+│   [/] Checking filesystem...                                                 │
+│       [OK]  uploads/ directory exists                                        │
+│       [OK]  thumbnails/ directory exists                                     │
+│                                                                              │
+│   [/] Checking database...                                                   │
+│       [OK]  Database connection OK                                           │
+│       [OK]  Migrations OK                                                    │
+│                                                                              │
+│   [/] Checking data integrity...                                             │
+│       [OK]  No orphaned files                                                │
+│       [OK]  No missing file records                                          │
+│       [OK]  All thumbnails present                                           │
+│                                                                              │
+│   ──────────────────────────────────────────────────────────────────────     │
+│   No issues found!                                                           │
+│                                                                              │
+│                       Press any key to return...                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Checks performed:**
+
+| Check | Auto-fixable |
+|-------|--------------|
+| Docker installed & running | No |
+| Containers running | Yes |
+| .env file exists | Yes |
+| SECRET_KEY configured | Yes |
+| PII_ENCRYPTION_KEY valid | Yes |
+| .env syntax valid | Yes |
+| uploads/ directory exists | Yes |
+| Database connection | No |
+| Migrations status | Yes |
+| Orphaned files | Yes |
+| Missing thumbnails | Yes |
+| Disk space | No |
+| Port availability | No |
+| Container health | Yes |
 
 ## Tech Stack
 
