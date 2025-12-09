@@ -1,16 +1,14 @@
 <script>
-  import { browser } from '$app/environment';
-  import DOMPurify from 'dompurify';
+  import DOMPurify from 'isomorphic-dompurify';
 
   export let data;
 
   $: dynamicContent = data?.content;
   $: hasContent = dynamicContent && dynamicContent.content;
 
-  // Sanitize HTML to prevent XSS attacks
+  // Sanitize HTML to prevent XSS attacks (works on both server and client)
   const sanitizeHtml = (html) => {
     if (!html) return '';
-    if (!browser) return html; // SSR fallback - will be sanitized on hydration
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr',
                      'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'a', 'span'],
