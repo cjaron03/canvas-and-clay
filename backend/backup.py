@@ -8,12 +8,17 @@ Usage:
     python3 backup.py --output backup.tar.gz --exclude-audit-logs
     python3 backup.py --output backup.tar.gz --include-thumbnails
 
+    # Encrypted backups
+    python3 backup.py --output backup.tar.gz.enc --encrypt --passphrase "MySecurePass123!"
+    python3 backup.py --output backup.tar.gz.enc --encrypt --use-env-key
+
 Features:
     - Creates a combined backup archive (.tar.gz)
     - Uses pg_dump for database (custom format for compression)
     - Archives photos from /app/uploads
     - Generates manifest.json with metadata and checksums
     - Supports dry-run mode to preview backup contents
+    - Optional AES-256-GCM encryption with Argon2id key derivation
 """
 
 import argparse
@@ -39,7 +44,13 @@ from backup_utils import (  # noqa: E402
     ensure_backups_dir,
     generate_backup_filename,
     BACKUPS_DIR,
-    UPLOADS_DIR
+)
+from backup_encryption import (  # noqa: E402
+    encrypt_backup,
+    encrypt_backup_with_env_key,
+    validate_passphrase,
+    PassphraseValidationError,
+    BackupEncryptionError,
 )
 
 
@@ -71,22 +82,41 @@ def create_backup(
     include_thumbnails=False,
     exclude_audit_logs=False,
     dry_run=False,
-    created_by=None
+    created_by=None,
+    encrypt=False,
+    passphrase=None,
+    use_env_key=False
 ):
     """Create a backup archive.
 
     Args:
-        output_path: Path for the output .tar.gz file
+        output_path: Path for the output .tar.gz file (or .tar.gz.enc if encrypted)
         db_only: Only backup database
         photos_only: Only backup photos
         include_thumbnails: Include thumbnail files
         exclude_audit_logs: Exclude audit_log table from database backup
         dry_run: Preview backup without creating it
         created_by: Email of user creating backup
+        encrypt: Whether to encrypt the backup
+        passphrase: Encryption passphrase (required if encrypt=True and not use_env_key)
+        use_env_key: Use BACKUP_ENCRYPTION_KEY env var instead of passphrase
 
     Returns:
-        Tuple of (success: bool, message: str)
+        Tuple of (success: bool, message: str, encryption_info: dict or None)
     """
+    # Validate encryption parameters
+    if encrypt:
+        if use_env_key:
+            if not os.getenv("BACKUP_ENCRYPTION_KEY"):
+                return False, "BACKUP_ENCRYPTION_KEY environment variable not set", None
+        elif not passphrase:
+            return False, "Passphrase required for encryption (or use --use-env-key)", None
+        else:
+            # Validate passphrase strength
+            is_valid, errors = validate_passphrase(passphrase)
+            if not is_valid:
+                return False, f"Passphrase validation failed: {'; '.join(errors)}", None
+
     # Determine backup type
     if db_only:
         backup_type = "db_only"
@@ -102,6 +132,9 @@ def create_backup(
         include_photos = True
 
     print(f"Backup type: {backup_type}")
+    if encrypt:
+        key_source = "environment variable" if use_env_key else "passphrase"
+        print(f"Encryption: enabled (key source: {key_source})")
     print("-" * 60)
 
     # Dry run mode - just show what would be backed up
@@ -111,18 +144,25 @@ def create_backup(
         if include_db:
             print("Database:")
             exclude_tables = ["audit_log"] if exclude_audit_logs else []
-            print(f"  - Tables to backup: all" +
+            print("  - Tables to backup: all" +
                   (f" (excluding: {', '.join(exclude_tables)})" if exclude_tables else ""))
 
         if include_photos:
             stats = get_uploads_stats(include_thumbnails)
-            print(f"\nPhotos:")
+            print("\nPhotos:")
             print(f"  - Files: {stats['count']}")
             print(f"  - Total size: {format_size(stats['total_size'])}")
             print(f"  - Include thumbnails: {include_thumbnails}")
 
+        if encrypt:
+            print("\nEncryption:")
+            print("  - Algorithm: AES-256-GCM")
+            print("  - KDF: Argon2id")
+            key_source = "BACKUP_ENCRYPTION_KEY env var" if use_env_key else "user passphrase"
+            print(f"  - Key source: {key_source}")
+
         print(f"\nOutput would be: {output_path}")
-        return True, "Dry run complete"
+        return True, "Dry run complete", None
 
     # Create temporary directory for staging
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -202,7 +242,15 @@ def create_backup(
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
 
-        with tarfile.open(output_path, "w:gz") as tar:
+        # Determine paths - if encrypting, create tar.gz first then encrypt
+        if encrypt:
+            # Create tar.gz in temp directory, then encrypt to final output
+            temp_tar_path = os.path.join(temp_dir, "backup.tar.gz")
+            tar_output_path = temp_tar_path
+        else:
+            tar_output_path = output_path
+
+        with tarfile.open(tar_output_path, "w:gz") as tar:
             # Add manifest
             tar.add(manifest_path, arcname="manifest.json")
 
@@ -214,15 +262,40 @@ def create_backup(
             if include_photos and os.path.exists(photos_archive_path):
                 tar.add(photos_archive_path, arcname="uploads.tar.gz")
 
+        encryption_info = None
+
+        # Encrypt if requested
+        if encrypt:
+            print("Encrypting backup...")
+            try:
+                if use_env_key:
+                    encryption_info = encrypt_backup_with_env_key(
+                        temp_tar_path,
+                        output_path
+                    )
+                else:
+                    encryption_info = encrypt_backup(
+                        temp_tar_path,
+                        output_path,
+                        passphrase
+                    )
+                print("  Encryption: AES-256-GCM with Argon2id")
+            except (PassphraseValidationError, BackupEncryptionError) as e:
+                return False, f"Encryption failed: {str(e)}", None
+
         final_size = os.path.getsize(output_path)
         print("-" * 60)
         print(f"Backup created: {output_path}")
         print(f"Total size: {format_size(final_size)}")
+        if encrypt:
+            print(f"Encrypted: Yes (original: {format_size(encryption_info['original_size'])})")
 
-        return True, f"Backup created successfully: {output_path}"
+        return True, f"Backup created successfully: {output_path}", encryption_info
 
 
 def main():
+    import getpass
+
     parser = argparse.ArgumentParser(
         description="Create a backup of Canvas & Clay database and photos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -261,6 +334,21 @@ def main():
         "--user",
         help="Email of user creating backup (for audit trail)"
     )
+    # Encryption arguments
+    parser.add_argument(
+        "--encrypt",
+        action="store_true",
+        help="Encrypt the backup with AES-256-GCM"
+    )
+    parser.add_argument(
+        "--passphrase",
+        help="Encryption passphrase (will prompt if --encrypt is used without this)"
+    )
+    parser.add_argument(
+        "--use-env-key",
+        action="store_true",
+        help="Use BACKUP_ENCRYPTION_KEY environment variable for encryption"
+    )
 
     args = parser.parse_args()
 
@@ -268,33 +356,61 @@ def main():
     if args.db_only and args.photos_only:
         parser.error("Cannot specify both --db-only and --photos-only")
 
+    # Handle encryption
+    encrypt = args.encrypt
+    passphrase = args.passphrase
+    use_env_key = args.use_env_key
+
+    if encrypt and not use_env_key and not passphrase:
+        # Prompt for passphrase interactively
+        passphrase = getpass.getpass("Enter encryption passphrase: ")
+        confirm = getpass.getpass("Confirm passphrase: ")
+        if passphrase != confirm:
+            print("Error: Passphrases do not match", file=sys.stderr)
+            sys.exit(1)
+
     # Generate output path if not specified
     if args.output:
         output_path = args.output
     else:
         ensure_backups_dir()
         backup_type = "db_only" if args.db_only else ("photos_only" if args.photos_only else "full")
-        output_path = os.path.join(BACKUPS_DIR, generate_backup_filename(backup_type))
+        filename = generate_backup_filename(backup_type)
+        if encrypt:
+            filename += ".enc"  # Add .enc for encrypted backups
+        output_path = os.path.join(BACKUPS_DIR, filename)
 
-    # Ensure .tar.gz extension
-    if not output_path.endswith('.tar.gz'):
-        output_path += '.tar.gz'
+    # Ensure correct extension
+    if encrypt:
+        if not output_path.endswith('.tar.gz.enc'):
+            if output_path.endswith('.tar.gz'):
+                output_path += '.enc'
+            else:
+                output_path += '.tar.gz.enc'
+    else:
+        if not output_path.endswith('.tar.gz'):
+            output_path += '.tar.gz'
 
     print(f"\n{'=' * 60}")
     print("Canvas & Clay Backup")
     print(f"{'=' * 60}")
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Output: {output_path}")
+    if encrypt:
+        print("Encryption: Enabled")
     print()
 
-    success, message = create_backup(
+    success, message, encryption_info = create_backup(
         output_path=output_path,
         db_only=args.db_only,
         photos_only=args.photos_only,
         include_thumbnails=args.include_thumbnails,
         exclude_audit_logs=args.exclude_audit_logs,
         dry_run=args.dry_run,
-        created_by=args.user
+        created_by=args.user,
+        encrypt=encrypt,
+        passphrase=passphrase,
+        use_env_key=use_env_key
     )
 
     if success:

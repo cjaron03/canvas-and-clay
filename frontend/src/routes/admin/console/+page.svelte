@@ -91,6 +91,16 @@
   let backupExcludeAuditLogs = false;
   let backupDbOnly = false;
   let backupPhotosOnly = false;
+  // Encryption options
+  let backupEncrypt = false;
+  let backupUseEnvKey = false;
+  let backupPassphrase = '';
+  let backupPassphraseConfirm = '';
+  let encryptionConfigLoaded = false;
+  let envKeyConfigured = false;
+  // Restore encryption
+  let restorePassphrase = '';
+  let restoreUseEnvKey = false;
   let restoreInProgress = false;
   let restoreProgress = null;
   let restoreCurrentStep = '';
@@ -1845,6 +1855,26 @@
     }
   };
 
+  const loadEncryptionConfig = async () => {
+    try {
+      const headers = { accept: 'application/json' };
+      if ($auth.csrfToken) {
+        headers['X-CSRFToken'] = $auth.csrfToken;
+      }
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/backups/encryption-config`, {
+        credentials: 'include',
+        headers
+      });
+      if (response.ok) {
+        const result = await response.json();
+        envKeyConfigured = result.env_key_configured || false;
+        encryptionConfigLoaded = true;
+      }
+    } catch (err) {
+      console.error('Failed to load encryption config:', err);
+    }
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -1854,6 +1884,22 @@
   };
 
   const startBackup = async () => {
+    // Validate encryption settings
+    if (backupEncrypt && !backupUseEnvKey) {
+      if (!backupPassphrase) {
+        backupError = 'Please enter a passphrase for encryption';
+        return;
+      }
+      if (backupPassphrase !== backupPassphraseConfirm) {
+        backupError = 'Passphrases do not match';
+        return;
+      }
+      if (backupPassphrase.length < 12) {
+        backupError = 'Passphrase must be at least 12 characters';
+        return;
+      }
+    }
+
     backupInProgress = true;
     backupError = '';
     backupNotice = '';
@@ -1869,21 +1915,35 @@
         headers['X-CSRFToken'] = $auth.csrfToken;
       }
 
+      const requestBody = {
+        db_only: backupDbOnly,
+        photos_only: backupPhotosOnly,
+        include_thumbnails: backupIncludeThumbnails,
+        exclude_audit_logs: backupExcludeAuditLogs,
+        encrypt: backupEncrypt
+      };
+
+      if (backupEncrypt) {
+        if (backupUseEnvKey) {
+          requestBody.use_env_key = true;
+        } else {
+          requestBody.passphrase = backupPassphrase;
+        }
+      }
+
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/backups/create`, {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({
-          db_only: backupDbOnly,
-          photos_only: backupPhotosOnly,
-          include_thumbnails: backupIncludeThumbnails,
-          exclude_audit_logs: backupExcludeAuditLogs
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (response.ok) {
         const result = await response.json();
         currentBackupId = result.backup_id;
+        // Clear passphrase fields after successful start
+        backupPassphrase = '';
+        backupPassphraseConfirm = '';
         pollBackupStatus();
       } else {
         const err = await response.json();
@@ -2022,6 +2082,8 @@
     restoreDbOnly = false;
     restorePhotosOnly = false;
     restoreSkipPreBackup = false;
+    restorePassphrase = '';
+    restoreUseEnvKey = false;
   };
 
   const confirmRestore = () => {
@@ -2030,6 +2092,13 @@
 
   const startRestore = async () => {
     if (!selectedBackupForRestore) return;
+
+    // Validate passphrase if backup is encrypted and not using env key
+    const isEncrypted = restoreValidation?.is_encrypted;
+    if (isEncrypted && !restoreUseEnvKey && !restorePassphrase) {
+      backupError = 'Please enter the passphrase to decrypt this backup';
+      return;
+    }
 
     restoreInProgress = true;
     restoreCurrentStep = 'Starting restore...';
@@ -2046,17 +2115,28 @@
         headers['X-CSRFToken'] = $auth.csrfToken;
       }
 
+      const requestBody = {
+        filename: selectedBackupForRestore,
+        confirmation_token: 'RESTORE',
+        db_only: restoreDbOnly,
+        photos_only: restorePhotosOnly,
+        skip_pre_backup: restoreSkipPreBackup
+      };
+
+      // Include decryption params if backup is encrypted
+      if (isEncrypted) {
+        if (restoreUseEnvKey) {
+          requestBody.use_env_key = true;
+        } else {
+          requestBody.passphrase = restorePassphrase;
+        }
+      }
+
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/restore`, {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({
-          filename: selectedBackupForRestore,
-          confirmation_token: 'RESTORE',
-          db_only: restoreDbOnly,
-          photos_only: restorePhotosOnly,
-          skip_pre_backup: restoreSkipPreBackup
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (response.ok) {
@@ -2118,6 +2198,11 @@
   // Load backups when backup tab is selected (only once)
   $: if (activeTab === 'backup' && !backupsLoaded && !backupLoading) {
     loadBackups();
+  }
+
+  // Load encryption config when backup tab is selected
+  $: if (activeTab === 'backup' && !encryptionConfigLoaded) {
+    loadEncryptionConfig();
   }
 
   // ============================================================================
@@ -3503,12 +3588,59 @@
             </label>
           </div>
 
+          <!-- Encryption Options -->
+          <div class="backup-encryption-options">
+            <label class="checkbox-option">
+              <input type="checkbox" bind:checked={backupEncrypt} />
+              <span>Encrypt backup (AES-256-GCM)</span>
+            </label>
+
+            {#if backupEncrypt}
+              <div class="encryption-method">
+                {#if envKeyConfigured}
+                  <label class="checkbox-option">
+                    <input type="checkbox" bind:checked={backupUseEnvKey} />
+                    <span>Use server encryption key (recommended for automated backups)</span>
+                  </label>
+                {/if}
+
+                {#if !backupUseEnvKey}
+                  <div class="passphrase-inputs">
+                    <div class="input-group">
+                      <label for="backup-passphrase">Passphrase</label>
+                      <input
+                        id="backup-passphrase"
+                        type="password"
+                        bind:value={backupPassphrase}
+                        placeholder="Enter passphrase (min 12 characters)"
+                        autocomplete="new-password"
+                      />
+                    </div>
+                    <div class="input-group">
+                      <label for="backup-passphrase-confirm">Confirm Passphrase</label>
+                      <input
+                        id="backup-passphrase-confirm"
+                        type="password"
+                        bind:value={backupPassphraseConfirm}
+                        placeholder="Confirm passphrase"
+                        autocomplete="new-password"
+                      />
+                    </div>
+                    <p class="passphrase-hint">
+                      Must be at least 12 characters with uppercase, lowercase, and a number or symbol.
+                    </p>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
           <button
             class="primary backup-btn"
             on:click={startBackup}
-            disabled={backupInProgress}
+            disabled={backupInProgress || (backupEncrypt && !backupUseEnvKey && (!backupPassphrase || backupPassphrase !== backupPassphraseConfirm))}
           >
-            {backupInProgress ? 'Creating Backup...' : 'Create Backup'}
+            {backupInProgress ? 'Creating Backup...' : (backupEncrypt ? 'Create Encrypted Backup' : 'Create Backup')}
           </button>
 
           {#if backupInProgress}
@@ -3554,6 +3686,9 @@
                       <span class="backup-type-badge" class:full={backup.type === 'full'} class:db={backup.type === 'db_only'} class:photos={backup.type === 'photos_only'}>
                         {backup.type === 'full' ? 'Full' : backup.type === 'db_only' ? 'DB' : backup.type === 'photos_only' ? 'Photos' : backup.type}
                       </span>
+                      {#if backup.encrypted}
+                        <span class="backup-encrypted-badge" title="AES-256-GCM encrypted">Encrypted</span>
+                      {/if}
                     </td>
                     <td>{formatBytes(backup.size)}</td>
                     <td>{new Date(backup.created_at).toLocaleString()}</td>
@@ -3607,6 +3742,33 @@
               {#if !restoreValidation.pii_key_match}
                 <div class="restore-warning-box">
                   PII encryption key differs. Encrypted data may need re-encryption after restore.
+                </div>
+              {/if}
+
+              {#if restoreValidation.is_encrypted}
+                <div class="restore-encryption-section">
+                  <h4>Decryption Required</h4>
+                  <p class="encryption-info">This backup is encrypted with AES-256-GCM.</p>
+
+                  {#if envKeyConfigured}
+                    <label class="checkbox-option">
+                      <input type="checkbox" bind:checked={restoreUseEnvKey} />
+                      <span>Use server encryption key</span>
+                    </label>
+                  {/if}
+
+                  {#if !restoreUseEnvKey}
+                    <div class="input-group">
+                      <label for="restore-passphrase">Passphrase</label>
+                      <input
+                        id="restore-passphrase"
+                        type="password"
+                        bind:value={restorePassphrase}
+                        placeholder="Enter the passphrase used to encrypt this backup"
+                        autocomplete="current-password"
+                      />
+                    </div>
+                  {/if}
                 </div>
               {/if}
 
@@ -5315,6 +5477,111 @@
   .backup-type-badge.photos {
     background: rgba(251, 188, 4, 0.15);
     color: #f9ab00;
+  }
+
+  .backup-encrypted-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: rgba(156, 39, 176, 0.15);
+    color: #9c27b0;
+    margin-left: 0.375rem;
+  }
+
+  .backup-encryption-options {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+  }
+
+  .encryption-method {
+    margin-top: 0.75rem;
+    padding-left: 1.5rem;
+  }
+
+  .passphrase-inputs {
+    margin-top: 0.75rem;
+  }
+
+  .passphrase-inputs .input-group {
+    margin-bottom: 0.75rem;
+  }
+
+  .passphrase-inputs .input-group label {
+    display: block;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary);
+  }
+
+  .passphrase-inputs .input-group input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+  }
+
+  .passphrase-inputs .input-group input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+  }
+
+  .passphrase-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+  }
+
+  .restore-encryption-section {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: rgba(156, 39, 176, 0.1);
+    border-radius: 8px;
+    border: 1px solid rgba(156, 39, 176, 0.3);
+  }
+
+  .restore-encryption-section h4 {
+    margin: 0 0 0.5rem 0;
+    color: #9c27b0;
+  }
+
+  .encryption-info {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+  }
+
+  .restore-encryption-section .input-group {
+    margin-top: 0.75rem;
+  }
+
+  .restore-encryption-section .input-group label {
+    display: block;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary);
+  }
+
+  .restore-encryption-section .input-group input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+  }
+
+  .restore-encryption-section .input-group input:focus {
+    outline: none;
+    border-color: #9c27b0;
   }
 
   .backup-table td.actions {
