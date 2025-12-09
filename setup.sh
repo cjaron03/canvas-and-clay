@@ -269,14 +269,15 @@ run_setup_flow() {
       local i=0
       local user_count=""
 
-      # Run database check in background
+      # Run database check in background (exclude bootstrap admin from count)
       local tmp_file=$(mktemp)
       docker exec canvas_backend python3 -c "
 from app import app, db
 from models import init_models
 User = init_models(db)[0]
 with app.app_context():
-    print(User.query.count())
+    # Exclude admin users - only count non-admin users
+    print(User.query.filter(User.role != 'admin').count())
 " > "$tmp_file" 2>/dev/null &
       local check_pid=$!
 
@@ -299,15 +300,23 @@ with app.app_context():
         print_at 8 4 "${GREEN}${BOLD}Database detected, no setup required!${RESET}"
         draw_hline 9 4 "$((TERM_COLS-8))" "─"
 
-        print_at 11 4 "An existing database with ${CYAN}$user_count user(s)${RESET} was found."
+        print_at 11 4 "An existing database with ${CYAN}$user_count non-admin user(s)${RESET} was found."
         print_at 12 4 "The system appears to be already configured."
 
         print_at 14 4 "Services are running at:"
         print_at 15 6 "${CYAN}Frontend:${RESET} http://localhost:5173"
         print_at 16 6 "${CYAN}Backend:${RESET}  http://localhost:5001"
 
-        print_at 18 4 "${DIM}If you need to reconfigure, stop containers first:${RESET}"
-        print_at 19 6 "${DIM}docker compose -f infra/docker-compose.yml down -v${RESET}"
+        # Check for default admin password
+        local admin_password
+        admin_password=$(grep "^BOOTSTRAP_ADMIN_PASSWORD=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
+        if [[ "$admin_password" == "ChangeMe123" ]]; then
+          print_at 18 4 "${YELLOW}${BOLD}WARNING:${RESET} ${YELLOW}Admin password is still the default!${RESET}"
+          print_at 19 4 "${YELLOW}Change BOOTSTRAP_ADMIN_PASSWORD in backend/.env${RESET}"
+        fi
+
+        print_at 21 4 "${DIM}If you need to reconfigure, stop containers first:${RESET}"
+        print_at 22 6 "${DIM}docker compose -f infra/docker-compose.yml down -v${RESET}"
 
         get_term_size
         print_at "$((TERM_ROWS-4))" 4 "[${GREEN}C${RESET}] Continue setup anyway   [${YELLOW}R${RESET}] Return to menu"
