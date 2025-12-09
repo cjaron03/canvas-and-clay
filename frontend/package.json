@@ -21,6 +21,7 @@
     "vitest": "^0.34.0"
   },
   "dependencies": {
+    "isomorphic-dompurify": "^2.22.0",
     "svelte": "^4.0.5"
   }
 }

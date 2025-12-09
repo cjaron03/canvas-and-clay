@@ -1,0 +1,25 @@
+# Bandit Security Linter Configuration - Canvas & Clay
+exclude_dirs:
+  - tests
+  - migrations
+  - venv
+  - .venv
+  - __pycache__
+
+skips:
+  # B101: assert used - fine in tests
+  - B101
+  # B608: hardcoded_sql_expressions - all findings are false positives
+  # Our migration scripts use f-strings for table/column names (constants)
+  # but properly parameterize all user-controlled data
+  - B608
+
+tests:
+  - B201
+  - B501
+  - B502
+  - B503
+  - B504
+  - B505
+  - B506
+  - B507

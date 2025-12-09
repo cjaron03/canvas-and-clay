@@ -1,8 +1,23 @@
 <script>
+  import DOMPurify from 'isomorphic-dompurify';
+
   export let data;
 
   $: dynamicContent = data?.content;
   $: hasContent = dynamicContent && dynamicContent.content;
+
+  // Sanitize HTML to prevent XSS attacks (works on both server and client)
+  const sanitizeHtml = (html) => {
+    if (!html) return '';
+    return DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr',
+                     'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'a', 'span'],
+      ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
+      ALLOW_DATA_ATTR: false
+    });
+  };
+
+  $: sanitizedContent = sanitizeHtml(dynamicContent?.content);
 
   const formatDate = (isoString) => {
     if (!isoString) return 'December 7, 2025';
@@ -33,7 +48,7 @@
   <div class="legal-container">
     {#if hasContent}
       <div class="dynamic-content">
-        {@html dynamicContent.content}
+        {@html sanitizedContent}
       </div>
     {:else}
       <section class="content-section">
