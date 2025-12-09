@@ -2216,10 +2216,22 @@ def update_artwork(artwork_id):
 
     # Update artist
     if 'artist_id' in data and data['artist_id'] != artwork.artist_id:
+        # SECURITY: Only admins can change artwork ownership (artist_id)
+        # This prevents artists from accidentally or intentionally transferring
+        # their artworks to other artists, which would revoke their own access
+        if not current_user.is_admin:
+            app.logger.warning(
+                f"Non-admin user {current_user.email} attempted to change "
+                f"artist_id on artwork {artwork_id}"
+            )
+            return jsonify({
+                'error': 'Only administrators can change artwork ownership'
+            }), 403
+
         artist = db.session.get(Artist, data['artist_id'])
         if not artist:
             return jsonify({'error': f'Artist not found: {data["artist_id"]}'}), 404
-        
+
         # Verify artist is not deleted
         if artist.is_deleted:
             return jsonify({'error': f'Artist is deleted: {data["artist_id"]}'}), 404
