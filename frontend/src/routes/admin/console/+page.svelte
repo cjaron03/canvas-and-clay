@@ -2115,7 +2115,7 @@
     if (!selectedBackupForRestore) return;
 
     // Validate passphrase if backup is encrypted and not using env key
-    const isEncrypted = restoreValidation?.is_encrypted;
+    const isEncrypted = restoreValidation?.encrypted;
     if (isEncrypted && !restoreUseEnvKey && !restorePassphrase) {
       backupError = 'Please enter the passphrase to decrypt this backup';
       return;
