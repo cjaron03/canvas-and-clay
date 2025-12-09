@@ -8,7 +8,7 @@
   $: hasContent = dynamicContent && dynamicContent.content;
 
   // Sanitize HTML to prevent XSS attacks
-  function sanitizeHtml(html) {
+  const sanitizeHtml = (html) => {
     if (!html) return '';
     if (!browser) return html; // SSR fallback - will be sanitized on hydration
     return DOMPurify.sanitize(html, {
@@ -17,7 +17,7 @@
       ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
       ALLOW_DATA_ATTR: false
     });
-  }
+  };
 
   $: sanitizedContent = sanitizeHtml(dynamicContent?.content);
 
