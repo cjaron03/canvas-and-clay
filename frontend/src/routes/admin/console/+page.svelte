@@ -2040,10 +2040,13 @@
     document.body.removeChild(link);
   };
 
-  const validateRestore = async (filename) => {
+  const validateRestore = async (filename, passphrase = null, useEnvKey = false) => {
     selectedBackupForRestore = filename;
-    restoreValidation = null;
-    restoreConfirmationPending = false;
+    if (!passphrase && !useEnvKey) {
+      // Initial validation - reset state
+      restoreValidation = null;
+      restoreConfirmationPending = false;
+    }
 
     try {
       const headers = {
@@ -2054,11 +2057,19 @@
         headers['X-CSRFToken'] = $auth.csrfToken;
       }
 
+      const requestBody = { filename };
+      if (passphrase) {
+        requestBody.passphrase = passphrase;
+      }
+      if (useEnvKey) {
+        requestBody.use_env_key = true;
+      }
+
       const response = await fetch(`${PUBLIC_API_BASE_URL}/api/admin/console/restore/validate`, {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ filename })
+        body: JSON.stringify(requestBody)
       });
 
       if (response.ok) {
@@ -2066,13 +2077,23 @@
       } else {
         const err = await response.json();
         backupError = err.error || 'Failed to validate backup';
-        selectedBackupForRestore = null;
+        if (!passphrase && !useEnvKey) {
+          selectedBackupForRestore = null;
+        }
       }
     } catch (err) {
       backupError = 'Failed to connect to server';
-      selectedBackupForRestore = null;
+      if (!passphrase && !useEnvKey) {
+        selectedBackupForRestore = null;
+      }
       console.error('Failed to validate restore:', err);
     }
+  };
+
+  const revalidateWithPassphrase = async () => {
+    if (!selectedBackupForRestore) return;
+    backupError = '';
+    await validateRestore(selectedBackupForRestore, restorePassphrase, restoreUseEnvKey);
   };
 
   const cancelRestore = () => {
@@ -3722,33 +3743,11 @@
               <h3>Restore from Backup</h3>
               <p class="restore-filename">{selectedBackupForRestore}</p>
 
-              <div class="restore-info">
-                <div><strong>Type:</strong> {restoreValidation.manifest?.type || 'Unknown'}</div>
-                <div><strong>Created:</strong> {restoreValidation.manifest?.created_at ? new Date(restoreValidation.manifest.created_at).toLocaleString() : 'Unknown'}</div>
-                <div><strong>Created by:</strong> {restoreValidation.manifest?.created_by || 'Unknown'}</div>
-              </div>
-
-              {#if restoreValidation.warnings && restoreValidation.warnings.length > 0}
-                <div class="restore-warnings">
-                  <strong>Warnings:</strong>
-                  <ul>
-                    {#each restoreValidation.warnings as warning}
-                      <li>{warning}</li>
-                    {/each}
-                  </ul>
-                </div>
-              {/if}
-
-              {#if !restoreValidation.pii_key_match}
-                <div class="restore-warning-box">
-                  PII encryption key differs. Encrypted data may need re-encryption after restore.
-                </div>
-              {/if}
-
-              {#if restoreValidation.is_encrypted}
+              {#if restoreValidation.requires_passphrase}
+                <!-- Encrypted backup needs passphrase to validate -->
                 <div class="restore-encryption-section">
-                  <h4>Decryption Required</h4>
-                  <p class="encryption-info">This backup is encrypted with AES-256-GCM.</p>
+                  <h4>Encrypted Backup</h4>
+                  <p class="encryption-info">This backup is encrypted. Enter the passphrase to view details and restore.</p>
 
                   {#if envKeyConfigured}
                     <label class="checkbox-option">
@@ -3769,10 +3768,43 @@
                       />
                     </div>
                   {/if}
-                </div>
-              {/if}
 
-              <div class="restore-options">
+                  <div class="restore-actions">
+                    <button class="primary" on:click={revalidateWithPassphrase} disabled={!restoreUseEnvKey && !restorePassphrase}>
+                      Unlock Backup
+                    </button>
+                    <button class="secondary" on:click={cancelRestore}>Cancel</button>
+                  </div>
+                </div>
+              {:else}
+                <!-- Full validation info available -->
+                <div class="restore-info">
+                  <div><strong>Type:</strong> {restoreValidation.manifest?.type || 'Unknown'}</div>
+                  <div><strong>Created:</strong> {restoreValidation.manifest?.created_at ? new Date(restoreValidation.manifest.created_at).toLocaleString() : 'Unknown'}</div>
+                  <div><strong>Created by:</strong> {restoreValidation.manifest?.created_by || 'Unknown'}</div>
+                  {#if restoreValidation.encrypted}
+                    <div><strong>Encrypted:</strong> Yes (AES-256-GCM)</div>
+                  {/if}
+                </div>
+
+                {#if restoreValidation.warnings && restoreValidation.warnings.length > 0}
+                  <div class="restore-warnings">
+                    <strong>Warnings:</strong>
+                    <ul>
+                      {#each restoreValidation.warnings as warning}
+                        <li>{warning}</li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
+
+                {#if restoreValidation.pii_key_match === false}
+                  <div class="restore-warning-box">
+                    PII encryption key differs. Encrypted data may need re-encryption after restore.
+                  </div>
+                {/if}
+
+                <div class="restore-options">
                 <h4>Restore Options</h4>
                 <label class="checkbox-option">
                   <input type="checkbox" bind:checked={restoreDbOnly} disabled={restorePhotosOnly || !restoreValidation.manifest?.contents?.database?.included} />
@@ -3809,6 +3841,7 @@
                   <button class="primary" on:click={confirmRestore}>Restore</button>
                   <button class="secondary" on:click={cancelRestore}>Cancel</button>
                 </div>
+              {/if}
               {/if}
             </div>
           </div>
