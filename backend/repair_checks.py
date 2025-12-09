@@ -21,6 +21,8 @@ import json
 import os
 import sys
 from datetime import datetime
+from io import StringIO
+from contextlib import redirect_stdout
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,10 +31,19 @@ UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads'
 ARTWORKS_DIR = os.path.join(UPLOADS_DIR, 'artworks')
 THUMBNAILS_DIR = os.path.join(UPLOADS_DIR, 'thumbnails')
 
+# Global flag to suppress app import output (set by --json flag)
+_suppress_output = False
+
 
 def get_app_context():
     """Initialize Flask app and return context with models."""
-    from app import app, db
+    global _suppress_output
+    if _suppress_output:
+        # Suppress Flask startup messages for JSON output
+        with redirect_stdout(StringIO()):
+            from app import app, db
+    else:
+        from app import app, db
     from create_tbls import init_tables
 
     ArtworkPhoto = init_tables(db)[6]  # ArtworkPhoto is index 6 in tuple
@@ -486,6 +497,11 @@ def main():
                         help='Output results as JSON')
 
     args = parser.parse_args()
+
+    # Suppress Flask startup output when JSON mode is enabled
+    global _suppress_output
+    if args.json:
+        _suppress_output = True
 
     # Default to scan if no action specified
     if not any([args.scan, args.fix, args.fix_orphans, args.fix_missing, args.fix_thumbnails]):

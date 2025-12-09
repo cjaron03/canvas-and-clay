@@ -592,8 +592,24 @@ run_repair_flow() {
     # Use -f flag explicitly to ensure we find the compose file
     local compose_output
     compose_output=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || echo "")
-    if echo "$compose_output" | grep -q "Up"; then
-      print_at "$row" 8 ""; print_status ok "Containers running"
+
+    # Check that ALL three services are running (backend, frontend, db)
+    local backend_up=false frontend_up=false db_up=false
+    echo "$compose_output" | grep -q "backend.*Up" && backend_up=true
+    echo "$compose_output" | grep -q "frontend.*Up" && frontend_up=true
+    echo "$compose_output" | grep -q "db.*Up" && db_up=true
+
+    if $backend_up && $frontend_up && $db_up; then
+      print_at "$row" 8 ""; print_status ok "All containers running"
+    elif $backend_up || $frontend_up || $db_up; then
+      # Some containers running but not all
+      local down_services=""
+      $backend_up || down_services+="backend "
+      $frontend_up || down_services+="frontend "
+      $db_up || down_services+="db "
+      print_at "$row" 8 ""; print_status warn "Some containers down: ${down_services}"
+      fixable+=("start_containers")
+      issues+=("Some containers not running: ${down_services}[auto-fixable]")
     else
       print_at "$row" 8 ""; print_status warn "Containers not running"
       fixable+=("start_containers")
@@ -632,6 +648,21 @@ run_repair_flow() {
     fixable+=("gen_pii_key")
     issues+=("PII_ENCRYPTION_KEY not set [auto-fixable]")
   fi
+  ((row++))
+
+  # Check for malformed .env lines (non-empty, non-comment lines without =)
+  if [[ -f "$ENV_FILE" ]]; then
+    local malformed_lines
+    malformed_lines=$(grep -n "^[^#]" "$ENV_FILE" 2>/dev/null | grep -v "=" | head -5)
+    if [[ -n "$malformed_lines" ]]; then
+      local line_nums=$(echo "$malformed_lines" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
+      print_at "$row" 8 ""; print_status warn "Malformed .env lines: $line_nums"
+      fixable+=("fix_malformed_env")
+      issues+=("Malformed .env syntax on line(s) $line_nums [auto-fixable]")
+    else
+      print_at "$row" 8 ""; print_status ok ".env syntax valid"
+    fi
+  fi
   ((row+=2))
 
   # Check 3: Filesystem
@@ -658,12 +689,14 @@ run_repair_flow() {
   ((row+=2))
 
   # Check 4: Database (if containers running)
-  if $docker_ok && docker compose ps --status running 2>/dev/null | grep -q "canvas_backend"; then
+  local compose_status
+  compose_status=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || echo "")
+  if $docker_ok && echo "$compose_status" | grep -q "backend.*Up"; then
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking database..."
     sleep 0.3
     ((row++))
 
-    if docker exec canvas_backend python3 -c "from app import app, db; app.app_context().push(); db.session.execute(db.text('SELECT 1'))" 2>/dev/null; then
+    if docker exec canvas_backend python3 -c "from app import app, db; app.app_context().push(); db.session.execute(db.text('SELECT 1'))" &>/dev/null; then
       print_at "$row" 8 ""; print_status ok "Database connection OK"
     else
       print_at "$row" 8 ""; print_status fail "Database connection failed"
@@ -671,7 +704,7 @@ run_repair_flow() {
     fi
     ((row++))
 
-    # Check migrations
+    # Check migrations (use -T to prevent TTY output bleeding through)
     local heads_output=$(docker exec canvas_backend flask db heads 2>&1)
     if echo "$heads_output" | grep -q "Multiple head"; then
       print_at "$row" 8 ""; print_status warn "Multiple migration heads detected"
@@ -686,6 +719,7 @@ run_repair_flow() {
     sleep 0.3
     ((row++))
 
+    # Run integrity scan (use -T to prevent TTY output issues)
     local integrity_json=$(docker exec canvas_backend python3 repair_checks.py --scan --json 2>/dev/null || echo '{}')
 
     # Parse orphaned files count
@@ -788,6 +822,19 @@ apply_fixes() {
         fi
         rm -f "${ENV_FILE}.bak"
         print_at "$row" 4 ""; print_status ok "Generated PII_ENCRYPTION_KEY"
+        ;;
+      fix_malformed_env)
+        print_at "$row" 4 "Removing malformed .env lines..."
+        # Remove lines that are not comments, not empty, and don't contain =
+        local temp_file=$(mktemp)
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          # Keep empty lines, comments, and lines with =
+          if [[ -z "$line" || "$line" =~ ^[[:space:]]*# || "$line" =~ = ]]; then
+            echo "$line" >> "$temp_file"
+          fi
+        done < "$ENV_FILE"
+        mv "$temp_file" "$ENV_FILE"
+        print_at "$row" 4 ""; print_status ok "Removed malformed lines"
         ;;
       create_uploads_dir)
         print_at "$row" 4 "Creating uploads/ directory..."

@@ -158,20 +158,25 @@ ASCII_LOGO = r"""
  ####  #####  #   #    #
 """
 
-if KEY_SOURCE == "env-key":
-    print(f"{GREEN}**PII ENCRYPTION KEY DETECTED – DECRYPTION SUPPORTED**{RESET}")
-elif KEY_SOURCE == "secret-key":
-    print(f"{YELLOW}**PII ENCRYPTION USING SECRET_KEY FALLBACK – DECRYPTION SUPPORTED (SET PII_ENCRYPTION_KEY FOR CONSISTENCY)**{RESET}")
-else:
-    print(f"{RED}**PII ENCRYPTION USING EPHEMERAL DEV KEY – DECRYPTION WILL FAIL AFTER RESTART. SET PII_ENCRYPTION_KEY.**{RESET}")
-    # Fail early in production if using ephemeral encryption key
-    # (encryption.py already raises in production, but this is a belt-and-suspenders check)
+# Only print startup messages when connected to a terminal (not in scripts/pipes)
+if sys.stdout.isatty():
+    if KEY_SOURCE == "env-key":
+        print(f"{GREEN}**PII ENCRYPTION KEY DETECTED – DECRYPTION SUPPORTED**{RESET}")
+    elif KEY_SOURCE == "secret-key":
+        print(f"{YELLOW}**PII ENCRYPTION USING SECRET_KEY FALLBACK – DECRYPTION SUPPORTED (SET PII_ENCRYPTION_KEY FOR CONSISTENCY)**{RESET}")
+    else:
+        print(f"{RED}**PII ENCRYPTION USING EPHEMERAL DEV KEY – DECRYPTION WILL FAIL AFTER RESTART. SET PII_ENCRYPTION_KEY.**{RESET}")
+
+# Fail early in production if using ephemeral encryption key (always check, not just TTY)
+if KEY_SOURCE == "ephemeral":
     if not is_test_environment() and not os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true':
         raise RuntimeError(
             "Cannot start in production mode with ephemeral encryption key. "
             "Set PII_ENCRYPTION_KEY or SECRET_KEY environment variable."
         )
-print(f"{GREEN}{ASCII_LOGO}{RESET}")
+
+if sys.stdout.isatty():
+    print(f"{GREEN}{ASCII_LOGO}{RESET}")
 
 
 def _setup_logging(app_obj):
@@ -241,10 +246,11 @@ def _mask_db_uri(uri: str) -> str:
         return uri
 
 
-if is_test_environment():
-    print(f"{YELLOW}**TEST DB ACTIVE** {_mask_db_uri(database_uri)}{RESET}")
-else:
-    print(f"{CYAN}**DB TARGET** {_mask_db_uri(database_uri)}{RESET}")
+if sys.stdout.isatty():
+    if is_test_environment():
+        print(f"{YELLOW}**TEST DB ACTIVE** {_mask_db_uri(database_uri)}{RESET}")
+    else:
+        print(f"{CYAN}**DB TARGET** {_mask_db_uri(database_uri)}{RESET}")
 
 # Session security configuration
 # security: default to secure=true (HTTPS only), require explicit opt-out for local dev
