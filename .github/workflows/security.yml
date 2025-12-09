@@ -1,0 +1,140 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan on Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  python-security:
+    name: Python Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install security tools
+        run: |
+          pip install bandit safety
+
+      - name: Run Bandit (static analysis)
+        run: |
+          bandit -r backend/ -f json -o bandit-report.json -c .bandit || true
+          bandit -r backend/ -ll -c .bandit
+        continue-on-error: true
+
+      - name: Run Safety (dependency vulnerabilities)
+        run: |
+          safety check -r backend/requirements.txt --output json > safety-report.json 2>&1 || true
+          safety check -r backend/requirements.txt || true
+        continue-on-error: true
+
+      - name: Upload Python security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+          retention-days: 30
+
+  frontend-security:
+    name: Frontend Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Run npm audit
+        run: |
+          cd frontend
+          npm audit --json > npm-audit.json 2>&1 || true
+          npm audit || true
+        continue-on-error: true
+
+      - name: Upload frontend security report
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-security-report
+          path: frontend/npm-audit.json
+          retention-days: 30
+
+  security-summary:
+    name: Security Summary
+    needs: [python-security, frontend-security]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Generate summary comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## Security Scan Results\n\n';
+
+            // Parse Bandit results
+            try {
+              const bandit = JSON.parse(fs.readFileSync('bandit-report.json', 'utf8'));
+              const high = bandit.results.filter(r => r.issue_severity === 'HIGH').length;
+              const medium = bandit.results.filter(r => r.issue_severity === 'MEDIUM').length;
+              const low = bandit.results.filter(r => r.issue_severity === 'LOW').length;
+
+              if (high + medium + low === 0) {
+                comment += '**Bandit (Python):** No issues found\n';
+              } else {
+                comment += `**Bandit (Python):** ${high} high, ${medium} medium, ${low} low\n`;
+              }
+            } catch (e) {
+              comment += '**Bandit (Python):** Report not available\n';
+            }
+
+            // Parse npm audit results
+            try {
+              const npm = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+              const vulns = npm.metadata?.vulnerabilities || {};
+              const total = (vulns.high || 0) + (vulns.critical || 0) + (vulns.moderate || 0) + (vulns.low || 0);
+
+              if (total === 0) {
+                comment += '**npm audit (Frontend):** No vulnerabilities found\n';
+              } else {
+                comment += `**npm audit (Frontend):** ${vulns.critical || 0} critical, ${vulns.high || 0} high, ${vulns.moderate || 0} moderate\n`;
+              }
+            } catch (e) {
+              comment += '**npm audit (Frontend):** Report not available\n';
+            }
+
+            comment += '\nSee workflow artifacts for detailed reports.';
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
