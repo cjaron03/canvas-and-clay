@@ -271,13 +271,19 @@ run_setup_flow() {
 
       # Run database check in background (exclude bootstrap admin from count)
       local tmp_file=$(mktemp)
+      local bootstrap_email
+      bootstrap_email=$(grep "^BOOTSTRAP_ADMIN_EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "admin@canvas-clay.local")
       docker exec canvas_backend python3 -c "
+import os
 from app import app, db
 from models import init_models
 User = init_models(db)[0]
+bootstrap_email = '$bootstrap_email'.lower()
 with app.app_context():
-    # Exclude admin users - only count non-admin users
-    print(User.query.filter(User.role != 'admin').count())
+    # Count all users EXCEPT the bootstrap admin
+    count = User.query.filter(User.email != bootstrap_email).count()
+    bootstrap_exists = User.query.filter(User.email == bootstrap_email).first() is not None
+    print(f'{count}|{bootstrap_exists}')
 " > "$tmp_file" 2>/dev/null &
       local check_pid=$!
 
@@ -289,8 +295,13 @@ with app.app_context():
 
       # Get result
       wait "$check_pid" 2>/dev/null || true
-      user_count=$(cat "$tmp_file" 2>/dev/null || echo "0")
+      local result=$(cat "$tmp_file" 2>/dev/null || echo "0|False")
       rm -f "$tmp_file"
+
+      # Parse result: "count|bootstrap_exists"
+      user_count=$(echo "$result" | cut -d'|' -f1)
+      local bootstrap_exists=$(echo "$result" | cut -d'|' -f2)
+      [[ -z "$user_count" ]] && user_count=0
 
       # Clear the spinner line
       print_at 10 4 "                                        "
@@ -300,23 +311,39 @@ with app.app_context():
         print_at 8 4 "${GREEN}${BOLD}Database detected, no setup required!${RESET}"
         draw_hline 9 4 "$((TERM_COLS-8))" "─"
 
-        print_at 11 4 "An existing database with ${CYAN}$user_count non-admin user(s)${RESET} was found."
-        print_at 12 4 "The system appears to be already configured."
+        print_at 11 4 "An existing database with ${CYAN}$user_count user(s)${RESET} was found."
+        print_at 12 4 "(excluding bootstrap admin)"
+        print_at 13 4 "The system appears to be already configured."
 
-        print_at 14 4 "Services are running at:"
-        print_at 15 6 "${CYAN}Frontend:${RESET} http://localhost:5173"
-        print_at 16 6 "${CYAN}Backend:${RESET}  http://localhost:5001"
+        print_at 15 4 "Services are running at:"
+        print_at 16 6 "${CYAN}Frontend:${RESET} http://localhost:5173"
+        print_at 17 6 "${CYAN}Backend:${RESET}  http://localhost:5001"
 
-        # Check for default admin password
-        local admin_password
-        admin_password=$(grep "^BOOTSTRAP_ADMIN_PASSWORD=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
-        if [[ "$admin_password" == "ChangeMe123" ]]; then
-          print_at 18 4 "${YELLOW}${BOLD}WARNING:${RESET} ${YELLOW}Admin password is still the default!${RESET}"
-          print_at 19 4 "${YELLOW}Change BOOTSTRAP_ADMIN_PASSWORD in backend/.env${RESET}"
+        local row=19
+
+        # Show bootstrap admin status
+        if [[ "$bootstrap_exists" == "True" ]]; then
+          print_at "$row" 4 "${DIM}Bootstrap admin:${RESET} $bootstrap_email ${GREEN}(exists)${RESET}"
+          ((row++))
+
+          # Check for default admin password
+          local admin_password
+          admin_password=$(grep "^BOOTSTRAP_ADMIN_PASSWORD=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
+          if [[ "$admin_password" == "ChangeMe123" ]]; then
+            print_at "$row" 4 "${YELLOW}${BOLD}WARNING:${RESET} ${YELLOW}Admin password is still the default!${RESET}"
+            ((row++))
+            print_at "$row" 4 "${YELLOW}Change BOOTSTRAP_ADMIN_PASSWORD in backend/.env${RESET}"
+            ((row++))
+          fi
+        else
+          print_at "$row" 4 "${DIM}Bootstrap admin:${RESET} $bootstrap_email ${YELLOW}(will be created)${RESET}"
+          ((row++))
         fi
 
-        print_at 21 4 "${DIM}If you need to reconfigure, stop containers first:${RESET}"
-        print_at 22 6 "${DIM}docker compose -f infra/docker-compose.yml down -v${RESET}"
+        ((row++))
+        print_at "$row" 4 "${DIM}If you need to reconfigure, stop containers first:${RESET}"
+        ((row++))
+        print_at "$row" 6 "${DIM}docker compose -f infra/docker-compose.yml down -v${RESET}"
 
         get_term_size
         print_at "$((TERM_ROWS-4))" 4 "[${GREEN}C${RESET}] Continue setup anyway   [${YELLOW}R${RESET}] Return to menu"

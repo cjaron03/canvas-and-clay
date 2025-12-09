@@ -377,8 +377,9 @@ def check_setup_status():
     with app.app_context():
         Artist, Artwork, Storage, _, _, _, ArtworkPhoto = init_tables(db)
 
-        # Count existing data (active), excluding bootstrap admin
-        users_count = User.query.filter(User.role != 'admin').count()
+        # Count existing data (active), excluding bootstrap admin only
+        bootstrap_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@canvas-clay.local").lower()
+        users_count = User.query.filter(User.email != bootstrap_email).count()
 
         # Count artists excluding example data from migration
         artists_count = Artist.query.filter(
