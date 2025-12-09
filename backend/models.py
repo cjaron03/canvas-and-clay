@@ -34,7 +34,10 @@ def init_models(database):
             is_active: Whether the account is active (for soft deletion/suspension)
         """
         __tablename__ = 'users'
-        
+
+        # Default upload quota: 500MB per user
+        DEFAULT_UPLOAD_QUOTA = 500 * 1024 * 1024  # 500MB in bytes
+
         id = database.Column(database.Integer, primary_key=True)
         email = database.Column(EncryptedString(255, normalizer=normalize_email), unique=True, nullable=False, index=True)
         hashed_password = database.Column(database.String(128), nullable=False)
@@ -43,6 +46,14 @@ def init_models(database):
         remember_token = database.Column(database.String(255), unique=True, nullable=True)
         is_active = database.Column(database.Boolean, nullable=False, default=True)
         deleted_at = database.Column(database.DateTime, nullable=True)
+
+        # Upload quota tracking (disk exhaustion protection)
+        upload_quota_bytes = database.Column(
+            database.BigInteger,
+            nullable=False,
+            default=DEFAULT_UPLOAD_QUOTA
+        )
+        bytes_uploaded = database.Column(database.BigInteger, nullable=False, default=0)
 
         # Canonical role ladder (legacy 'visitor' normalized to 'guest')
         ROLE_LADDER = ('guest', 'artist', 'admin')
@@ -114,7 +125,50 @@ def init_models(database):
             if idx > 0:
                 self.role = self.ROLE_LADDER[idx - 1]
             return self.normalized_role
-    
+
+        # Upload quota methods
+        @property
+        def quota_remaining(self):
+            """Return remaining upload quota in bytes."""
+            return max(0, self.upload_quota_bytes - self.bytes_uploaded)
+
+        @property
+        def quota_used_percent(self):
+            """Return percentage of quota used (0-100)."""
+            if self.upload_quota_bytes <= 0:
+                return 100.0
+            return min(100.0, (self.bytes_uploaded / self.upload_quota_bytes) * 100)
+
+        def can_upload(self, file_size_bytes):
+            """Check if user can upload a file of given size.
+
+            Args:
+                file_size_bytes: Size of file to upload in bytes
+
+            Returns:
+                bool: True if upload would be within quota
+            """
+            # Admins have unlimited quota
+            if self.is_admin:
+                return True
+            return self.bytes_uploaded + file_size_bytes <= self.upload_quota_bytes
+
+        def record_upload(self, file_size_bytes):
+            """Record an upload against user's quota.
+
+            Args:
+                file_size_bytes: Size of uploaded file in bytes
+            """
+            self.bytes_uploaded = (self.bytes_uploaded or 0) + file_size_bytes
+
+        def record_deletion(self, file_size_bytes):
+            """Record a file deletion to reclaim quota.
+
+            Args:
+                file_size_bytes: Size of deleted file in bytes
+            """
+            self.bytes_uploaded = max(0, (self.bytes_uploaded or 0) - file_size_bytes)
+
     class FailedLoginAttempt(database.Model):
         """Model to track failed login attempts for account lockout.
 
