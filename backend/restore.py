@@ -262,10 +262,17 @@ def restore_backup(
     else:
         archive_path = input_path
 
+    # Helper function to clean up decrypted temp file (defined early to handle all exit paths)
+    def cleanup_decrypted():
+        if temp_decrypt_dir and os.path.exists(temp_decrypt_dir):
+            import shutil
+            shutil.rmtree(temp_decrypt_dir)
+
     # Read manifest (from decrypted archive if applicable)
     print("Reading backup manifest...")
     manifest, error = read_manifest_from_archive(archive_path)
     if error:
+        cleanup_decrypted()
         return False, error
 
     # Validate manifest
@@ -273,6 +280,7 @@ def restore_backup(
     if errors:
         for e in errors:
             print(f"  Error: {e}")
+        cleanup_decrypted()
         return False, "Manifest validation failed"
 
     for w in warnings:
@@ -307,6 +315,7 @@ def restore_backup(
     restore_photos = not db_only and photos_info.get("included", False)
 
     if not restore_db and not restore_photos:
+        cleanup_decrypted()
         return False, "Nothing to restore based on options and backup contents"
 
     print("\nRestore Plan:")
@@ -318,6 +327,7 @@ def restore_backup(
     # Dry run stops here
     if dry_run:
         print("\nDRY RUN - No changes made")
+        cleanup_decrypted()
         return True, "Dry run complete"
 
     # Confirmation
@@ -327,6 +337,7 @@ def restore_backup(
         print("=" * 60)
         response = input("\nType 'RESTORE' to confirm: ")
         if response != "RESTORE":
+            cleanup_decrypted()
             return False, "Restore cancelled by user"
 
     # Create pre-restore backup
@@ -337,13 +348,8 @@ def restore_backup(
             if not force:
                 response = input("Continue without pre-restore backup? (y/N): ")
                 if response.lower() != 'y':
+                    cleanup_decrypted()
                     return False, "Restore cancelled"
-
-    # Helper function to clean up decrypted temp file
-    def cleanup_decrypted():
-        if temp_decrypt_dir and os.path.exists(temp_decrypt_dir):
-            import shutil
-            shutil.rmtree(temp_decrypt_dir)
 
     # Extract archive to temp directory
     print("\nExtracting backup archive...")
