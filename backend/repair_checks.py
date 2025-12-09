@@ -17,12 +17,13 @@ Usage:
 """
 
 import argparse
+import fcntl
 import json
 import os
 import sys
+from contextlib import contextmanager, redirect_stdout
 from datetime import datetime
 from io import StringIO
-from contextlib import redirect_stdout
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -33,8 +34,85 @@ UPLOADS_DIR = os.path.join(BASE_DIR, 'uploads')
 ARTWORKS_DIR = os.path.join(UPLOADS_DIR, 'artworks')
 THUMBNAILS_DIR = os.path.join(UPLOADS_DIR, 'thumbnails')
 
+# Lock file to prevent concurrent repair operations (TOCTOU race condition protection)
+REPAIR_LOCK_FILE = '/tmp/canvas-clay-repair.lock'
+
 # Global flag to suppress app import output (set by --json flag)
 _suppress_output = False
+
+
+class RepairLockError(Exception):
+    """Raised when repair lock cannot be acquired."""
+    pass
+
+
+@contextmanager
+def repair_lock(blocking=True, timeout=None):
+    """
+    Context manager for exclusive repair operation lock.
+
+    Prevents race conditions where concurrent repair operations could
+    delete legitimate files due to TOCTOU between DB query and disk scan.
+
+    Args:
+        blocking: If True, wait for lock. If False, fail immediately if locked.
+        timeout: Max seconds to wait (None = wait forever). Only used if blocking=True.
+
+    Raises:
+        RepairLockError: If lock cannot be acquired (non-blocking or timeout)
+
+    Usage:
+        with repair_lock():
+            # Critical repair operations here
+            pass
+    """
+    lock_fd = None
+    try:
+        # Create lock file if it doesn't exist
+        lock_fd = open(REPAIR_LOCK_FILE, 'w')
+
+        if blocking:
+            if timeout is not None:
+                # Use non-blocking with retry for timeout behavior
+                import time
+                start = time.time()
+                while True:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.time() - start >= timeout:
+                            raise RepairLockError(
+                                f"Could not acquire repair lock within {timeout}s. "
+                                "Another repair operation may be running."
+                            )
+                        time.sleep(0.1)
+            else:
+                # Wait indefinitely
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        else:
+            # Non-blocking - fail immediately if locked
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RepairLockError(
+                    "Repair operation already in progress. "
+                    "Please wait for it to complete or check for stale lock."
+                )
+
+        # Write PID to lock file for debugging
+        lock_fd.write(f"{os.getpid()}\n")
+        lock_fd.flush()
+
+        yield
+
+    finally:
+        if lock_fd:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+            except Exception:
+                pass
 
 
 def get_app_context():
@@ -105,7 +183,9 @@ def scan_orphaned_files():
 
         if len(db_artwork_files) == 0 and files_on_disk > 0:
             orphaned['skipped'] = True
-            orphaned['skip_reason'] = f'Database has 0 photos but {files_on_disk} files exist on disk - refusing to mark all as orphaned'
+            orphaned['skip_reason'] = (
+                f'Database has 0 photos but {files_on_disk} files exist - refusing to mark all as orphaned'
+            )
             return orphaned
 
         # Scan artworks directory
@@ -123,7 +203,9 @@ def scan_orphaned_files():
         # SAFETY CHECK: If more than 50% of files would be orphaned, something is wrong
         if files_on_disk > 0 and len(potential_orphans) > (files_on_disk * 0.5):
             orphaned['skipped'] = True
-            orphaned['skip_reason'] = f'{len(potential_orphans)}/{files_on_disk} files would be orphaned (>50%) - this seems wrong, skipping'
+            orphaned['skip_reason'] = (
+                f'{len(potential_orphans)}/{files_on_disk} files would be orphaned (>50%) - skipping'
+            )
             return orphaned
 
         orphaned['artworks'] = potential_orphans
@@ -401,37 +483,55 @@ def fix_missing_thumbnails(dry_run=False):
     return results
 
 
-def run_full_scan():
+def run_full_scan(use_lock=True):
     """
     Run all scans and return comprehensive results.
+
+    Args:
+        use_lock: If True, acquire exclusive lock to prevent race conditions
 
     Returns:
         dict: Combined results from all scans
     """
-    return {
-        'orphaned_files': scan_orphaned_files(),
-        'missing_files': scan_missing_files(),
-        'missing_thumbnails': scan_missing_thumbnails(),
-        'timestamp': datetime.now().isoformat()
-    }
+    def _do_scan():
+        return {
+            'orphaned_files': scan_orphaned_files(),
+            'missing_files': scan_missing_files(),
+            'missing_thumbnails': scan_missing_thumbnails(),
+            'timestamp': datetime.now().isoformat()
+        }
+
+    if use_lock:
+        with repair_lock(blocking=False):
+            return _do_scan()
+    else:
+        return _do_scan()
 
 
-def run_all_fixes(dry_run=False):
+def run_all_fixes(dry_run=False, use_lock=True):
     """
     Run all fixes and return comprehensive results.
 
     Args:
         dry_run: If True, only report what would be fixed
+        use_lock: If True, acquire exclusive lock to prevent race conditions
 
     Returns:
         dict: Combined results from all fixes
     """
-    return {
-        'orphaned_files': fix_orphaned_files(dry_run),
-        'missing_files': fix_missing_files(dry_run),
-        'missing_thumbnails': fix_missing_thumbnails(dry_run),
-        'timestamp': datetime.now().isoformat()
-    }
+    def _do_fixes():
+        return {
+            'orphaned_files': fix_orphaned_files(dry_run),
+            'missing_files': fix_missing_files(dry_run),
+            'missing_thumbnails': fix_missing_thumbnails(dry_run),
+            'timestamp': datetime.now().isoformat()
+        }
+
+    if use_lock:
+        with repair_lock(blocking=False):
+            return _do_fixes()
+    else:
+        return _do_fixes()
 
 
 def format_bytes(size):
@@ -544,6 +644,8 @@ def main():
                         help='Show what would be done without making changes')
     parser.add_argument('--json', action='store_true',
                         help='Output results as JSON')
+    parser.add_argument('--no-lock', action='store_true',
+                        help='Skip exclusive lock (dangerous, for testing only)')
 
     args = parser.parse_args()
 
@@ -556,38 +658,54 @@ def main():
     if not any([args.scan, args.fix, args.fix_orphans, args.fix_missing, args.fix_thumbnails]):
         args.scan = True
 
+    use_lock = not args.no_lock
+
     try:
         if args.scan:
-            results = run_full_scan()
+            results = run_full_scan(use_lock=use_lock)
             if args.json:
                 print(json.dumps(results, indent=2))
             else:
                 print_scan_results(results)
 
         elif args.fix:
-            results = run_all_fixes(args.dry_run)
+            results = run_all_fixes(args.dry_run, use_lock=use_lock)
             if args.json:
                 print(json.dumps(results, indent=2))
             else:
                 print_fix_results(results)
 
         elif args.fix_orphans:
-            results = fix_orphaned_files(args.dry_run)
+            if use_lock:
+                with repair_lock(blocking=False):
+                    results = fix_orphaned_files(args.dry_run)
+            else:
+                results = fix_orphaned_files(args.dry_run)
             if args.json:
                 print(json.dumps(results, indent=2))
             else:
-                print(f"{'[DRY RUN] ' if args.dry_run else ''}Deleted {len(results['deleted_artworks']) + len(results['deleted_thumbnails'])} orphaned files")
+                prefix = '[DRY RUN] ' if args.dry_run else ''
+                deleted = len(results['deleted_artworks']) + len(results['deleted_thumbnails'])
+                print(f"{prefix}Deleted {deleted} orphaned files")
                 print(f"Space freed: {format_bytes(results['bytes_freed'])}")
 
         elif args.fix_missing:
-            results = fix_missing_files(args.dry_run)
+            if use_lock:
+                with repair_lock(blocking=False):
+                    results = fix_missing_files(args.dry_run)
+            else:
+                results = fix_missing_files(args.dry_run)
             if args.json:
                 print(json.dumps(results, indent=2))
             else:
                 print(f"{'[DRY RUN] ' if args.dry_run else ''}Removed {len(results['deleted_records'])} missing file records")
 
         elif args.fix_thumbnails:
-            results = fix_missing_thumbnails(args.dry_run)
+            if use_lock:
+                with repair_lock(blocking=False):
+                    results = fix_missing_thumbnails(args.dry_run)
+            else:
+                results = fix_missing_thumbnails(args.dry_run)
             if args.json:
                 print(json.dumps(results, indent=2))
             else:
@@ -595,6 +713,9 @@ def main():
                 if results.get('failed'):
                     print(f"Failed: {len(results['failed'])}")
 
+    except RepairLockError as e:
+        print(f"Lock error: {e}", file=sys.stderr)
+        sys.exit(2)  # Exit code 2 indicates lock conflict
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
