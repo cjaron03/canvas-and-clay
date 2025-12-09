@@ -90,6 +90,7 @@ def seed_demo_data():
         result = do_seed()
         return jsonify(result), 200
     except Exception as e:
+        db.session.rollback()
         import traceback
         traceback.print_exc()
         return jsonify({

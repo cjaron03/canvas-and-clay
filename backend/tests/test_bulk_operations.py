@@ -179,7 +179,7 @@ class TestBulkDeleteArtworks:
         })
 
         response = client.post('/api/artworks/bulk-delete', json={
-            'artwork_ids': [1, 2, 3],
+            'artwork_ids': ['AW000001', 'AW000002', 'AW000003'],
             'delete_type': 'soft'
         })
 
@@ -210,7 +210,7 @@ class TestBulkDeleteArtworks:
     def test_bulk_delete_artworks_invalid_ids(self, client, admin_user):
         """Invalid artwork IDs should be handled gracefully."""
         response = client.post('/api/artworks/bulk-delete', json={
-            'artwork_ids': [99999, 99998],
+            'artwork_ids': ['AW999999', 'AW999998'],
             'delete_type': 'soft'
         })
 
@@ -269,7 +269,7 @@ class TestBulkDeleteArtists:
         })
 
         response = client.post('/api/artists/bulk-delete', json={
-            'artist_ids': [1, 2, 3],
+            'artist_ids': ['AR000001', 'AR000002', 'AR000003'],
             'delete_type': 'soft'
         })
 
@@ -300,7 +300,7 @@ class TestBulkDeleteArtists:
     def test_bulk_delete_artists_invalid_ids(self, client, admin_user):
         """Invalid artist IDs should be handled gracefully."""
         response = client.post('/api/artists/bulk-delete', json={
-            'artist_ids': [99999, 99998],
+            'artist_ids': ['AR999999', 'AR999998'],
             'delete_type': 'soft'
         })
 
@@ -334,13 +334,13 @@ class TestBulkDeleteIntegration:
         """Bulk operations should require authentication."""
         # Not logged in
         response = client.post('/api/artworks/bulk-delete', json={
-            'artwork_ids': [1, 2],
+            'artwork_ids': ['AW000001', 'AW000002'],
             'delete_type': 'soft'
         })
         assert response.status_code == 401
 
         response = client.post('/api/artists/bulk-delete', json={
-            'artist_ids': [1, 2],
+            'artist_ids': ['AR000001', 'AR000002'],
             'delete_type': 'soft'
         })
         assert response.status_code == 401

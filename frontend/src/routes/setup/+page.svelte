@@ -30,7 +30,7 @@
 		await checkSetupStatus();
 	});
 
-	async function checkSetupStatus() {
+	const checkSetupStatus = async () => {
 		loading = true;
 		error = null;
 		try {
@@ -56,9 +56,9 @@
 		} finally {
 			loading = false;
 		}
-	}
+	};
 
-	async function seedDemoData() {
+	const seedDemoData = async () => {
 		// Check if user is logged in as admin
 		if (!$auth.isAuthenticated) {
 			goto('/login?redirect=/setup');
@@ -119,9 +119,9 @@
 		} finally {
 			seeding = false;
 		}
-	}
+	};
 
-	async function getHeaders() {
+	const getHeaders = async () => {
 		let csrfToken = $auth?.csrfToken;
 		if (!csrfToken) {
 			const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, {
@@ -137,9 +137,9 @@
 			headers['X-CSRFToken'] = csrfToken;
 		}
 		return headers;
-	}
+	};
 
-	async function bulkDelete() {
+	const bulkDelete = async () => {
 		if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
 			error = 'Admin access required.';
 			return;
@@ -176,9 +176,9 @@
 		} finally {
 			deleting = false;
 		}
-	}
+	};
 
-	async function restoreDeleted() {
+	const restoreDeleted = async () => {
 		if (!$auth.isAuthenticated || $auth.user?.role !== 'admin') {
 			error = 'Admin access required.';
 			return;
@@ -210,15 +210,15 @@
 		} finally {
 			restoring = false;
 		}
-	}
+	};
 
-	function toggleAdminPanel() {
+	const toggleAdminPanel = () => {
 		showAdminPanel = !showAdminPanel;
 		// Stop redirect countdown when admin panel is opened
 		if (showAdminPanel) {
 			redirecting = false;
 		}
-	}
+	};
 </script>
 
 <div class="setup-container">
