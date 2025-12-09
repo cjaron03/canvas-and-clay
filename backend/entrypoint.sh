@@ -64,6 +64,18 @@ if [ "${SEED_USERS}" = "1" ]; then
   python3 seed_users.py
 fi
 
+# Auto-seed demo data on fresh deployment
+if [ "${AUTO_SEED_DEMO}" = "1" ]; then
+  artist_count=$(python3 -c "from app import app, db, Artist; app.app_context().push(); print(Artist.query.filter_by(is_deleted=False).count())" 2>/dev/null || echo "0")
+
+  if [ "$artist_count" = "0" ]; then
+    echo "AUTO_SEED_DEMO=1: Empty database detected, seeding demo data..."
+    python3 seed_demo.py
+  else
+    echo "AUTO_SEED_DEMO=1: Database already has data, skipping demo seed."
+  fi
+fi
+
 # Auto-import images on fresh deployment
 if [ -f "/app/images.zip" ]; then
   if [ "${AUTO_IMPORT_IMAGES}" = "1" ]; then

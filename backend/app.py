@@ -512,6 +512,9 @@ def enforce_session_token():
 from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event, find_user_by_email
 app.register_blueprint(auth_bp)
 
+from setup_wizard import setup_bp
+app.register_blueprint(setup_bp)
+
 # Security Headers - Protect against common web vulnerabilities
 @app.after_request
 def set_security_headers(response):
