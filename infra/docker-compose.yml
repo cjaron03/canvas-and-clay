@@ -24,6 +24,7 @@ services:
       - db
     networks:
       - default
+      - canvas-internal  # Access to database
 
   frontend: 
     build:
@@ -51,17 +52,20 @@ services:
     container_name: canvas_db
     environment:
       POSTGRES_USER: canvas_db
-      POSTGRES_PASSWORD: clay123
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-clay123}  # Use env var, fallback for dev
       POSTGRES_DB: canvas_clay
-    ports:
-      - "5432:5432"
+    # SECURITY: Port 5432 NOT exposed externally - DB only accessible via internal network
+    # To access DB directly for debugging: docker compose exec db psql -U canvas_db canvas_clay
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - default
+      - canvas-internal
     restart: unless-stopped
 
 networks:
+  canvas-internal:
+    driver: bridge
+    internal: true  # No external access - containers only
   default:
     driver: bridge
 

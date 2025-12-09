@@ -371,12 +371,25 @@ def check_setup_status():
     Returns:
         dict: Setup status information
     """
+    # Example data artist IDs seeded by migration (should be excluded from setup check)
+    EXAMPLE_ARTIST_IDS = [f"A{str(i).zfill(7)}" for i in range(1, 13)]  # A0000001-A0000012
+
     with app.app_context():
         Artist, Artwork, Storage, _, _, _, ArtworkPhoto = init_tables(db)
 
-        # Count existing data (active)
-        users_count = User.query.filter(User.role != 'admin').count()
-        artists_count = Artist.query.filter_by(is_deleted=False).count()
+        # Count existing data (active), excluding bootstrap admin only
+        bootstrap_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@canvas-clay.local").lower()
+        users_count = User.query.filter(User.email != bootstrap_email).count()
+
+        # Count artists excluding example data from migration
+        artists_count = Artist.query.filter(
+            Artist.is_deleted == False,
+            ~Artist.artist_id.in_(EXAMPLE_ARTIST_IDS)
+        ).count()
+
+        # Total artists for display (including example data)
+        total_artists_count = Artist.query.filter_by(is_deleted=False).count()
+
         artworks_count = Artwork.query.filter_by(is_deleted=False).count()
         photos_count = ArtworkPhoto.query.count()
 
@@ -391,13 +404,26 @@ def check_setup_status():
         flask_env = os.environ.get("FLASK_ENV", "development")
         is_production = flask_env == "production"
 
-        # Setup is required if there are no artists or artworks
+        # Setup is required if there are no user-created artists or artworks
+        # (excludes migration-seeded example artists)
         setup_required = artists_count == 0 and artworks_count == 0
+
+        # Check if bootstrap admin is using default password
+        bootstrap_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@canvas-clay.local")
+        bootstrap_password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "ChangeMe123")
+        admin_user = User.query.filter_by(email=bootstrap_email.lower()).first()
+
+        # Warn if admin exists and password env var is still default
+        default_password_warning = (
+            admin_user is not None and
+            bootstrap_password == "ChangeMe123"
+        )
 
         return {
             "setup_required": setup_required,
             "users_count": users_count,
-            "artists_count": artists_count,
+            "artists_count": total_artists_count,  # Show total for display
+            "user_created_artists_count": artists_count,  # Excluding example data
             "artworks_count": artworks_count,
             "photos_count": photos_count,
             "deleted_artists_count": deleted_artists_count,
@@ -405,6 +431,7 @@ def check_setup_status():
             "has_demo_data": has_demo,
             "environment": flask_env,
             "production_warning": is_production and setup_required,
+            "default_password_warning": default_password_warning,
             "version": "1.0.0"
         }
 

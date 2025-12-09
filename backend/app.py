@@ -1327,7 +1327,11 @@ def list_artworks():
             # Build base query with LEFT JOIN to handle artworks without artists
             query = db.session.query(Artwork, Artist).outerjoin(
                 Artist, Artwork.artist_id == Artist.artist_id
-            ).filter(Artwork.is_deleted==False)
+            )
+            # Only exclude deleted if not explicitly requesting to include them
+            # (admins can request include_deleted=true to see soft-deleted artworks)
+            if not include_deleted:
+                query = query.filter(Artwork.is_deleted == False)
 
         # Apply filters
         if search:
