@@ -685,7 +685,7 @@ run_repair_flow() {
 
   # Check 2: Environment
   print_at "$row" 4 "[${CYAN}/${RESET}] Checking environment..."
-  sleep 0.3
+  sleep 0.2
   ((row++))
 
   if [[ -f "$ENV_FILE" ]]; then
@@ -732,7 +732,7 @@ run_repair_flow() {
 
   # Check 3: Filesystem
   print_at "$row" 4 "[${CYAN}/${RESET}] Checking filesystem..."
-  sleep 0.3
+  sleep 0.2
   ((row++))
 
   if [[ -d "$BACKEND_DIR/uploads" ]]; then
@@ -758,7 +758,7 @@ run_repair_flow() {
   compose_status=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || echo "")
   if $docker_ok && echo "$compose_status" | grep -q "backend.*Up"; then
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking database..."
-    sleep 0.3
+    sleep 0.2
     ((row++))
 
     if docker exec canvas_backend python3 -c "from app import app, db; app.app_context().push(); db.session.execute(db.text('SELECT 1'))" &>/dev/null; then
@@ -783,7 +783,7 @@ run_repair_flow() {
 
     # Check 5: Data integrity (comprehensive scan)
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking data integrity..."
-    sleep 0.3
+    sleep 0.2
     ((row++))
 
     # Run comprehensive scan using repair_scan.py (bash-friendly output)
@@ -830,11 +830,13 @@ run_repair_flow() {
     fi
     ((row++))
 
-    # Report missing files
+    # Report missing files (NOT auto-fixable - requires manual review)
     if [[ "$MISSING_FILES_COUNT" -gt 0 ]]; then
       print_at "$row" 8 ""; print_status warn "$MISSING_FILES_COUNT missing file records"
-      fixable+=("fix_missing_files")
-      issues+=("$MISSING_FILES_COUNT missing file records [auto-fixable]")
+      # Don't add to fixable - this requires manual intervention
+      # Missing files = DB records pointing to files not on disk
+      # Could be: imported data without files, deleted files, or path issues
+      issues+=("$MISSING_FILES_COUNT DB records point to missing files (review manually: may be imported data, deleted files, or sync issues)")
     else
       print_at "$row" 8 ""; print_status ok "No missing file records"
     fi
@@ -852,7 +854,7 @@ run_repair_flow() {
 
     # Check 6: Disk space
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking disk space..."
-    sleep 0.2
+    sleep 0.15
     ((row++))
 
     if [[ "$DISK_SPACE_OK" == "false" ]]; then
@@ -867,7 +869,7 @@ run_repair_flow() {
 
     # Check 7: Migration status (from scan results)
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking migration status..."
-    sleep 0.2
+    sleep 0.15
     ((row++))
 
     if [[ "$MIGRATION_STATUS" == "multiple_heads" ]]; then
@@ -883,7 +885,7 @@ run_repair_flow() {
 
     # Check 8: Port availability
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking port availability..."
-    sleep 0.2
+    sleep 0.15
     ((row++))
 
     local ports_ok=true
@@ -907,7 +909,7 @@ run_repair_flow() {
 
     # Check 9: Container health
     print_at "$row" 4 "[${CYAN}/${RESET}] Checking container health..."
-    sleep 0.2
+    sleep 0.15
     ((row++))
 
     local unhealthy_count=0
@@ -927,7 +929,7 @@ run_repair_flow() {
 
     # Check 10: PII Encryption Key validation
     print_at "$row" 4 "[${CYAN}/${RESET}] Validating PII encryption key..."
-    sleep 0.2
+    sleep 0.15
     ((row++))
 
     case "$PII_KEY_STATUS" in

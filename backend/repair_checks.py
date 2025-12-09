@@ -27,7 +27,9 @@ from contextlib import redirect_stdout
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+# Base directory for the app (file_path in DB already includes 'uploads/' prefix)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOADS_DIR = os.path.join(BASE_DIR, 'uploads')
 ARTWORKS_DIR = os.path.join(UPLOADS_DIR, 'artworks')
 THUMBNAILS_DIR = os.path.join(UPLOADS_DIR, 'thumbnails')
 
@@ -164,8 +166,9 @@ def scan_missing_files():
 
         for photo in photos:
             issues = []
-            artwork_path = os.path.join(UPLOADS_DIR, photo.file_path) if photo.file_path else None
-            thumb_path = os.path.join(UPLOADS_DIR, photo.thumbnail_path) if photo.thumbnail_path else None
+            # file_path already includes 'uploads/' prefix, so join with BASE_DIR
+            artwork_path = os.path.join(BASE_DIR, photo.file_path) if photo.file_path else None
+            thumb_path = os.path.join(BASE_DIR, photo.thumbnail_path) if photo.thumbnail_path else None
 
             if artwork_path and not os.path.exists(artwork_path):
                 issues.append('artwork_missing')
@@ -208,8 +211,9 @@ def scan_missing_thumbnails():
         photos = ArtworkPhoto.query.all()
 
         for photo in photos:
-            artwork_path = os.path.join(UPLOADS_DIR, photo.file_path) if photo.file_path else None
-            thumb_path = os.path.join(UPLOADS_DIR, photo.thumbnail_path) if photo.thumbnail_path else None
+            # file_path already includes 'uploads/' prefix, so join with BASE_DIR
+            artwork_path = os.path.join(BASE_DIR, photo.file_path) if photo.file_path else None
+            thumb_path = os.path.join(BASE_DIR, photo.thumbnail_path) if photo.thumbnail_path else None
 
             # Original exists but thumbnail doesn't
             if artwork_path and os.path.exists(artwork_path):
@@ -351,11 +355,12 @@ def fix_missing_thumbnails(dry_run=False):
 
     with app.app_context():
         for item in missing['photos']:
-            artwork_path = os.path.join(UPLOADS_DIR, item['file_path'])
+            # file_path already includes 'uploads/' prefix, so join with BASE_DIR
+            artwork_path = os.path.join(BASE_DIR, item['file_path'])
 
             # Determine thumbnail path
             if item['thumbnail_path']:
-                thumb_path = os.path.join(UPLOADS_DIR, item['thumbnail_path'])
+                thumb_path = os.path.join(BASE_DIR, item['thumbnail_path'])
             else:
                 # Generate thumbnail path
                 base_name = os.path.splitext(os.path.basename(item['file_path']))[0]
@@ -379,7 +384,8 @@ def fix_missing_thumbnails(dry_run=False):
                 # Update database record if thumbnail_path was empty
                 photo = ArtworkPhoto.query.get(item['photo_id'])
                 if photo and not photo.thumbnail_path:
-                    photo.thumbnail_path = os.path.relpath(thumb_path, UPLOADS_DIR)
+                    # DB stores paths with 'uploads/' prefix, so relpath from BASE_DIR
+                    photo.thumbnail_path = os.path.relpath(thumb_path, BASE_DIR)
 
                 results['regenerated'].append(item['photo_id'])
 
