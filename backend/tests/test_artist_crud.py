@@ -6,6 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db, User, Artist, Storage, Artwork, AuditLog
+from conftest import find_user_by_email
 
 
 @pytest.fixture
@@ -83,7 +84,7 @@ def admin_user(client):
         'password': 'AdminPassword123!'
     })
 
-    user = User.query.filter_by(email='admin@test.com').first()
+    user = find_user_by_email(User, 'admin@test.com')
     user.role = 'admin'
     db.session.commit()
 
@@ -108,7 +109,7 @@ def regular_user(client):
         'password': 'UserPassword123!'
     })
 
-    return User.query.filter_by(email='user@test.com').first()
+    return find_user_by_email(User, 'user@test.com')
 
 
 @pytest.fixture
@@ -119,7 +120,7 @@ def artist_user(client, test_data):
         'password': 'ArtistOwnerPass123!'
     })
 
-    user = User.query.filter_by(email='artist-owner@test.com').first()
+    user = find_user_by_email(User, 'artist-owner@test.com')
     user.role = 'artist'
     test_data['artist1'].user_id = user.id
     db.session.commit()
@@ -140,7 +141,7 @@ def artist_user_unassigned(client, test_data):
         'password': 'ArtistOtherPass123!'
     })
 
-    user = User.query.filter_by(email='artist-other@test.com').first()
+    user = find_user_by_email(User, 'artist-other@test.com')
     user.role = 'artist'
     test_data['artist2'].user_id = user.id
     db.session.commit()

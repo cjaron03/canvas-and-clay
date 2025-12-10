@@ -15,6 +15,7 @@ from encryption import (
     _derive_key_legacy,
     _validate_key,
     normalize_email,
+    compute_blind_index,
     EncryptedString,
     KEY_SOURCE,
     MIN_KEY_LENGTH,
@@ -58,15 +59,18 @@ class TestEncryptDecrypt:
         assert decrypted == original
 
 
-class TestDeterministicEncryption:
-    """Tests for deterministic encryption behavior."""
+class TestProbabilisticEncryption:
+    """Tests for probabilistic encryption behavior (default mode)."""
 
-    def test_same_plaintext_produces_same_ciphertext(self):
-        """Identical inputs should produce identical outputs (deterministic)."""
+    def test_same_plaintext_produces_different_ciphertext(self):
+        """Identical inputs should produce DIFFERENT outputs (probabilistic)."""
         email = "test@example.com"
         encrypted1 = _encrypt(email)
         encrypted2 = _encrypt(email)
-        assert encrypted1 == encrypted2
+        # Probabilistic encryption: same plaintext, different ciphertexts
+        assert encrypted1 != encrypted2
+        # But both should decrypt to the same value
+        assert _decrypt(encrypted1) == _decrypt(encrypted2) == email
 
     def test_different_plaintext_produces_different_ciphertext(self):
         """Different inputs should produce different outputs."""
@@ -74,13 +78,56 @@ class TestDeterministicEncryption:
         encrypted2 = _encrypt("user2@example.com")
         assert encrypted1 != encrypted2
 
+    def test_deterministic_mode_for_legacy_compatibility(self):
+        """Deterministic mode should be available for backward compatibility."""
+        email = "test@example.com"
+        encrypted1 = _encrypt(email, deterministic=True)
+        encrypted2 = _encrypt(email, deterministic=True)
+        # Deterministic mode: same plaintext = same ciphertext
+        assert encrypted1 == encrypted2
+
     def test_deterministic_nonce_consistency(self):
-        """Same value should always produce same nonce."""
+        """Same value should always produce same nonce (for deterministic mode)."""
         value = "test@example.com"
         nonce1 = _deterministic_nonce(value)
         nonce2 = _deterministic_nonce(value)
         assert nonce1 == nonce2
         assert len(nonce1) == 12  # AES-GCM nonce size
+
+
+class TestBlindIndex:
+    """Tests for blind index functionality."""
+
+    def test_blind_index_is_deterministic(self):
+        """Same input should always produce same blind index."""
+        email = "test@example.com"
+        index1 = compute_blind_index(email)
+        index2 = compute_blind_index(email)
+        assert index1 == index2
+
+    def test_blind_index_with_normalizer(self):
+        """Blind index with normalizer should be case-insensitive."""
+        index1 = compute_blind_index("User@Example.COM", normalizer=normalize_email)
+        index2 = compute_blind_index("user@example.com", normalizer=normalize_email)
+        index3 = compute_blind_index("  USER@example.com  ", normalizer=normalize_email)
+        assert index1 == index2 == index3
+
+    def test_blind_index_different_values(self):
+        """Different inputs should produce different blind indexes."""
+        index1 = compute_blind_index("user1@example.com")
+        index2 = compute_blind_index("user2@example.com")
+        assert index1 != index2
+
+    def test_blind_index_length(self):
+        """Blind index should be 64-character hex string."""
+        index = compute_blind_index("test@example.com")
+        assert len(index) == 64
+        # Should be valid hex
+        int(index, 16)
+
+    def test_blind_index_none_handling(self):
+        """Blind index of None should return None."""
+        assert compute_blind_index(None) is None
 
 
 class TestNormalization:
@@ -98,12 +145,20 @@ class TestNormalization:
         """Normalization should handle both case and whitespace."""
         assert normalize_email("  User@EXAMPLE.com  ") == "user@example.com"
 
-    def test_normalized_emails_encrypt_same(self):
-        """Emails that normalize to same value should encrypt identically."""
+    def test_normalized_emails_have_same_blind_index(self):
+        """Emails that normalize to same value should have identical blind indexes."""
+        # With probabilistic encryption, ciphertexts will be different
+        # But blind indexes should be the same for equality checks
+        index1 = compute_blind_index("User@Example.COM", normalizer=normalize_email)
+        index2 = compute_blind_index("user@example.com", normalizer=normalize_email)
+        index3 = compute_blind_index("  USER@example.com  ", normalizer=normalize_email)
+        assert index1 == index2 == index3
+
+        # Verify encryption still works correctly (different ciphertexts, same plaintext)
         encrypted1 = _encrypt("User@Example.COM", normalizer=normalize_email)
         encrypted2 = _encrypt("user@example.com", normalizer=normalize_email)
-        encrypted3 = _encrypt("  USER@example.com  ", normalizer=normalize_email)
-        assert encrypted1 == encrypted2 == encrypted3
+        # Ciphertexts may be different (probabilistic), but both decrypt to normalized form
+        assert _decrypt(encrypted1) == _decrypt(encrypted2) == "user@example.com"
 
 
 class TestNoneHandling:
@@ -172,7 +227,9 @@ class TestEncryptedStringTypeDecorator:
         enc_type = EncryptedString(255, normalizer=normalize_email)
         encrypted1 = enc_type.process_bind_param("TEST@example.com", None)
         encrypted2 = enc_type.process_bind_param("test@example.com", None)
-        assert encrypted1 == encrypted2
+        # With probabilistic encryption, ciphertexts will be different
+        # but both should decrypt to the same normalized value
+        assert _decrypt(encrypted1) == _decrypt(encrypted2) == "test@example.com"
 
     def test_process_bind_param_none(self):
         """process_bind_param should pass None through."""

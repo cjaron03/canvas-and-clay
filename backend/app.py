@@ -770,11 +770,13 @@ def create_artist():
 
     # adding artist
     try:
+        artist_email = data.get('email')
         artist = Artist(
             artist_id = new_artistid,
             artist_fname = data['artist_fname'],
             artist_lname = data['artist_lname'],
-            artist_email = data.get('email'),
+            artist_email = artist_email,
+            artist_email_idx = Artist.compute_email_index(artist_email),
             artist_site = data.get('artist_site'),
             artist_bio = data.get('artist_bio'),
             profile_photo_url = None,
@@ -900,10 +902,10 @@ def update_artist(artist_id):
         changes['artist_lname'] = {'old': artist.artist_lname, 'new': data['artist_lname']}
         artist.artist_lname = data['artist_lname']
     
-    # Update artist email
+    # Update artist email (and blind index for lookups)
     if 'email' in data and data['email'] != artist.artist_email:
         changes['email'] = {'old': artist.artist_email, 'new': data['email']}
-        artist.artist_email = data['email']
+        artist.update_email(data['email'])
 
     # Update artist site
     if 'artist_site' in data and data['artist_site'] != artist.artist_site:
@@ -3015,11 +3017,13 @@ def bulk_upload():
             for artist_entry in manifest.get('artists', []):
                 try:
                     artist_id = generate_artist_id()
+                    artist_email = artist_entry.get('email')
                     artist = Artist(
                         artist_id=artist_id,
                         artist_fname=artist_entry.get('first_name') or artist_entry.get('artist_fname') or '',
                         artist_lname=artist_entry.get('last_name') or artist_entry.get('artist_lname') or '',
-                        artist_email=artist_entry.get('email'),
+                        artist_email=artist_email,
+                        artist_email_idx=Artist.compute_email_index(artist_email),
                         artist_site=artist_entry.get('artist_site'),
                         artist_bio=artist_entry.get('artist_bio'),
                         artist_phone=None,
@@ -3057,7 +3061,9 @@ def bulk_upload():
                             if not artist:
                                 raise ValueError(f"Artist not found: {artist_id_field}")
                         elif artist_email_field:
-                            artist = Artist.query.filter_by(artist_email=artist_email_field).first()
+                            # Use blind index for email lookup (probabilistic encryption)
+                            email_idx = Artist.compute_email_index(artist_email_field)
+                            artist = Artist.query.filter_by(artist_email_idx=email_idx).first()
                             if not artist:
                                 raise ValueError(f"Artist not found for email: {artist_email_field}")
                         else:
@@ -6040,6 +6046,7 @@ def ensure_bootstrap_admin():
                 
                 admin_user = User(
                     email=bootstrap_email,
+                    email_idx=User.compute_email_index(bootstrap_email),
                     hashed_password=hashed_password,
                     role='admin',
                     created_at=datetime.now(timezone.utc)

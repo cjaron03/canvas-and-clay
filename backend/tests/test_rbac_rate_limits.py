@@ -8,6 +8,7 @@ These tests verify:
 """
 import pytest
 from app import app, db, User, Artist, Artwork, Storage, ArtworkPhoto, bcrypt
+from encryption import compute_blind_index, normalize_email
 from datetime import datetime, timezone
 
 
@@ -36,8 +37,10 @@ def admin_user(client):
     """Create an admin user."""
     with app.app_context():
         hashed = bcrypt.generate_password_hash('AdminPass123').decode('utf-8')
+        email = 'admin@test.com'
         user = User(
-            email='admin@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=hashed,
             role='admin',
             created_at=datetime.now(timezone.utc)
@@ -52,8 +55,10 @@ def guest_user(client):
     """Create a guest user."""
     with app.app_context():
         hashed = bcrypt.generate_password_hash('GuestPass123').decode('utf-8')
+        email = 'guest@test.com'
         user = User(
-            email='guest@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=hashed,
             role='guest',
             created_at=datetime.now(timezone.utc)
@@ -68,8 +73,10 @@ def legacy_visitor_user(client):
     """Create a user with legacy 'visitor' role to test backwards compatibility."""
     with app.app_context():
         hashed = bcrypt.generate_password_hash('VisitorPass123').decode('utf-8')
+        email = 'visitor@test.com'
         user = User(
-            email='visitor@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=hashed,
             role='visitor',  # Legacy role
             created_at=datetime.now(timezone.utc)
