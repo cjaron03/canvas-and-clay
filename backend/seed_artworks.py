@@ -22,7 +22,7 @@ def upsert_artist(artist_id, first_name, last_name, email=None, site=None, bio=N
         db.session.add(artist)
     artist.artist_fname = first_name
     artist.artist_lname = last_name
-    artist.artist_email = email
+    artist.update_email(email)
     artist.artist_site = site
     artist.artist_bio = bio
     # Do not set user_id here to avoid touching accounts

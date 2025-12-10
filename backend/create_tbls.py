@@ -1,6 +1,6 @@
 """Model declarations for non-auth tables used by the Canvas & Clay app."""
 
-from encryption import EncryptedString, normalize_email
+from encryption import EncryptedString, normalize_email, compute_blind_index
 
 def init_tables(db):
     """Return table models, defining them once per process.
@@ -37,7 +37,10 @@ def init_tables(db):
         artist_id = db.Column(db.CHAR(8), primary_key=True)
         artist_fname =  db.Column(db.String(20), nullable=False)
         artist_lname =  db.Column(db.String(20), nullable=False)
+        # Email is encrypted with random nonce (probabilistic) - use artist_email_idx for lookups
         artist_email =  db.Column(EncryptedString(255, normalizer=normalize_email), nullable=True)
+        # Blind index for email lookups (HMAC-based, allows searching without revealing patterns)
+        artist_email_idx = db.Column(db.String(64), unique=True, nullable=True, index=True)
         artist_site = db.Column(db.String(100), nullable=True)
         profile_photo_url = db.Column(db.String(512), nullable=True)
         profile_photo_thumb_url = db.Column(db.String(512), nullable=True)
@@ -51,6 +54,30 @@ def init_tables(db):
                                                       onupdate='CASCADE',
                                                       ondelete='SET NULL'),
                                                       nullable=True)
+
+        # Email blind index helpers
+        @staticmethod
+        def compute_email_index(email):
+            """Compute the blind index for an artist email address.
+
+            Args:
+                email: Raw email string (or None)
+
+            Returns:
+                64-character hex string for artist_email_idx column, or None if email is None
+            """
+            if email is None:
+                return None
+            return compute_blind_index(email, normalizer=normalize_email)
+
+        def update_email(self, new_email):
+            """Update artist's email and its blind index.
+
+            Args:
+                new_email: New email address (or None)
+            """
+            self.artist_email = new_email
+            self.artist_email_idx = self.compute_email_index(new_email)
 
 
     class Artwork(db.Model):

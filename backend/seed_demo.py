@@ -146,7 +146,7 @@ def upsert_demo_artist(Artist):
 
     artist.artist_fname = DEMO_ARTIST["first_name"]
     artist.artist_lname = DEMO_ARTIST["last_name"]
-    artist.artist_email = DEMO_ARTIST["email"]
+    artist.update_email(DEMO_ARTIST["email"])
     artist.artist_bio = DEMO_ARTIST["bio"]
     artist.is_deleted = False
     artist.date_deleted = None

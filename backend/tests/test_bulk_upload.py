@@ -141,11 +141,13 @@ def test_bulk_upload_happy_path(client, admin_user, storage, cleanup_uploads):
 
 
 def test_bulk_upload_existing_artist_without_manifest_artists(client, admin_user, storage, cleanup_uploads):
+    email = 'existing@example.com'
     existing_artist = Artist(
         artist_id='ARTS0001',
         artist_fname='Existing',
         artist_lname='Artist',
-        artist_email='existing@example.com',
+        artist_email=email,
+        artist_email_idx=Artist.compute_email_index(email),
         artist_site=None,
         artist_bio=None,
         artist_phone=None,
@@ -194,11 +196,13 @@ def test_bulk_upload_existing_artist_without_manifest_artists(client, admin_user
 
 
 def test_bulk_upload_duplicate_suffix(client, admin_user, storage, cleanup_uploads):
+    email = 'dup@example.com'
     artist = Artist(
         artist_id='ARTS0002',
         artist_fname='Dup',
         artist_lname='Artist',
-        artist_email='dup@example.com',
+        artist_email=email,
+        artist_email_idx=Artist.compute_email_index(email),
         artist_site=None,
         artist_bio=None,
         artist_phone=None,
@@ -262,11 +266,13 @@ def test_bulk_upload_duplicate_suffix(client, admin_user, storage, cleanup_uploa
 
 
 def test_bulk_upload_duplicate_override(client, admin_user, storage, cleanup_uploads, monkeypatch):
+    email = 'dup-override@example.com'
     artist = Artist(
         artist_id='ARTS0003',
         artist_fname='Dup',
         artist_lname='Override',
-        artist_email='dup-override@example.com',
+        artist_email=email,
+        artist_email_idx=Artist.compute_email_index(email),
         artist_site=None,
         artist_bio=None,
         artist_phone=None,
