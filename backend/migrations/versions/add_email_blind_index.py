@@ -47,6 +47,30 @@ WARNING: If you proceed without a stable key, all encrypted data will become
 ================================================================================
 """
 
+ERR_DECRYPTION_FAILED = """
+================================================================================
+ERROR: MIGRATION FAILED - DECRYPTION KEY MISMATCH (ERR_KEY_MISMATCH_002)
+================================================================================
+
+Failed to decrypt email for user ID: {user_id}
+
+The current encryption key cannot decrypt existing encrypted emails.
+This likely means:
+  1. PII_ENCRYPTION_KEY changed since emails were encrypted
+  2. The key was derived from SECRET_KEY which has changed
+  3. Data was encrypted with a different key
+
+Original value (first 20 chars): {preview}...
+
+To fix this:
+  1. Locate the original encryption key used to encrypt the emails
+  2. Set it as PII_ENCRYPTION_KEY before running migrations
+  3. Run migrations again
+
+WARNING: Proceeding without the correct key will make user lookups FAIL.
+================================================================================
+"""
+
 
 def upgrade():
     # SAFETY CHECK: Ensure we have a stable encryption key
@@ -74,19 +98,43 @@ def upgrade():
 
     # Get all users and compute their blind index
     result = session.execute(sa.text("SELECT id, email FROM users"))
+    users_to_update = []
     for row in result:
         user_id = row[0]
         encrypted_email = row[1]
 
         # Decrypt the email (handles both encrypted and legacy plaintext)
         decrypted_email = _decrypt(encrypted_email)
-        if decrypted_email:
-            # Compute blind index
-            blind_idx = compute_blind_index(decrypted_email, normalizer=normalize_email)
-            session.execute(
-                sa.text("UPDATE users SET email_idx = :idx WHERE id = :id"),
-                {"idx": blind_idx, "id": user_id}
-            )
+
+        # Validate decryption succeeded - a valid email must contain '@'
+        # If _decrypt fails (wrong key), it returns the original ciphertext
+        # which won't be a valid email format
+        if not decrypted_email or '@' not in decrypted_email:
+            # Check if this might be legacy plaintext (contains @ but failed decryption)
+            if encrypted_email and '@' in encrypted_email:
+                # This is plaintext email, use it directly
+                decrypted_email = encrypted_email
+            else:
+                # Decryption failed - key mismatch
+                print(ERR_DECRYPTION_FAILED.format(
+                    user_id=user_id,
+                    preview=encrypted_email[:20] if encrypted_email else 'NULL'
+                ))
+                raise RuntimeError(
+                    f"ERR_KEY_MISMATCH_002: Cannot decrypt email for user {user_id}. "
+                    "Check PII_ENCRYPTION_KEY matches the key used to encrypt data."
+                )
+
+        # Compute blind index
+        blind_idx = compute_blind_index(decrypted_email, normalizer=normalize_email)
+        users_to_update.append({"idx": blind_idx, "id": user_id})
+
+    # Batch update all users
+    for user in users_to_update:
+        session.execute(
+            sa.text("UPDATE users SET email_idx = :idx WHERE id = :id"),
+            user
+        )
 
     session.commit()
 
