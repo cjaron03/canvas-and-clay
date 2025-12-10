@@ -9,6 +9,7 @@ from PIL import Image
 
 from app import app, db, User, Artist, Artwork, Storage, ArtworkPhoto, limiter
 from upload_utils import ARTWORKS_DIR, THUMBNAILS_DIR
+from conftest import find_user_by_email
 
 
 def _make_image(filename='test.jpg'):
@@ -53,7 +54,7 @@ def _register_and_login(client, email, password):
     """Helper to create and authenticate a user."""
     client.post('/auth/register', json={'email': email, 'password': password})
     client.post('/auth/login', json={'email': email, 'password': password})
-    return User.query.filter_by(email=email).first()
+    return find_user_by_email(User, email)
 
 
 def _get_csrf_token(client):
@@ -175,7 +176,7 @@ class TestCSRFMitigation:
             'password': 'AdminPass123!'
         }, headers={'X-CSRFToken': token})
 
-        admin = User.query.filter_by(email='admin@example.com').first()
+        admin = find_user_by_email(User, 'admin@example.com')
         admin.role = 'admin'
         db.session.commit()
 

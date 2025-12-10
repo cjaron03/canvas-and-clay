@@ -5,7 +5,7 @@ Import db from this module after initializing it in app.py.
 from datetime import datetime, timezone
 from flask_login import UserMixin
 
-from encryption import EncryptedString, normalize_email
+from encryption import EncryptedString, normalize_email, compute_blind_index
 
 
 def init_models(database):
@@ -39,7 +39,10 @@ def init_models(database):
         DEFAULT_UPLOAD_QUOTA = 500 * 1024 * 1024  # 500MB in bytes
 
         id = database.Column(database.Integer, primary_key=True)
-        email = database.Column(EncryptedString(255, normalizer=normalize_email), unique=True, nullable=False, index=True)
+        # Email is encrypted with random nonce (probabilistic) - use email_idx for lookups
+        email = database.Column(EncryptedString(255, normalizer=normalize_email), nullable=False)
+        # Blind index for email lookups (HMAC-based, allows searching without revealing patterns)
+        email_idx = database.Column(database.String(64), unique=True, nullable=False, index=True)
         hashed_password = database.Column(database.String(128), nullable=False)
         created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
         role = database.Column(database.String(20), nullable=False, default='guest')
@@ -168,6 +171,28 @@ def init_models(database):
                 file_size_bytes: Size of deleted file in bytes
             """
             self.bytes_uploaded = max(0, (self.bytes_uploaded or 0) - file_size_bytes)
+
+        # Email blind index helpers
+        @staticmethod
+        def compute_email_index(email):
+            """Compute the blind index for an email address.
+
+            Args:
+                email: Raw email string
+
+            Returns:
+                64-character hex string for email_idx column
+            """
+            return compute_blind_index(email, normalizer=normalize_email)
+
+        def update_email(self, new_email):
+            """Update user's email and its blind index.
+
+            Args:
+                new_email: New email address
+            """
+            self.email = new_email
+            self.email_idx = self.compute_email_index(new_email)
 
     class FailedLoginAttempt(database.Model):
         """Model to track failed login attempts for account lockout.

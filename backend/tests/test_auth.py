@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 from sqlalchemy.pool import StaticPool
 from app import app, db, User, PasswordResetRequest, bcrypt
+from conftest import find_user_by_email, find_password_reset_by_email, count_password_resets_by_email
 
 
 @pytest.fixture
@@ -350,7 +351,7 @@ class TestUserLogin:
         
         # Disable the user account
         with app.app_context():
-            user = User.query.filter_by(email=sample_user['email']).first()
+            user = find_user_by_email(User, sample_user['email'])
             user.is_active = False
             db.session.commit()
         
@@ -425,7 +426,7 @@ class TestProtectedRoutes:
         
         # Manually promote to admin (simulating admin promotion endpoint)
         with app.app_context():
-            user = User.query.filter_by(email=admin_user['email']).first()
+            user = find_user_by_email(User, admin_user['email'])
             user.role = 'admin'
             db.session.commit()
         
@@ -611,7 +612,7 @@ class TestPasswordResetFlow:
         assert response.status_code == 200
 
         with app.app_context():
-            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry = find_password_reset_by_email(PasswordResetRequest, User, sample_user['email'])
             assert entry is not None
             assert entry.status == 'pending'
             assert entry.user_message is not None
@@ -627,7 +628,7 @@ class TestPasswordResetFlow:
         assert 'pending' in data['message'].lower()
 
         with app.app_context():
-            assert PasswordResetRequest.query.filter_by(email=sample_user['email']).count() == 1
+            assert count_password_resets_by_email(PasswordResetRequest, User, sample_user['email']) == 1
 
     def test_password_reset_confirm_success(self, client, sample_user):
         """End-to-end reset confirmation updates the stored password hash."""
@@ -636,7 +637,7 @@ class TestPasswordResetFlow:
         reset_code = 'RESETCODE12'
 
         with app.app_context():
-            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry = find_password_reset_by_email(PasswordResetRequest, User, sample_user['email'])
             entry.status = 'approved'
             entry.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
             entry.reset_code_hint = reset_code[-4:]
@@ -651,9 +652,9 @@ class TestPasswordResetFlow:
         assert response.status_code == 200
 
         with app.app_context():
-            user = User.query.filter_by(email=sample_user['email']).first()
+            user = find_user_by_email(User, sample_user['email'])
             assert bcrypt.check_password_hash(user.hashed_password, 'BrandNewPass123')
-            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry = find_password_reset_by_email(PasswordResetRequest, User, sample_user['email'])
             assert entry.status == 'completed'
 
     def test_password_reset_confirm_expired_code(self, client, sample_user):
@@ -663,7 +664,7 @@ class TestPasswordResetFlow:
         reset_code = 'EXPIRED12'
 
         with app.app_context():
-            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry = find_password_reset_by_email(PasswordResetRequest, User, sample_user['email'])
             entry.status = 'approved'
             entry.reset_code_hash = bcrypt.generate_password_hash(reset_code).decode('utf-8')
             entry.reset_code_hint = reset_code[-4:]
@@ -680,5 +681,5 @@ class TestPasswordResetFlow:
         assert 'expired' in data['error'].lower()
 
         with app.app_context():
-            entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
+            entry = find_password_reset_by_email(PasswordResetRequest, User, sample_user['email'])
             assert entry.status == 'expired'

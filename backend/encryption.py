@@ -1,31 +1,35 @@
-"""Lightweight deterministic encryption helpers for PII-at-rest.
+"""Probabilistic encryption with blind index for PII-at-rest.
 
 THREAT MODEL
 ============
 This module protects PII (e.g., user emails) from exposure in database dumps,
-backups, and direct database access. It does NOT protect against:
-- Attackers with access to the running application (they can query decrypted data)
-- Attackers who can observe ciphertext patterns (deterministic encryption leaks equality)
+backups, and direct database access. It uses:
+- Probabilistic encryption (random nonce) - same plaintext produces different ciphertexts
+- Blind index for lookups - keyed HMAC allows searching without revealing patterns
 
-DETERMINISTIC ENCRYPTION TRADE-OFFS
-===================================
-This implementation uses deterministic encryption (nonce derived from plaintext)
-which enables:
-- Unique constraints on encrypted columns
-- Equality comparisons (WHERE email = ?)
+SECURITY PROPERTIES
+===================
+- Identical plaintexts produce DIFFERENT ciphertexts (random nonce)
+- Attackers cannot detect when two users have the same email from ciphertext alone
+- Lookups use blind index (HMAC) which is one-way and keyed
+- Separate keys for encryption and blind index (defense in depth)
+
+BLIND INDEX
+===========
+The blind index is a keyed HMAC-SHA256 truncated to 32 bytes (hex-encoded to 64 chars).
+It enables:
+- Equality comparisons (WHERE email_idx = ?)
+- Unique constraints
 - Index lookups
 
-However, identical plaintexts produce identical ciphertexts. An attacker with
-database access can:
-- Detect when two users have the same email
-- Build a dictionary by encrypting known values and matching ciphertexts
-
-For higher security requirements, consider randomized encryption with a
-separate hash column for lookups.
+The blind index does NOT reveal:
+- The plaintext value
+- Whether two different tables have the same value (different keys possible)
 
 KEY MANAGEMENT
 ==============
 - Set PII_ENCRYPTION_KEY environment variable in production
+- Set PII_BLIND_INDEX_KEY for blind index (falls back to derived key if not set)
 - Falls back to SECRET_KEY if PII_ENCRYPTION_KEY is not set
 - Generates ephemeral key in development mode only (data lost on restart)
 - Key rotation supported via rotate_encryption_key.py script
@@ -40,9 +44,12 @@ Encrypted values are longer than plaintext due to:
 Formula: ceil((len(plaintext) + 12 + 16) * 4 / 3)
 Example: 100-char email -> ~176 chars encrypted
 Recommendation: Use String(255) or larger for encrypted email columns.
+
+Blind index is fixed at 64 characters (32-byte HMAC, hex-encoded).
 """
 
 import base64
+import hmac
 import os
 import secrets
 from hashlib import sha256
@@ -109,6 +116,34 @@ _KEY, _KEY_SOURCE = _derive_key()
 KEY_SOURCE = _KEY_SOURCE  # exported for status logging
 
 
+def _derive_blind_index_key():
+    """Derive a separate key for blind index computation.
+
+    Uses PII_BLIND_INDEX_KEY if set, otherwise derives from encryption key
+    with a domain separator to ensure the keys are different.
+
+    Returns:
+        32-byte key for HMAC operations
+    """
+    blind_key_env = os.getenv("PII_BLIND_INDEX_KEY")
+    if blind_key_env:
+        return sha256(blind_key_env.encode("utf-8")).digest()
+    # Derive from encryption key with domain separator
+    return sha256(b"blind-index:" + _KEY).digest()
+
+
+_BLIND_INDEX_KEY = _derive_blind_index_key()
+
+
+def _random_nonce() -> bytes:
+    """Generate a cryptographically random 12-byte nonce.
+
+    Returns:
+        12-byte random nonce suitable for AES-GCM
+    """
+    return secrets.token_bytes(12)
+
+
 def _deterministic_nonce(value: str) -> bytes:
     """Derive a deterministic 12-byte nonce from the plaintext.
 
@@ -126,14 +161,43 @@ def _deterministic_nonce(value: str) -> bytes:
     return sha256(value.encode("utf-8")).digest()[:12]
 
 
-def _encrypt(value: str, normalizer=None) -> str:
+def compute_blind_index(value: str, normalizer=None) -> str:
+    """Compute a blind index for a plaintext value.
+
+    The blind index is a keyed HMAC that allows equality lookups without
+    revealing the plaintext. It is deterministic (same input = same output)
+    but cannot be reversed to recover the plaintext.
+
+    Args:
+        value: Plaintext string to index (None passes through unchanged)
+        normalizer: Optional function to normalize value before hashing
+                   (e.g., normalize_email for case-insensitive matching)
+
+    Returns:
+        64-character hex string (32-byte HMAC), or None if input was None
+    """
+    if value is None:
+        return None
+    normalized = normalizer(value) if normalizer else value
+    return hmac.new(
+        _BLIND_INDEX_KEY,
+        normalized.encode("utf-8"),
+        "sha256"
+    ).hexdigest()
+
+
+def _encrypt(value: str, normalizer=None, deterministic=False) -> str:
     """Encrypt a string value using AES-GCM.
+
+    By default uses probabilistic encryption (random nonce) which is more
+    secure. Set deterministic=True only for backward compatibility during
+    migration.
 
     Args:
         value: Plaintext string to encrypt (None passes through unchanged)
         normalizer: Optional function to normalize value before encryption
-                   (e.g., lowercase email). Applied before nonce derivation
-                   to ensure consistent ciphertext for equivalent inputs.
+                   (e.g., lowercase email).
+        deterministic: If True, use deterministic nonce (LEGACY - avoid in new code)
 
     Returns:
         URL-safe base64-encoded ciphertext (nonce || ciphertext || tag),
@@ -143,7 +207,10 @@ def _encrypt(value: str, normalizer=None) -> str:
         return None
     normalized = normalizer(value) if normalizer else value
     aes = AESGCM(_KEY)
-    nonce = _deterministic_nonce(normalized)
+    if deterministic:
+        nonce = _deterministic_nonce(normalized)
+    else:
+        nonce = _random_nonce()
     ciphertext = aes.encrypt(nonce, normalized.encode("utf-8"), associated_data=None)
     return base64.urlsafe_b64encode(nonce + ciphertext).decode("utf-8")
 
@@ -174,10 +241,10 @@ def _decrypt(token: str) -> str:
 
 
 def normalize_email(value: str) -> str:
-    """Normalize email for consistent encryption.
+    """Normalize email for consistent blind index computation.
 
     Strips whitespace and lowercases to ensure:
-    - "User@Example.com" and "user@example.com" produce same ciphertext
+    - "User@Example.com" and "user@example.com" produce same blind index
     - Leading/trailing spaces don't cause duplicate entries
 
     Args:
@@ -192,17 +259,16 @@ def normalize_email(value: str) -> str:
 class EncryptedString(TypeDecorator):
     """SQLAlchemy type that transparently encrypts string columns at rest.
 
-    Uses AES-GCM with deterministic nonce derived from plaintext, enabling:
-    - Unique constraints on encrypted columns
-    - Equality comparisons in WHERE clauses
-    - Index lookups
+    Uses AES-GCM with RANDOM nonce (probabilistic encryption). This means:
+    - Same plaintext produces DIFFERENT ciphertexts each time
+    - Cannot use for equality comparisons or unique constraints
+    - Must use a separate blind index column for lookups
 
-    SECURITY NOTE: Deterministic encryption leaks equality patterns.
-    See module docstring for threat model details.
+    For searchable encrypted fields, pair with a blind index column:
+        email = Column(EncryptedString(255, normalizer=normalize_email))
+        email_idx = Column(String(64), unique=True, index=True)
 
-    Example usage:
-        email = Column(EncryptedString(255, normalizer=normalize_email),
-                      unique=True, nullable=False)
+    Then compute the index with compute_blind_index() when inserting/querying.
 
     Args:
         length: Maximum column length (should account for ciphertext expansion)
@@ -217,10 +283,10 @@ class EncryptedString(TypeDecorator):
         self.normalizer = normalizer
 
     def process_bind_param(self, value, dialect):
-        """Encrypt value before storing in database."""
+        """Encrypt value before storing in database (probabilistic)."""
         if value is None:
             return None
-        return _encrypt(str(value), self.normalizer)
+        return _encrypt(str(value), self.normalizer, deterministic=False)
 
     def process_result_value(self, value, dialect):
         """Decrypt value when reading from database."""

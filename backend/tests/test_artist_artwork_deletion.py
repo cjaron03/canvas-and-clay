@@ -20,6 +20,7 @@ from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db
+from conftest import find_user_by_email
 
 
 @pytest.fixture
@@ -57,7 +58,7 @@ def artist_user_1(client):
     })
 
     # Update role to artist
-    user = User.query.filter_by(email='artist1@test.com').first()
+    user = find_user_by_email(User, 'artist1@test.com')
     user.role = 'artist'
     db.session.commit()
 
@@ -89,7 +90,7 @@ def artist_user_2(client):
     })
 
     # Update role to artist
-    user = User.query.filter_by(email='artist2@test.com').first()
+    user = find_user_by_email(User, 'artist2@test.com')
     user.role = 'artist'
     db.session.commit()
 

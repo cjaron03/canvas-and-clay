@@ -5,6 +5,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db, User, Artist, Artwork, Storage, ArtworkPhoto, AuditLog
+from conftest import find_user_by_email
 
 
 @pytest.fixture
@@ -90,7 +91,7 @@ def admin_user(client):
         'password': 'AdminPassword123!'
     })
 
-    user = User.query.filter_by(email='admin@test.com').first()
+    user = find_user_by_email(User, 'admin@test.com')
     user.role = 'admin'
     db.session.commit()
 
@@ -115,7 +116,7 @@ def regular_user(client):
         'password': 'UserPassword123!'
     })
 
-    return User.query.filter_by(email='user@test.com').first()
+    return find_user_by_email(User, 'user@test.com')
 
 
 class TestListArtworks:
