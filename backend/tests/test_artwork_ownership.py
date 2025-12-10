@@ -4,6 +4,7 @@ import io
 from PIL import Image
 import json
 from app import app, db, User, Artist, Artwork, Storage
+from conftest import find_user_by_email
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def admin_user(client):
     })
 
     # Promote the user to admin since registration always defaults to guest
-    user = User.query.filter_by(email='admin@test.com').first()
+    user = find_user_by_email(User, 'admin@test.com')
     if user:
         user.role = 'admin'
         db.session.commit()
@@ -157,7 +158,7 @@ class TestArtworkOwnership:
     def test_owner_can_upload_to_linked_artwork(self, client, regular_user, artist_and_artwork, test_image):
         """Test that artist owner can upload photos to their own artworks."""
         # Get the user ID for the logged-in user
-        user = User.query.filter_by(email='user@test.com').first()
+        user = find_user_by_email(User, 'user@test.com')
 
         # Link artist to user
         artist = Artist.query.get(artist_and_artwork['artist_id'])
@@ -191,7 +192,7 @@ class TestArtworkOwnership:
             'email': 'owner@test.com',
             'password': 'OwnerPassword123!'
         })
-        owner = User.query.filter_by(email='owner@test.com').first()
+        owner = find_user_by_email(User, 'owner@test.com')
 
         # Link artist to owner
         artist = Artist.query.get(artist_and_artwork['artist_id'])
@@ -237,7 +238,7 @@ class TestAdminArtistManagement:
             'password': 'ArtistPassword123!',
             'role': 'guest'
         })
-        user = User.query.filter_by(email='newartist@test.com').first()
+        user = find_user_by_email(User, 'newartist@test.com')
 
         # Admin assigns artist to user
         artist_id = artist_and_artwork['artist_id']
@@ -269,7 +270,7 @@ class TestAdminArtistManagement:
             'password': 'UnlinkPassword123!',
             'role': 'guest'
         })
-        user = User.query.filter_by(email='unlink@test.com').first()
+        user = find_user_by_email(User, 'unlink@test.com')
 
         artist = Artist.query.get(artist_and_artwork['artist_id'])
         artist.user_id = user.id

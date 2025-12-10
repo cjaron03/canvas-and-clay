@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 from sqlalchemy.pool import StaticPool
 from app import app, db, User, PasswordResetRequest, bcrypt
+from conftest import find_user_by_email
 
 
 @pytest.fixture
@@ -350,7 +351,7 @@ class TestUserLogin:
         
         # Disable the user account
         with app.app_context():
-            user = User.query.filter_by(email=sample_user['email']).first()
+            user = find_user_by_email(User, sample_user['email'])
             user.is_active = False
             db.session.commit()
         
@@ -425,7 +426,7 @@ class TestProtectedRoutes:
         
         # Manually promote to admin (simulating admin promotion endpoint)
         with app.app_context():
-            user = User.query.filter_by(email=admin_user['email']).first()
+            user = find_user_by_email(User, admin_user['email'])
             user.role = 'admin'
             db.session.commit()
         
@@ -651,7 +652,7 @@ class TestPasswordResetFlow:
         assert response.status_code == 200
 
         with app.app_context():
-            user = User.query.filter_by(email=sample_user['email']).first()
+            user = find_user_by_email(User, sample_user['email'])
             assert bcrypt.check_password_hash(user.hashed_password, 'BrandNewPass123')
             entry = PasswordResetRequest.query.filter_by(email=sample_user['email']).first()
             assert entry.status == 'completed'

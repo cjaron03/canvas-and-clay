@@ -14,6 +14,7 @@ os.environ.setdefault('TEST_DATABASE_URL', 'sqlite:///:memory:')
 os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app, db, User, Artist, Artwork, ArtworkPhoto, Storage
+from conftest import find_user_by_email
 from upload_utils import ARTWORKS_DIR, THUMBNAILS_DIR
 
 
@@ -60,7 +61,7 @@ def admin_user(client):
         'email': 'admin@test.com',
         'password': 'AdminPassword123!'
     })
-    user = User.query.filter_by(email='admin@test.com').first()
+    user = find_user_by_email(User, 'admin@test.com')
     user.role = 'admin'
     db.session.commit()
     client.post('/auth/login', json={'email': 'admin@test.com', 'password': 'AdminPassword123!'})
@@ -74,7 +75,7 @@ def regular_user(client):
         'password': 'UserPassword123!'
     })
     client.post('/auth/login', json={'email': 'user@test.com', 'password': 'UserPassword123!'})
-    return User.query.filter_by(email='user@test.com').first()
+    return find_user_by_email(User, 'user@test.com')
 
 
 def _make_image_bytes(color=(255, 0, 0)):
