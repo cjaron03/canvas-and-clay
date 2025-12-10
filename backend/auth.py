@@ -1249,10 +1249,13 @@ def request_password_reset():
 
     user = find_user_by_email(email)
 
-    existing_request = PasswordResetRequest.query.filter(
-        PasswordResetRequest.email == email,
-        PasswordResetRequest.status.in_(['pending', 'approved'])
-    ).order_by(PasswordResetRequest.created_at.desc()).first()
+    # Check for existing pending/approved request using user_id (can't query encrypted email)
+    existing_request = None
+    if user:
+        existing_request = PasswordResetRequest.query.filter(
+            PasswordResetRequest.user_id == user.id,
+            PasswordResetRequest.status.in_(['pending', 'approved'])
+        ).order_by(PasswordResetRequest.created_at.desc()).first()
 
     if existing_request:
         return jsonify({
@@ -1309,13 +1312,16 @@ def verify_reset_code():
         return jsonify({'error': 'Reset code length is invalid'}), 400
 
     user = find_user_by_email(email)
-    reset_request = PasswordResetRequest.query.filter(
-        PasswordResetRequest.email == email,
-        PasswordResetRequest.status == 'approved'
-    ).order_by(
-        PasswordResetRequest.approved_at.desc().nullslast(),
-        PasswordResetRequest.created_at.desc()
-    ).first()
+    # Query by user_id since email is probabilistically encrypted
+    reset_request = None
+    if user:
+        reset_request = PasswordResetRequest.query.filter(
+            PasswordResetRequest.user_id == user.id,
+            PasswordResetRequest.status == 'approved'
+        ).order_by(
+            PasswordResetRequest.approved_at.desc().nullslast(),
+            PasswordResetRequest.created_at.desc()
+        ).first()
 
     # Always perform bcrypt check for constant-time response (prevents timing attacks)
     stored_hash = (reset_request.reset_code_hash
@@ -1394,13 +1400,16 @@ def confirm_password_reset():
         return jsonify({'error': password_error}), 400
 
     user = find_user_by_email(email)
-    reset_request = PasswordResetRequest.query.filter(
-        PasswordResetRequest.email == email,
-        PasswordResetRequest.status == 'approved'
-    ).order_by(
-        PasswordResetRequest.approved_at.desc().nullslast(),
-        PasswordResetRequest.created_at.desc()
-    ).first()
+    # Query by user_id since email is probabilistically encrypted
+    reset_request = None
+    if user:
+        reset_request = PasswordResetRequest.query.filter(
+            PasswordResetRequest.user_id == user.id,
+            PasswordResetRequest.status == 'approved'
+        ).order_by(
+            PasswordResetRequest.approved_at.desc().nullslast(),
+            PasswordResetRequest.created_at.desc()
+        ).first()
 
     # Always perform bcrypt check for constant-time response (prevents timing attacks)
     stored_hash = (reset_request.reset_code_hash
