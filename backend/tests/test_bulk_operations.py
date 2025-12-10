@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from app import app, db, User, AuditLog, bcrypt
+from encryption import compute_blind_index, normalize_email
 from create_tbls import init_tables
 
 
@@ -40,8 +41,10 @@ def client():
 def admin_user(client):
     """Create and login as admin user."""
     with app.app_context():
+        email = 'admin@test.com'
         user = User(
-            email='admin@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=bcrypt.generate_password_hash('AdminPass123').decode('utf-8'),
             role='admin',
             is_active=True
@@ -62,8 +65,10 @@ def admin_user(client):
 def guest_user(client):
     """Create a guest user."""
     with app.app_context():
+        email = 'guest@test.com'
         user = User(
-            email='guest@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=bcrypt.generate_password_hash('GuestPass123').decode('utf-8'),
             role='guest',
             is_active=True

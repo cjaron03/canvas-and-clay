@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from app import app, db, User, AuditLog, FailedLoginAttempt, PasswordResetRequest, bcrypt
+from encryption import compute_blind_index, normalize_email
 
 
 @pytest.fixture
@@ -40,8 +41,10 @@ def client():
 def admin_user(client):
     """Create and login as admin user."""
     with app.app_context():
+        email = 'admin@test.com'
         user = User(
-            email='admin@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=bcrypt.generate_password_hash('AdminPass123').decode('utf-8'),
             role='admin',
             is_active=True
@@ -63,8 +66,10 @@ def admin_user(client):
 def guest_user(client):
     """Create and return a guest user (not logged in)."""
     with app.app_context():
+        email = 'guest@test.com'
         user = User(
-            email='guest@test.com',
+            email=email,
+            email_idx=compute_blind_index(email, normalize_email),
             hashed_password=bcrypt.generate_password_hash('GuestPass123').decode('utf-8'),
             role='guest',
             is_active=True
@@ -80,8 +85,10 @@ def sample_users(client, admin_user):
     users = []
     with app.app_context():
         for i in range(3):
+            email = f'user{i}@test.com'
             user = User(
-                email=f'user{i}@test.com',
+                email=email,
+                email_idx=compute_blind_index(email, normalize_email),
                 hashed_password=bcrypt.generate_password_hash('TestPass123').decode('utf-8'),
                 role='guest',
                 is_active=True
@@ -181,8 +188,10 @@ class TestAdminUserManagement:
         """Admin should be able to demote another admin."""
         # First create another admin
         with app.app_context():
+            email = 'other_admin@test.com'
             other_admin = User(
-                email='other_admin@test.com',
+                email=email,
+                email_idx=compute_blind_index(email, normalize_email),
                 hashed_password=bcrypt.generate_password_hash('AdminPass123').decode('utf-8'),
                 role='admin',
                 is_active=True
