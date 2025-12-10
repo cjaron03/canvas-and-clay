@@ -54,3 +54,41 @@ def create_user_with_index(User, db, bcrypt, email, password, role='guest', is_a
     db.session.add(user)
     db.session.commit()
     return user
+
+
+def find_password_reset_by_email(PasswordResetRequest, User, email):
+    """Find a password reset request by email using user_id lookup.
+
+    With probabilistic encryption, you cannot query PasswordResetRequest by
+    encrypted email directly. This helper finds the user first (using blind
+    index), then looks up the reset request by user_id.
+
+    Args:
+        PasswordResetRequest: The PasswordResetRequest model class
+        User: The User model class
+        email: Email address to search for
+
+    Returns:
+        PasswordResetRequest object if found, None otherwise
+    """
+    user = find_user_by_email(User, email)
+    if user is None:
+        return None
+    return PasswordResetRequest.query.filter_by(user_id=user.id).first()
+
+
+def count_password_resets_by_email(PasswordResetRequest, User, email):
+    """Count password reset requests by email using user_id lookup.
+
+    Args:
+        PasswordResetRequest: The PasswordResetRequest model class
+        User: The User model class
+        email: Email address to search for
+
+    Returns:
+        Number of password reset requests for this user
+    """
+    user = find_user_by_email(User, email)
+    if user is None:
+        return 0
+    return PasswordResetRequest.query.filter_by(user_id=user.id).count()
