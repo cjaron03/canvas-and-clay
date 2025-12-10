@@ -391,7 +391,10 @@ def _encrypt(value: str, normalizer=None, deterministic=False) -> str:
     # Use legacy key for encryption to maintain search compatibility
     # Key validation (length, weak key check) still happens at startup via Argon2id path
     aes = AESGCM(_LEGACY_KEY)
-    nonce = _deterministic_nonce(normalized)
+    if deterministic:
+        nonce = _deterministic_nonce(normalized)
+    else:
+        nonce = _random_nonce()
     ciphertext = aes.encrypt(nonce, normalized.encode("utf-8"), associated_data=None)
     return base64.urlsafe_b64encode(nonce + ciphertext).decode("utf-8")
 
