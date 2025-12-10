@@ -70,6 +70,28 @@ WARNING: Proceeding without the correct key will make artist lookups FAIL.
 ================================================================================
 """
 
+ERR_DUPLICATE_EMAILS = """
+================================================================================
+ERROR: MIGRATION FAILED - DUPLICATE ARTIST EMAILS DETECTED (ERR_DUP_EMAIL_001)
+================================================================================
+
+Found {count} artists sharing duplicate email addresses.
+Cannot create unique constraint on artist_email_idx.
+
+Duplicate emails found:
+{duplicates}
+
+To fix this:
+  1. Manually resolve duplicate artist emails before running this migration
+  2. Use the artist IDs listed above to identify affected artists
+  3. Update or remove duplicate emails so each artist has a unique email
+  4. Run migrations again
+
+NOTE: Previously artist_email had no unique constraint. This migration adds one
+      to enable blind index lookups with probabilistic encryption.
+================================================================================
+"""
+
 
 def upgrade():
     # SAFETY CHECK: Ensure we have a stable encryption key
@@ -128,7 +150,41 @@ def upgrade():
 
         # Compute blind index
         blind_idx = compute_blind_index(decrypted_email, normalizer=normalize_email)
-        artists_to_update.append({"idx": blind_idx, "id": artist_id})
+        artists_to_update.append({"idx": blind_idx, "id": artist_id, "email": decrypted_email})
+
+    # Check for duplicate emails before applying unique constraint
+    # Group all artists by their blind index to catch all duplicates
+    index_groups = {}
+    for artist in artists_to_update:
+        idx = artist["idx"]
+        if idx not in index_groups:
+            index_groups[idx] = []
+        index_groups[idx].append(artist)
+
+    # Find groups with more than one artist (duplicates)
+    duplicates = [(artists[0]["email"], [a["id"] for a in artists])
+                  for artists in index_groups.values() if len(artists) > 1]
+
+    if duplicates:
+        # Format duplicates for error message (mask email for PII protection)
+        def mask_email(email):
+            if '@' in email:
+                local, domain = email.split('@', 1)
+                masked_local = local[0] + '***' if len(local) > 0 else '***'
+                return f"{masked_local}@{domain}"
+            return '***'
+
+        dup_lines = []
+        for email, artist_ids in duplicates:
+            dup_lines.append(f"  - '{mask_email(email)}' used by artist IDs: {artist_ids}")
+        print(ERR_DUPLICATE_EMAILS.format(
+            count=len(duplicates),
+            duplicates="\n".join(dup_lines)
+        ))
+        raise RuntimeError(
+            f"ERR_DUP_EMAIL_001: Found {len(duplicates)} duplicate artist emails. "
+            "Resolve duplicates before running migration."
+        )
 
     # Batch update all artists
     for artist in artists_to_update:
