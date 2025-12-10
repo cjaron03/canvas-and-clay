@@ -6040,6 +6040,7 @@ def ensure_bootstrap_admin():
                 
                 admin_user = User(
                     email=bootstrap_email,
+                    email_idx=User.compute_email_index(bootstrap_email),
                     hashed_password=hashed_password,
                     role='admin',
                     created_at=datetime.now(timezone.utc)

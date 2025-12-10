@@ -88,14 +88,11 @@ def invalidate_user_sessions(db, UserSession, user_id, exclude_token=None):
 
 
 def find_user_by_email(email):
-    """Find user by email, handling both encrypted and plaintext storage.
+    """Find user by email using blind index lookup.
 
-    This function works around encryption key changes by:
-    1. First trying the standard encrypted query (O(1) with index)
-    2. If no match, returns None (does NOT scan all users)
-
-    IMPORTANT: If encryption keys have changed, run rotate_encryption_key.py
-    to re-encrypt all user emails with the new key before users can log in.
+    Uses HMAC-based blind index for O(1) lookups without revealing email
+    patterns in the database. The email column itself uses probabilistic
+    encryption (random nonce), so direct queries are not possible.
 
     Args:
         email: Email address to search for
@@ -105,13 +102,11 @@ def find_user_by_email(email):
     """
     db, _, User, _, _, _, _, _, _ = get_dependencies()
 
-    # Normalize email for comparison (encryption normalizes too)
-    normalized_email = email.strip().lower()
+    # Compute blind index for lookup
+    email_idx = User.compute_email_index(email)
 
-    # Standard query - works if encryption key is consistent
-    # The EncryptedString TypeDecorator encrypts the search value too,
-    # so this is an index-friendly equality check on ciphertext
-    user = User.query.filter_by(email=normalized_email).first()
+    # Query by blind index (O(1) with index)
+    user = User.query.filter_by(email_idx=email_idx).first()
     return user
 
 
@@ -407,6 +402,7 @@ def register():
     
     new_user = User(
         email=email,
+        email_idx=User.compute_email_index(email),
         hashed_password=hashed_password,
         role=role,
         created_at=datetime.now(timezone.utc)
@@ -1595,10 +1591,10 @@ def change_email():
         return jsonify({'error': 'New email must be different from current email'}), 400
     
     old_email = current_user.email
-    
-    # update email
+
+    # update email (also updates blind index)
     try:
-        current_user.email = new_email
+        current_user.update_email(new_email)
         db.session.commit()
     except Exception:
         db.session.rollback()

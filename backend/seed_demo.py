@@ -192,8 +192,9 @@ def create_demo_user(user_data, Artist):
     """
     email = user_data["email"].strip().lower()
 
-    # Check if user exists
-    existing = User.query.filter_by(email=email).first()
+    # Check if user exists (use blind index for lookup)
+    email_idx = User.compute_email_index(email)
+    existing = User.query.filter_by(email_idx=email_idx).first()
     if existing:
         return existing, False
 
@@ -201,6 +202,7 @@ def create_demo_user(user_data, Artist):
     hashed_password = bcrypt.generate_password_hash(user_data["password"]).decode('utf-8')
     user = User(
         email=email,
+        email_idx=email_idx,
         hashed_password=hashed_password,
         role=user_data["role"],
         created_at=datetime.now(timezone.utc),
@@ -379,7 +381,8 @@ def check_setup_status():
 
         # Count existing data (active), excluding bootstrap admin only
         bootstrap_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@canvas-clay.local").lower()
-        users_count = User.query.filter(User.email != bootstrap_email).count()
+        bootstrap_email_idx = User.compute_email_index(bootstrap_email)
+        users_count = User.query.filter(User.email_idx != bootstrap_email_idx).count()
 
         # Count artists excluding example data from migration
         artists_count = Artist.query.filter(
@@ -411,7 +414,8 @@ def check_setup_status():
         # Check if bootstrap admin is using default password
         bootstrap_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@canvas-clay.local")
         bootstrap_password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "ChangeMe123")
-        admin_user = User.query.filter_by(email=bootstrap_email.lower()).first()
+        admin_email_idx = User.compute_email_index(bootstrap_email.lower())
+        admin_user = User.query.filter_by(email_idx=admin_email_idx).first()
 
         # Warn if admin exists and password env var is still default
         default_password_warning = (
