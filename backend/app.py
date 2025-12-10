@@ -5892,6 +5892,15 @@ def start_restore_endpoint():
         try:
             from restore import restore_backup
 
+            # Close all database connections before pg_restore runs
+            _restore_operations[restore_id]['current_step'] = 'Closing database connections...'
+            try:
+                with app.app_context():
+                    db.engine.dispose()
+                app.logger.info("Database connections disposed before restore")
+            except Exception as e:
+                app.logger.warning(f"Failed to dispose connections: {e}")
+
             _restore_operations[restore_id]['current_step'] = 'Restoring...'
 
             success, message = restore_backup(
@@ -5903,6 +5912,15 @@ def start_restore_endpoint():
                 passphrase=passphrase,
                 use_env_key=use_env_key
             )
+
+            # Reset connections after restore to ensure fresh pool
+            _restore_operations[restore_id]['current_step'] = 'Reconnecting to database...'
+            try:
+                with app.app_context():
+                    db.engine.dispose()
+                app.logger.info("Database connections reset after restore")
+            except Exception as e:
+                app.logger.warning(f"Failed to reset connections: {e}")
 
             if success:
                 _restore_operations[restore_id]['status'] = 'completed'
@@ -5962,10 +5980,14 @@ def start_restore_endpoint():
 
 
 @app.route('/api/admin/console/restore/<restore_id>/status', methods=['GET'])
-@login_required
-@admin_required
+@limiter.exempt  # Status polling should not be rate limited
 def get_restore_status(restore_id):
     """Get status of a restore operation.
+
+    Note: This endpoint does NOT require authentication because:
+    1. During restore, the database schema is wiped, making auth impossible
+    2. The restore_id (UUID) serves as a bearer token - only the initiator knows it
+    3. Status info is not sensitive (just progress/completion state)
 
     Returns:
         200: Status data

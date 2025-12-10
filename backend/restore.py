@@ -44,6 +44,8 @@ from backup_utils import (  # noqa: E402
     archive_photos,
     create_manifest,
     compute_sha256,
+    wipe_database_schema,
+    run_database_migrations,
     BACKUPS_DIR,
 )
 from backup_encryption import (  # noqa: E402
@@ -355,7 +357,19 @@ def restore_backup(
     print("\nExtracting backup archive...")
     with tempfile.TemporaryDirectory() as temp_dir:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(temp_dir)
+            # Safe extraction - prevent path traversal attacks (CVE-2007-4559)
+            for member in tar.getmembers():
+                member_path = os.path.normpath(member.name)
+                # Reject paths that traverse outside the target directory
+                if member_path.startswith('..') or member_path.startswith('/'):
+                    print(f"  Warning: Skipping suspicious path: {member.name}")
+                    continue
+                # Verify the resolved path is within temp_dir
+                abs_path = os.path.abspath(os.path.join(temp_dir, member_path))
+                if not abs_path.startswith(os.path.abspath(temp_dir)):
+                    print(f"  Warning: Skipping path traversal attempt: {member.name}")
+                    continue
+                tar.extract(member, temp_dir)
 
         # Restore database
         if restore_db:
@@ -374,11 +388,34 @@ def restore_backup(
                     return False, "Database dump checksum mismatch"
                 print("  Checksum verified")
 
-            success, message = run_pg_restore(db_dump_path)
+            # Wipe database schema to handle schema version mismatches
+            # This ensures pg_restore can create tables fresh without conflicts
+            print("  Wiping existing database schema...")
+            success, message = wipe_database_schema()
+            if not success:
+                cleanup_decrypted()
+                return False, f"Schema wipe failed: {message}"
+            print("  Schema wiped")
+
+            success, message = run_pg_restore(db_dump_path, clean=False)
             if not success:
                 cleanup_decrypted()
                 return False, f"Database restore failed: {message}"
             print("  Database restored successfully")
+
+            # Run migrations to bring schema up to date with current code
+            print("  Running database migrations...")
+            success, message = run_database_migrations()
+            if not success:
+                print(f"\n  WARNING: Migration failed!")
+                print(f"  {message}")
+                print("\n  The database has been restored but is NOT at the current schema version.")
+                print("  Before starting the application, run migrations manually:")
+                print("    docker exec canvas_backend flask db upgrade")
+                print("\n  Or restore from the pre-restore backup if you cannot fix migrations.")
+                # Don't fail - data is restored, migrations can be run manually
+            else:
+                print("  Migrations completed")
 
         # Restore photos
         if restore_photos:
