@@ -203,16 +203,26 @@ def upgrade():
 
 
 def downgrade():
+    bind = op.get_bind()
+
+    # Check if uq_artist_email_idx constraint exists
+    constraint_exists = bind.execute(sa.text("""
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_artist_email_idx' AND conrelid = 'artist'::regclass
+    """)).fetchone() is not None
+
+    # Check if ix_artist_email_idx index exists
+    index_exists = bind.execute(sa.text("""
+        SELECT 1 FROM pg_indexes
+        WHERE indexname = 'ix_artist_email_idx' AND tablename = 'artist'
+    """)).fetchone() is not None
+
     with op.batch_alter_table('artist', schema=None) as batch_op:
-        # Remove artist_email_idx unique constraint and index
-        try:
+        # Remove artist_email_idx unique constraint and index (only if they exist)
+        if constraint_exists:
             batch_op.drop_constraint('uq_artist_email_idx', type_='unique')
-        except Exception:
-            pass
-        try:
+        if index_exists:
             batch_op.drop_index('ix_artist_email_idx')
-        except Exception:
-            pass
 
         # Drop artist_email_idx column
         batch_op.drop_column('artist_email_idx')

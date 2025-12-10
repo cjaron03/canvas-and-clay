@@ -139,19 +139,29 @@ def upgrade():
     session.commit()
 
     # Step 3: Make email_idx non-nullable and add unique constraint
-    with op.batch_alter_table('users', schema=None) as batch_op:
-        # Drop the old unique constraint on email (if exists)
-        # Note: In SQLite batch mode, constraints are handled differently
-        try:
-            batch_op.drop_constraint('users_email_key', type_='unique')
-        except Exception:
-            pass  # Constraint might not exist or have different name
+    # First, check what constraints/indexes exist (PostgreSQL-specific)
+    bind = op.get_bind()
 
-        # Drop the old index on email (if exists)
-        try:
+    # Check if users_email_key constraint exists
+    constraint_exists = bind.execute(sa.text("""
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_email_key' AND conrelid = 'users'::regclass
+    """)).fetchone() is not None
+
+    # Check if ix_users_email index exists
+    index_exists = bind.execute(sa.text("""
+        SELECT 1 FROM pg_indexes
+        WHERE indexname = 'ix_users_email' AND tablename = 'users'
+    """)).fetchone() is not None
+
+    with op.batch_alter_table('users', schema=None) as batch_op:
+        # Drop the old unique constraint on email (only if it exists)
+        if constraint_exists:
+            batch_op.drop_constraint('users_email_key', type_='unique')
+
+        # Drop the old index on email (only if it exists)
+        if index_exists:
             batch_op.drop_index('ix_users_email')
-        except Exception:
-            pass  # Index might not exist
 
         # Make email_idx non-nullable
         batch_op.alter_column('email_idx',
@@ -164,16 +174,26 @@ def upgrade():
 
 
 def downgrade():
+    bind = op.get_bind()
+
+    # Check if uq_users_email_idx constraint exists
+    constraint_exists = bind.execute(sa.text("""
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_users_email_idx' AND conrelid = 'users'::regclass
+    """)).fetchone() is not None
+
+    # Check if ix_users_email_idx index exists
+    index_exists = bind.execute(sa.text("""
+        SELECT 1 FROM pg_indexes
+        WHERE indexname = 'ix_users_email_idx' AND tablename = 'users'
+    """)).fetchone() is not None
+
     with op.batch_alter_table('users', schema=None) as batch_op:
-        # Remove email_idx unique constraint and index
-        try:
+        # Remove email_idx unique constraint and index (only if they exist)
+        if constraint_exists:
             batch_op.drop_constraint('uq_users_email_idx', type_='unique')
-        except Exception:
-            pass
-        try:
+        if index_exists:
             batch_op.drop_index('ix_users_email_idx')
-        except Exception:
-            pass
 
         # Drop email_idx column
         batch_op.drop_column('email_idx')
