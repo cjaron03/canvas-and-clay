@@ -400,9 +400,16 @@ def extract_photos(archive_path, progress_callback=None):
             total = len(members)
 
             for i, member in enumerate(members):
-                # Security: prevent path traversal
+                # Security: prevent path traversal (CVE-2007-4559)
                 member_path = os.path.normpath(member.name)
                 if member_path.startswith('..') or member_path.startswith('/'):
+                    print(f"  Warning: Skipping suspicious path: {member.name}")
+                    continue
+
+                # Double-check resolved path stays within target directory
+                abs_path = os.path.abspath(os.path.join(UPLOADS_DIR, member_path))
+                if not abs_path.startswith(os.path.abspath(UPLOADS_DIR)):
+                    print(f"  Warning: Skipping path traversal attempt: {member.name}")
                     continue
 
                 tar.extract(member, UPLOADS_DIR)

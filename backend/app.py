@@ -5339,6 +5339,37 @@ def admin_console_cli():
 _backup_operations = {}
 _restore_operations = {}
 
+# Cleanup threshold for stale operations (1 hour)
+_OPERATION_CLEANUP_SECONDS = 3600
+
+
+def _cleanup_stale_operations():
+    """Remove completed/failed operations older than 1 hour."""
+    import time
+    current_time = time.time()
+
+    # Clean up restore operations
+    stale_ids = []
+    for restore_id, op in _restore_operations.items():
+        if op.get('status') in ('completed', 'failed'):
+            completed_at = op.get('completed_at_timestamp', 0)
+            if current_time - completed_at > _OPERATION_CLEANUP_SECONDS:
+                stale_ids.append(restore_id)
+
+    for restore_id in stale_ids:
+        del _restore_operations[restore_id]
+
+    # Clean up backup operations
+    stale_ids = []
+    for backup_id, op in _backup_operations.items():
+        if op.get('status') in ('completed', 'failed'):
+            completed_at = op.get('completed_at_timestamp', 0)
+            if current_time - completed_at > _OPERATION_CLEANUP_SECONDS:
+                stale_ids.append(backup_id)
+
+    for backup_id in stale_ids:
+        del _backup_operations[backup_id]
+
 
 @app.route('/api/admin/console/backups', methods=['GET'])
 @login_required
@@ -5486,9 +5517,11 @@ def create_backup_endpoint():
                 )
 
                 if success:
+                    import time
                     _backup_operations[backup_id]['status'] = 'completed'
                     _backup_operations[backup_id]['progress'] = 100
                     _backup_operations[backup_id]['current_step'] = 'Backup complete'
+                    _backup_operations[backup_id]['completed_at_timestamp'] = time.time()
                     if encryption_info:
                         _backup_operations[backup_id]['encryption_info'] = encryption_info
 
@@ -5510,12 +5543,16 @@ def create_backup_endpoint():
                         db.session.add(audit_log)
                         db.session.commit()
                 else:
+                    import time
                     _backup_operations[backup_id]['status'] = 'failed'
                     _backup_operations[backup_id]['error'] = message
+                    _backup_operations[backup_id]['completed_at_timestamp'] = time.time()
 
             except Exception as e:
+                import time
                 _backup_operations[backup_id]['status'] = 'failed'
                 _backup_operations[backup_id]['error'] = str(e)
+                _backup_operations[backup_id]['completed_at_timestamp'] = time.time()
 
         # Run backup in background thread
         thread = threading.Thread(target=run_backup)
@@ -5849,8 +5886,11 @@ def start_restore_endpoint():
                 'error': 'Passphrase required for encrypted backup (or use use_env_key)'
             }), 400
 
-    # Generate restore ID
-    restore_id = str(uuid.uuid4())[:8]
+    # Clean up stale operations before creating new one
+    _cleanup_stale_operations()
+
+    # Generate restore ID - full UUID for security (serves as bearer token)
+    restore_id = str(uuid.uuid4())
 
     # Initialize operation status
     _restore_operations[restore_id] = {
@@ -5923,9 +5963,11 @@ def start_restore_endpoint():
                 app.logger.warning(f"Failed to reset connections: {e}")
 
             if success:
+                import time
                 _restore_operations[restore_id]['status'] = 'completed'
                 _restore_operations[restore_id]['progress'] = 100
                 _restore_operations[restore_id]['current_step'] = 'Restore complete'
+                _restore_operations[restore_id]['completed_at_timestamp'] = time.time()
 
                 # Log success
                 with app.app_context():
@@ -5943,8 +5985,10 @@ def start_restore_endpoint():
                     db.session.add(audit_log)
                     db.session.commit()
             else:
+                import time
                 _restore_operations[restore_id]['status'] = 'failed'
                 _restore_operations[restore_id]['error'] = message
+                _restore_operations[restore_id]['completed_at_timestamp'] = time.time()
 
                 # Log failure
                 with app.app_context():
@@ -5964,8 +6008,10 @@ def start_restore_endpoint():
                     db.session.commit()
 
         except Exception as e:
+            import time
             _restore_operations[restore_id]['status'] = 'failed'
             _restore_operations[restore_id]['error'] = str(e)
+            _restore_operations[restore_id]['completed_at_timestamp'] = time.time()
 
     # Run restore in background thread
     thread = threading.Thread(target=run_restore)
