@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from app import app, db, User, AuditLog, FailedLoginAttempt, PasswordResetRequest, bcrypt
+from auth import hash_email_for_audit
 from encryption import compute_blind_index, normalize_email
 
 
@@ -298,7 +299,7 @@ class TestAuditLog:
             for i in range(15):
                 log = AuditLog(
                     user_id=admin_user['id'],
-                    email=admin_user['email'],
+                    email_hash=hash_email_for_audit(admin_user['email']),
                     event_type='test_event',
                     ip_address='127.0.0.1',
                     user_agent='Test Agent',

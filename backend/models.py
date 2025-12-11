@@ -228,31 +228,33 @@ def init_models(database):
             id: Primary key
             event_type: Type of event (e.g., 'login_success', 'login_failure', 'account_locked')
             user_id: ID of the user (nullable for failed logins with nonexistent users)
-            email: Email address associated with the event
+            email_hash: SHA256 hash of the email (for searchability without plaintext exposure)
             ip_address: IP address of the request
             user_agent: User agent string from the request
             details: Additional details in JSON format
             created_at: Timestamp of the event
 
-        SECURITY NOTE: email is intentionally NOT encrypted here because:
-        - Security investigations require searchable audit trails
-        - Compliance requirements may mandate plaintext audit records
-        - Audit logs should remain readable even if encryption keys are rotated
+        SECURITY NOTE: email_hash stores SHA256(lowercase(email)) instead of plaintext.
+        This protects emails if the database is compromised while still allowing:
+        - Equality searches (hash the input, compare to stored hash)
+        - Correlation of events for the same email address
+        - Compliance with data protection requirements (email not exposed)
         """
         __tablename__ = 'audit_logs'
 
         id = database.Column(database.Integer, primary_key=True)
         event_type = database.Column(database.String(50), nullable=False, index=True)
         user_id = database.Column(database.Integer, nullable=True, index=True)
-        # Intentionally unencrypted - see class docstring for rationale
-        email = database.Column(database.String(120), nullable=True, index=True)
+        # SHA256 hash of email (64 chars) - protects PII while allowing equality searches
+        email_hash = database.Column(database.String(64), nullable=True, index=True)
         ip_address = database.Column(database.String(45), nullable=False, index=True)
         user_agent = database.Column(database.String(255), nullable=True)
         details = database.Column(database.Text, nullable=True)  # JSON string for additional details
         created_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
-        
+
         def __repr__(self):
-            return f'<AuditLog {self.event_type} for {self.email} at {self.created_at}>'
+            hash_preview = self.email_hash[:8] if self.email_hash else 'None'
+            return f'<AuditLog {self.event_type} hash={hash_preview}... at {self.created_at}>'
     
     class PasswordResetRequest(database.Model):
         """Model for manual/admin-assisted password reset workflow."""

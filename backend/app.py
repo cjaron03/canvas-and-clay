@@ -404,12 +404,14 @@ LegalPage = init_models.LegalPage
 BOOTSTRAP_ADMIN_EMAIL = (os.getenv('BOOTSTRAP_ADMIN_EMAIL') or 'admin@canvas-clay.local').strip().lower()
 
 # Now initialize rate limiter with key function that can access User model
+# SECURITY: Use persistent storage (Redis) so rate limits survive restarts
+# This prevents attackers from bypassing rate limits by triggering server restarts
 rate_limit_key_func = create_rate_limit_key_func()
 limiter = Limiter(
     app=app,
     key_func=rate_limit_key_func,
     default_limits=["1000 per day", "200 per hour"],
-    storage_uri="memory://"  # use in-memory storage (can be upgraded to Redis in production)
+    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://")
 )
 
 # Initialize db tables
@@ -516,7 +518,7 @@ def enforce_session_token():
 
 # Register blueprints
 # Do NOT move this auth import. Will break the Docker build on startup.
-from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event, find_user_by_email
+from auth import auth_bp, admin_required, is_artwork_owner, is_artist_owner, is_photo_owner, log_rbac_denial, log_audit_event, find_user_by_email, hash_email_for_audit
 app.register_blueprint(auth_bp)
 
 from setup_wizard import setup_bp
@@ -795,7 +797,7 @@ def create_artist():
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artist_created',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -965,7 +967,7 @@ def update_artist(artist_id):
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artist_updated',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -1046,7 +1048,7 @@ def restore_deleted_artist(artist_id):
         # audit restoration
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='deleted_artist_restored',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -1173,7 +1175,7 @@ def delete_artist(artist_id):
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artist_deleted',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -1920,7 +1922,7 @@ def upload_artist_profile_photo(artist_id):
 
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artist_profile_photo_uploaded',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -2123,7 +2125,7 @@ def create_artwork():
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artwork_created',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -2283,7 +2285,7 @@ def update_artwork(artwork_id):
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artwork_updated',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -2363,7 +2365,7 @@ def restore_deleted_artwork(artwork_id):
         # audit restoration
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='deleted_artwork_restored',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -2484,7 +2486,7 @@ def delete_artwork(artwork_id):
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='artwork_deleted',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -2587,7 +2589,7 @@ def bulk_delete_artworks():
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='bulk_artwork_deleted',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -2690,7 +2692,7 @@ def bulk_delete_artists():
         # Audit log
         audit_log = AuditLog(
             user_id=current_user.id,
-            email=current_user.email,
+            email_hash=hash_email_for_audit(current_user.email),
             event_type='bulk_artist_deleted',
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -3229,7 +3231,7 @@ def associate_photo_with_artwork(photo_id):
     # Audit log the association
     audit_log = AuditLog(
         user_id=current_user.id,
-        email=current_user.email,
+        email_hash=hash_email_for_audit(current_user.email),
         event_type='photo_associated',
         ip_address=request.remote_addr,
         user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -3758,7 +3760,7 @@ def admin_console_audit_log():
                     'id': log.id,
                     'event_type': log.event_type,
                     'user_id': log.user_id,
-                    'email': log.email,
+                    'email_hash': log.email_hash,  # SHA256 hash, not plaintext
                     'ip_address': log.ip_address,
                     'user_agent': log.user_agent,
                     'created_at': log.created_at.isoformat() if log.created_at else None,
@@ -5533,7 +5535,7 @@ def create_backup_endpoint():
                     }
                     audit_log = AuditLog(
                         user_id=user_id,
-                        email=user_email,
+                        email_hash=hash_email_for_audit(user_email),
                         event_type='backup_created',
                         ip_address=client_ip,
                         user_agent=user_agent,
@@ -5632,7 +5634,7 @@ def download_backup(filename):
     # Log the download
     audit_log = AuditLog(
         user_id=current_user.id,
-        email=current_user.email,
+        email_hash=hash_email_for_audit(current_user.email),
         event_type='backup_downloaded',
         ip_address=request.remote_addr,
         user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -5675,7 +5677,7 @@ def delete_backup_endpoint(filename):
     # Log the deletion
     audit_log = AuditLog(
         user_id=current_user.id,
-        email=current_user.email,
+        email_hash=hash_email_for_audit(current_user.email),
         event_type='backup_deleted',
         ip_address=request.remote_addr,
         user_agent=request.headers.get('User-Agent', 'Unknown'),
@@ -5913,7 +5915,7 @@ def start_restore_endpoint():
     # Log restore start
     audit_log = AuditLog(
         user_id=user_id,
-        email=user_email,
+        email_hash=hash_email_for_audit(user_email),
         event_type='restore_started',
         ip_address=client_ip,
         user_agent=user_agent,
@@ -5973,7 +5975,7 @@ def start_restore_endpoint():
                 with app.app_context():
                     audit_log = AuditLog(
                         user_id=user_id,
-                        email=user_email,
+                        email_hash=hash_email_for_audit(user_email),
                         event_type='restore_completed',
                         ip_address=client_ip,
                         user_agent=user_agent,
@@ -5994,7 +5996,7 @@ def start_restore_endpoint():
                 with app.app_context():
                     audit_log = AuditLog(
                         user_id=user_id,
-                        email=user_email,
+                        email_hash=hash_email_for_audit(user_email),
                         event_type='restore_failed',
                         ip_address=client_ip,
                         user_agent=user_agent,

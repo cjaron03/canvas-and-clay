@@ -1,4 +1,5 @@
 """Authentication blueprint for user registration, login, and logout."""
+import hashlib
 import os
 import re
 import json as json_lib
@@ -428,31 +429,56 @@ def register():
         return jsonify({'error': 'Failed to create user'}), 500
 
 
+def hash_email_for_audit(email):
+    """Compute SHA256 hash of email for audit logging.
+
+    SECURITY: Stores one-way hash instead of plaintext email.
+    This protects user emails if the database is compromised while
+    still allowing:
+    - Correlation of events for the same email
+    - Equality searches by hashing the input and comparing
+
+    Args:
+        email: Email address to hash (or None)
+
+    Returns:
+        64-character hex string (SHA256 hash), or None if input was None
+    """
+    if email is None:
+        return None
+    # Normalize: lowercase and strip whitespace for consistent hashing
+    normalized = email.lower().strip()
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
 def log_audit_event(event_type, user_id=None, email=None, details=None):
     """log security audit event.
-    
+
     Args:
         event_type: Type of event (e.g., 'login_success', 'login_failure', 'account_locked')
         user_id: ID of the user (optional)
-        email: Email address associated with the event (optional)
+        email: Email address associated with the event (optional, will be hashed)
         details: Additional details as dict (will be JSON serialized)
+
+    SECURITY NOTE: Email is stored as SHA256 hash, not plaintext.
+    To search audit logs by email, hash the email first using hash_email_for_audit().
     """
     db, _, _, _, AuditLog, _, _, _, _ = get_dependencies()
-    
+
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
     details_json = json_lib.dumps(details) if details else None
-    
+
     audit_log = AuditLog(
         event_type=event_type,
         user_id=user_id,
-        email=email,
+        email_hash=hash_email_for_audit(email),
         ip_address=ip_address,
         user_agent=user_agent,
         details=details_json,
         created_at=datetime.now(timezone.utc)
     )
-    
+
     try:
         db.session.add(audit_log)
         db.session.commit()
