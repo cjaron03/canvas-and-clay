@@ -68,12 +68,19 @@ def get_db_connection_info():
         parsed = urlparse(database_url)
         # URL-decode username and password since they may contain special characters
         # like @ (%40), = (%3D), etc.
+        user = unquote(parsed.username) if parsed.username else "canvas_db"
+        password = unquote(parsed.password) if parsed.password else ""
+
+        # Security: Reject null bytes which can cause truncation in C-based libraries
+        if '\x00' in user or '\x00' in password:
+            raise ValueError("Database credentials cannot contain null bytes")
+
         return {
             "host": parsed.hostname or "localhost",
             "port": str(parsed.port or 5432),
             "database": parsed.path.lstrip("/") if parsed.path else "canvas_clay",
-            "user": unquote(parsed.username) if parsed.username else "canvas_db",
-            "password": unquote(parsed.password) if parsed.password else ""
+            "user": user,
+            "password": password
         }
     else:
         # Use individual env vars

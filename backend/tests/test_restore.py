@@ -716,6 +716,403 @@ class TestDatabaseConnectionInfo:
         assert info['password'] == 'p@ss=word'  # URL decoded
 
 
+class TestURLDecodedCredentials:
+    """Comprehensive tests for URL-decoded credentials in get_db_connection_info().
+
+    The get_db_connection_info() function uses urllib.parse.unquote() to decode
+    URL-encoded usernames and passwords from DATABASE_URL. This test class
+    verifies correct handling of various edge cases.
+    """
+
+    # --- Empty Credentials Tests ---
+
+    def test_empty_password(self):
+        """Test DATABASE_URL with empty password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['user'] == 'user'
+        assert info['password'] == ''
+
+    def test_empty_username(self):
+        """Test DATABASE_URL with empty username."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://:password@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['user'] == ''
+        assert info['password'] == 'password'
+
+    def test_empty_username_and_password(self):
+        """Test DATABASE_URL with empty username and password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://:@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['user'] == ''
+        assert info['password'] == ''
+
+    def test_no_credentials_in_url(self):
+        """Test DATABASE_URL without credentials section."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://host:5432/db'}):
+            info = get_db_connection_info()
+
+        # Should use defaults when credentials are missing
+        assert info['user'] == 'canvas_db'
+        assert info['password'] == ''
+
+    # --- Special Characters Tests ---
+
+    def test_at_symbol_in_password(self):
+        """Test @ symbol (%40) in password - common edge case."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%40word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass@word'
+
+    def test_at_symbol_in_username(self):
+        """Test @ symbol (%40) in username."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user%40domain:password@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['user'] == 'user@domain'
+
+    def test_equals_sign_in_password(self):
+        """Test = sign (%3D) in password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:key%3Dvalue@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'key=value'
+
+    def test_percent_sign_in_password(self):
+        """Test literal % sign (%25) in password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:100%25done@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == '100%done'
+
+    def test_colon_in_password(self):
+        """Test : (%3A) in password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%3Aword@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass:word'
+
+    def test_forward_slash_in_password(self):
+        """Test / (%2F) in password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%2Fword@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass/word'
+
+    def test_space_in_password(self):
+        """Test space (%20) in password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%20word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass word'
+
+    def test_plus_as_space_in_password(self):
+        """Test + (sometimes used for space) - should remain as +.
+
+        Note: urllib.parse.unquote does NOT convert + to space.
+        Only urllib.parse.unquote_plus does. This is the correct behavior
+        for DATABASE_URL parsing.
+        """
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass+word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass+word'  # + stays as +
+
+    def test_multiple_special_characters(self):
+        """Test password with multiple special characters."""
+        # Password: p@ss=w%rd:test/123 space!
+        encoded = 'p%40ss%3Dw%25rd%3Atest%2F123%20space!'
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://user:{encoded}@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'p@ss=w%rd:test/123 space!'
+
+    def test_all_url_reserved_characters(self):
+        """Test password containing all URL reserved characters.
+
+        Reserved characters per RFC 3986: :/?#[]@!$&'()*+,;=
+        """
+        # Original: :/?#[]@!$&'()*+,;=
+        # Encoded:  %3A%2F%3F%23%5B%5D%40!%24%26%27%28%29%2A%2B%2C%3B%3D
+        encoded = '%3A%2F%3F%23%5B%5D%40!%24%26%27%28%29%2A%2B%2C%3B%3D'
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://user:{encoded}@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == ':/?#[]@!$&\'()*+,;='
+
+    # --- Double Encoding Tests ---
+
+    def test_double_encoded_at_symbol(self):
+        """Test double-encoded @ (%2540) - should decode to %40, not @.
+
+        If password was "%40" (literally) before encoding, it becomes %2540.
+        After single unquote: %40 (not @)
+        """
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%2540word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        # Single decode: %2540 -> %40
+        assert info['password'] == 'pass%40word'
+
+    def test_double_encoded_percent(self):
+        """Test double-encoded % (%2525) - should decode to %25, not %."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:100%2525@host:5432/db'}):
+            info = get_db_connection_info()
+
+        # Single decode: %2525 -> %25
+        assert info['password'] == '100%25'
+
+    def test_triple_encoded_at_symbol(self):
+        """Test triple-encoded @ (%252540) - should decode to %2540."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%252540word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        # Single decode: %252540 -> %2540
+        assert info['password'] == 'pass%2540word'
+
+    # --- Unicode Character Tests ---
+
+    def test_unicode_in_password(self):
+        """Test Unicode characters in password (e.g., emoji, accented chars)."""
+        # Password with Unicode: caf\u00e9 (cafe with accent)
+        # UTF-8 encoded, then percent-encoded: %C3%A9
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:caf%C3%A9@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'caf\u00e9'
+
+    def test_emoji_in_password(self):
+        """Test emoji in password."""
+        # Password with emoji: pass\U0001F511key (key emoji)
+        # UTF-8 encoded: \xf0\x9f\x94\x91, percent-encoded: %F0%9F%94%91
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%F0%9F%94%91key@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass\U0001F511key'
+
+    def test_chinese_characters_in_password(self):
+        """Test Chinese characters in password."""
+        # Password: \u5bc6\u7801 (Chinese for 'password')
+        # UTF-8: \xe5\xaf\x86\xe7\xa0\x81, percent-encoded: %E5%AF%86%E7%A0%81
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:%E5%AF%86%E7%A0%81@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == '\u5bc6\u7801'
+
+    def test_unicode_in_username(self):
+        """Test Unicode characters in username."""
+        # Username: \u00fcser (user with umlaut)
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://%C3%BCser:password@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['user'] == '\u00fcser'
+
+    # --- Very Long Password Tests ---
+
+    def test_very_long_password(self):
+        """Test very long password (256 characters)."""
+        from urllib.parse import quote
+        long_password = 'a' * 256
+        encoded = quote(long_password, safe='')
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://user:{encoded}@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == long_password
+        assert len(info['password']) == 256
+
+    def test_very_long_password_with_special_chars(self):
+        """Test very long password with special characters."""
+        from urllib.parse import quote
+        # Create a 200-char password with special chars every 10 chars
+        long_password = ''.join([f'password{i}@' for i in range(20)])
+        encoded = quote(long_password, safe='')
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://user:{encoded}@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == long_password
+
+    # --- Null Bytes and Control Characters Tests ---
+
+    def test_null_byte_in_password_rejected(self):
+        """Test null byte (%00) in password is rejected.
+
+        Null bytes can cause truncation in C-based libraries like libpq.
+        We reject credentials containing null bytes for security.
+        """
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%00word@host:5432/db'}):
+            with pytest.raises(ValueError, match="null bytes"):
+                get_db_connection_info()
+
+    def test_null_byte_in_username_rejected(self):
+        """Test null byte (%00) in username is rejected."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user%00name:password@host:5432/db'}):
+            with pytest.raises(ValueError, match="null bytes"):
+                get_db_connection_info()
+
+    def test_control_characters_in_password(self):
+        """Test control characters (tab, newline) in password."""
+        # Tab: %09, Newline: %0A, Carriage Return: %0D
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%09%0A%0Dword@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass\t\n\rword'
+
+    def test_bell_character_in_password(self):
+        """Test bell/alert character (%07) in password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%07word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass\x07word'
+
+    # --- Boundary Condition Tests ---
+
+    def test_password_starting_with_special_char(self):
+        """Test password starting with special character."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:%40password@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == '@password'
+
+    def test_password_ending_with_special_char(self):
+        """Test password ending with special character."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:password%40@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'password@'
+
+    def test_password_only_special_chars(self):
+        """Test password consisting only of special characters."""
+        # Password: @=:/%
+        encoded = '%40%3D%3A%2F%25'
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://user:{encoded}@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == '@=:/%'
+
+    def test_single_character_password(self):
+        """Test single character password."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:a@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'a'
+
+    def test_single_special_char_password(self):
+        """Test password that is just @."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:%40@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == '@'
+
+    # --- Case Sensitivity Tests ---
+
+    def test_lowercase_hex_encoding(self):
+        """Test lowercase hex digits in percent encoding (%2f vs %2F)."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%2fword@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass/word'
+
+    def test_mixed_case_hex_encoding(self):
+        """Test mixed case hex digits in percent encoding."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%2Fword%3atest@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'pass/word:test'
+
+    # --- Invalid Encoding Tests ---
+
+    def test_incomplete_percent_encoding(self):
+        """Test incomplete percent encoding (% followed by non-hex or single char).
+
+        urllib.parse.unquote leaves invalid sequences unchanged.
+        """
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%word@host:5432/db'}):
+            info = get_db_connection_info()
+
+        # Invalid %wo should remain unchanged
+        assert info['password'] == 'pass%word'
+
+    def test_percent_at_end_of_password(self):
+        """Test percent sign at end without following chars."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:password%@host:5432/db'}):
+            info = get_db_connection_info()
+
+        # Trailing % should remain unchanged
+        assert info['password'] == 'password%'
+
+    def test_percent_with_one_hex_digit(self):
+        """Test percent followed by only one hex digit."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:pass%2@host:5432/db'}):
+            info = get_db_connection_info()
+
+        # %2 alone is not valid encoding, should remain
+        assert info['password'] == 'pass%2'
+
+    # --- Real-World Scenario Tests ---
+
+    def test_aws_rds_generated_password(self):
+        """Test a password similar to AWS RDS generated passwords.
+
+        AWS RDS passwords often contain special characters and can be long.
+        """
+        from urllib.parse import quote
+        # Simulated RDS-style password with punctuation
+        rds_password = 'aB3$xYz!@#qWe9&*()Pn'
+        encoded = quote(rds_password, safe='')
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://admin:{encoded}@mydb.cluster.us-east-1.rds.amazonaws.com:5432/production'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == rds_password
+        assert info['host'] == 'mydb.cluster.us-east-1.rds.amazonaws.com'
+
+    def test_docker_compose_password(self):
+        """Test password from typical Docker Compose setup.
+
+        Docker Compose often has passwords with special characters that
+        need URL encoding when used in DATABASE_URL.
+        """
+        from urllib.parse import quote
+        password = 'Super$ecret@123!'
+        encoded = quote(password, safe='')
+        with patch.dict(os.environ, {'DATABASE_URL': f'postgresql://postgres:{encoded}@db:5432/app'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == password
+        assert info['host'] == 'db'
+
+    def test_heroku_style_database_url(self):
+        """Test Heroku-style DATABASE_URL format."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://uabcd123:p%40ssw0rd%21@ec2-12-34-56-78.compute-1.amazonaws.com:5432/d9xyz'}):
+            info = get_db_connection_info()
+
+        assert info['user'] == 'uabcd123'
+        assert info['password'] == 'p@ssw0rd!'
+        assert info['host'] == 'ec2-12-34-56-78.compute-1.amazonaws.com'
+        assert info['database'] == 'd9xyz'
+
+    # --- PostgreSQL Connection String Edge Cases ---
+
+    def test_postgresql_scheme_variations(self):
+        """Test both postgresql:// and postgres:// scheme prefixes."""
+        # Both should work the same way
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgres://user:p%40ss@host:5432/db'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'p@ss'
+
+    def test_database_url_with_options(self):
+        """Test DATABASE_URL with connection options in query string."""
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://user:p%40ss@host:5432/db?sslmode=require&connect_timeout=10'}):
+            info = get_db_connection_info()
+
+        assert info['password'] == 'p@ss'
+        assert info['database'] == 'db'  # Options should not affect database name
+
+
 class TestRestoreValidationEndpoint:
     """Tests for restore validation endpoint."""
 
