@@ -628,15 +628,19 @@ class TestFullRestoreFlow:
         """Test that pre-restore backup is created before actual restore."""
         from restore import create_pre_restore_backup
 
+        def mock_pg_dump_side_effect(dump_path, exclude_tables=None):
+            """Mock pg_dump that actually creates the file."""
+            os.makedirs(os.path.dirname(dump_path), exist_ok=True)
+            with open(dump_path, 'wb') as f:
+                f.write(b'mock pg_dump data')
+            return (True, "Database backed up")
+
         # Mock the backup functions to avoid actual database operations
-        # Note: os.path.getsize must be patched at source (os.path) not at import location
-        with patch('restore.run_pg_dump') as mock_dump, \
+        with patch('restore.run_pg_dump', side_effect=mock_pg_dump_side_effect), \
              patch('restore.archive_photos') as mock_photos, \
              patch('restore.ensure_backups_dir'), \
-             patch('os.path.getsize', return_value=1024), \
              patch('restore.compute_sha256', return_value='abc123'):
 
-            mock_dump.return_value = (True, "Database backed up")
             mock_photos.return_value = (True, {"count": 0, "files": []}, "No photos")
 
             with tempfile.TemporaryDirectory() as temp_dir:
