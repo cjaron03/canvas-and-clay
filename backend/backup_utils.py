@@ -64,14 +64,16 @@ def get_db_connection_info():
 
     if database_url:
         # Parse DATABASE_URL format: postgresql://user:pass@host:port/dbname
-        from urllib.parse import urlparse
+        from urllib.parse import urlparse, unquote
         parsed = urlparse(database_url)
+        # URL-decode username and password since they may contain special characters
+        # like @ (%40), = (%3D), etc.
         return {
             "host": parsed.hostname or "localhost",
             "port": str(parsed.port or 5432),
             "database": parsed.path.lstrip("/") if parsed.path else "canvas_clay",
-            "user": parsed.username or "canvas_db",
-            "password": parsed.password or ""
+            "user": unquote(parsed.username) if parsed.username else "canvas_db",
+            "password": unquote(parsed.password) if parsed.password else ""
         }
     else:
         # Use individual env vars

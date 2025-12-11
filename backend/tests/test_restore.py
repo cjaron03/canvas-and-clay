@@ -81,7 +81,8 @@ class TestWipeDatabaseSchema:
                 success, message = wipe_database_schema()
 
         assert success is False
-        assert "timeout" in message.lower()
+        # Check for "timed out" which is more specific to timeout messages
+        assert "timed out" in message.lower(), f"Expected timeout message, got: {message}"
 
     def test_wipe_database_schema_psql_not_found(self):
         """Test handling when psql is not installed."""
@@ -173,7 +174,8 @@ class TestRunDatabaseMigrations:
             success, message = run_database_migrations()
 
         assert success is False
-        assert "timeout" in message.lower()
+        # Check for "timed out" which is more specific to timeout messages
+        assert "timed out" in message.lower(), f"Expected timeout message, got: {message}"
 
     def test_migrations_flask_not_found(self):
         """Test handling when flask command is not available."""
@@ -629,7 +631,9 @@ class TestFullRestoreFlow:
         # Mock the backup functions to avoid actual database operations
         with patch('restore.run_pg_dump') as mock_dump, \
              patch('restore.archive_photos') as mock_photos, \
-             patch('restore.ensure_backups_dir'):
+             patch('restore.ensure_backups_dir'), \
+             patch('restore.os.path.getsize', return_value=1024), \
+             patch('restore.compute_sha256', return_value='abc123'):
 
             mock_dump.return_value = (True, "Database backed up")
             mock_photos.return_value = (True, {"count": 0, "files": []}, "No photos")
@@ -638,8 +642,10 @@ class TestFullRestoreFlow:
                 with patch('restore.BACKUPS_DIR', temp_dir):
                     success, backup_path, message = create_pre_restore_backup()
 
-        # Should attempt to create backup (may fail without real DB, but logic tested)
-        # The actual success depends on mocking depth
+        # Should create backup successfully with mocked functions
+        assert success is True
+        assert backup_path is not None
+        assert "backup" in message.lower()
 
     def test_restore_checksum_verification(self, mock_backup_archive):
         """Test that restore verifies checksums before proceeding."""
