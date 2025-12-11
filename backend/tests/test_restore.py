@@ -629,10 +629,11 @@ class TestFullRestoreFlow:
         from restore import create_pre_restore_backup
 
         # Mock the backup functions to avoid actual database operations
+        # Note: os.path.getsize must be patched at source (os.path) not at import location
         with patch('restore.run_pg_dump') as mock_dump, \
              patch('restore.archive_photos') as mock_photos, \
              patch('restore.ensure_backups_dir'), \
-             patch('restore.os.path.getsize', return_value=1024), \
+             patch('os.path.getsize', return_value=1024), \
              patch('restore.compute_sha256', return_value='abc123'):
 
             mock_dump.return_value = (True, "Database backed up")
