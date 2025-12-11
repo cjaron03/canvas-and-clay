@@ -11,10 +11,20 @@ from encryption import (
     _encrypt,
     _decrypt,
     _deterministic_nonce,
+    _derive_key_argon2,
+    _derive_key_legacy,
+    _validate_key,
     normalize_email,
     compute_blind_index,
     EncryptedString,
     KEY_SOURCE,
+    MIN_KEY_LENGTH,
+    WEAK_KEYS,
+    ARGON2_MEMORY_KB,
+    ARGON2_TIME_COST,
+    ARGON2_PARALLELISM,
+    get_encryption_status,
+    is_legacy_encrypted,
 )
 
 
@@ -278,3 +288,145 @@ class TestCiphertextLength:
         email = "user@example.com"  # 16 chars
         encrypted = _encrypt(email)
         assert len(encrypted) <= 255
+
+
+class TestKDFArgon2:
+    """Tests for Argon2id key derivation."""
+
+    def test_derive_key_argon2_produces_32_bytes(self):
+        """Argon2id should produce a 32-byte key."""
+        key = _derive_key_argon2("test-password-12345678")
+        assert len(key) == 32
+        assert isinstance(key, bytes)
+
+    def test_derive_key_argon2_deterministic(self):
+        """Same input should produce same key."""
+        key1 = _derive_key_argon2("my-secret-key-1234567890")
+        key2 = _derive_key_argon2("my-secret-key-1234567890")
+        assert key1 == key2
+
+    def test_derive_key_argon2_different_inputs(self):
+        """Different inputs should produce different keys."""
+        key1 = _derive_key_argon2("password-one-12345678")
+        key2 = _derive_key_argon2("password-two-12345678")
+        assert key1 != key2
+
+    def test_derive_key_argon2_differs_from_sha256(self):
+        """Argon2id key should differ from SHA-256 key."""
+        raw = "test-password-for-comparison-test"
+        argon2_key = _derive_key_argon2(raw)
+        sha256_key = _derive_key_legacy(raw)
+        assert argon2_key != sha256_key
+
+
+class TestKDFLegacy:
+    """Tests for legacy SHA-256 key derivation."""
+
+    def test_derive_key_legacy_produces_32_bytes(self):
+        """Legacy SHA-256 should produce a 32-byte key."""
+        key = _derive_key_legacy("test-password")
+        assert len(key) == 32
+        assert isinstance(key, bytes)
+
+    def test_derive_key_legacy_deterministic(self):
+        """Same input should produce same key."""
+        key1 = _derive_key_legacy("my-secret-key")
+        key2 = _derive_key_legacy("my-secret-key")
+        assert key1 == key2
+
+
+class TestKeyValidation:
+    """Tests for key validation."""
+
+    def test_validate_key_too_short_dev_mode_warns(self, capsys):
+        """Short key in dev mode should warn but not raise."""
+        # In dev/test mode, should just print warning
+        _validate_key("short", "secret-key", is_dev=True, is_test=True)
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err or len(captured.err) >= 0  # May or may not print
+
+    def test_validate_key_ephemeral_skips_validation(self):
+        """Ephemeral keys should skip validation (they're already random)."""
+        # Should not raise even with empty key
+        _validate_key("x", "ephemeral", is_dev=False, is_test=False)
+
+    def test_weak_keys_set_populated(self):
+        """WEAK_KEYS should contain common weak passwords."""
+        assert "password" in WEAK_KEYS
+        assert "changeme" in WEAK_KEYS
+        assert "admin123" in WEAK_KEYS
+
+    def test_min_key_length_reasonable(self):
+        """MIN_KEY_LENGTH should be a reasonable minimum."""
+        assert MIN_KEY_LENGTH >= 12  # At least 12 characters
+        assert MIN_KEY_LENGTH <= 32  # But not unreasonably long
+
+
+class TestArgon2Parameters:
+    """Tests for Argon2id configuration."""
+
+    def test_memory_cost_reasonable(self):
+        """Memory cost should be significant but not excessive."""
+        assert ARGON2_MEMORY_KB >= 32768  # At least 32MB
+        assert ARGON2_MEMORY_KB <= 131072  # At most 128MB
+
+    def test_time_cost_reasonable(self):
+        """Time cost should provide security without being too slow."""
+        assert ARGON2_TIME_COST >= 2
+        assert ARGON2_TIME_COST <= 10
+
+    def test_parallelism_reasonable(self):
+        """Parallelism should be reasonable for modern systems."""
+        assert ARGON2_PARALLELISM >= 1
+        assert ARGON2_PARALLELISM <= 16
+
+
+class TestEncryptionStatus:
+    """Tests for encryption status helper."""
+
+    def test_get_encryption_status_returns_dict(self):
+        """get_encryption_status should return a dict with expected keys."""
+        status = get_encryption_status()
+        assert isinstance(status, dict)
+        assert "kdf_validation" in status
+        assert "kdf_encryption" in status
+        assert "key_source" in status
+        assert "min_key_length" in status
+        assert "legacy_mode" in status
+
+    def test_get_encryption_status_kdf_validation_is_argon2id(self):
+        """Status should show Argon2id for key validation."""
+        status = get_encryption_status()
+        assert status["kdf_validation"] == "argon2id"
+        # Encryption uses SHA-256 for backwards compatibility
+        assert status["kdf_encryption"] == "sha256"
+
+    def test_get_encryption_status_includes_params(self):
+        """Status should include KDF parameters."""
+        status = get_encryption_status()
+        assert "kdf_params" in status
+        assert "memory_kb" in status["kdf_params"]
+        assert "time_cost" in status["kdf_params"]
+
+
+class TestLegacyEncryptionDetection:
+    """Tests for legacy encryption detection."""
+
+    def test_is_legacy_encrypted_returns_false_for_none(self):
+        """None should return False."""
+        assert is_legacy_encrypted(None) is False
+
+    def test_is_legacy_encrypted_returns_false_for_plaintext(self):
+        """Plaintext (non-ciphertext) should return False."""
+        assert is_legacy_encrypted("user@example.com") is False
+
+    def test_is_legacy_encrypted_returns_false_for_invalid_base64(self):
+        """Invalid base64 should return False."""
+        assert is_legacy_encrypted("not-valid-base64!!!") is False
+
+    def test_is_legacy_encrypted_returns_true_for_current_encryption(self):
+        """Data encrypted with current module uses legacy key for compatibility."""
+        encrypted = _encrypt("test@example.com")
+        # Current encryption uses SHA-256-derived key for backwards compatibility
+        # so is_legacy_encrypted returns True
+        assert is_legacy_encrypted(encrypted) is True

@@ -64,14 +64,26 @@ def get_db_connection_info():
 
     if database_url:
         # Parse DATABASE_URL format: postgresql://user:pass@host:port/dbname
-        from urllib.parse import urlparse
+        from urllib.parse import urlparse, unquote
         parsed = urlparse(database_url)
+        # URL-decode username and password since they may contain special characters
+        # like @ (%40), = (%3D), etc.
+        # Use 'is not None' to distinguish between missing credentials and empty strings
+        # postgresql://:password@host → username is "" (explicit empty)
+        # postgresql://host → username is None (use default)
+        user = unquote(parsed.username) if parsed.username is not None else "canvas_db"
+        password = unquote(parsed.password) if parsed.password is not None else ""
+
+        # Security: Reject null bytes which can cause truncation in C-based libraries
+        if '\x00' in user or '\x00' in password:
+            raise ValueError("Database credentials cannot contain null bytes")
+
         return {
             "host": parsed.hostname or "localhost",
             "port": str(parsed.port or 5432),
             "database": parsed.path.lstrip("/") if parsed.path else "canvas_clay",
-            "user": parsed.username or "canvas_db",
-            "password": parsed.password or ""
+            "user": user,
+            "password": password
         }
     else:
         # Use individual env vars
@@ -133,6 +145,64 @@ def run_pg_dump(output_path, exclude_tables=None):
         return False, "pg_dump not found. Ensure PostgreSQL client tools are installed."
     except Exception as e:
         return False, f"pg_dump error: {str(e)}"
+
+
+def wipe_database_schema():
+    """Wipe the database schema completely before restore.
+
+    This is needed because pg_restore --clean can't drop tables with
+    foreign key constraints from tables created by newer migrations.
+    Wiping the schema ensures a clean slate for pg_restore.
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    db_info = get_db_connection_info()
+
+    # Quote user identifier to prevent SQL injection
+    # Double any existing quotes and wrap in double quotes
+    user_quoted = '"{}"'.format(db_info["user"].replace('"', '""'))
+
+    # SQL to drop and recreate schema
+    sql = """
+    DROP SCHEMA public CASCADE;
+    CREATE SCHEMA public;
+    GRANT ALL ON SCHEMA public TO {user};
+    GRANT ALL ON SCHEMA public TO public;
+    """.format(user=user_quoted)
+
+    cmd = [
+        "psql",
+        "-h", db_info["host"],
+        "-p", db_info["port"],
+        "-U", db_info["user"],
+        "-d", db_info["database"],
+        "-c", sql
+    ]
+
+    env = os.environ.copy()
+    env["PGPASSWORD"] = db_info["password"]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode != 0:
+            return False, f"Schema wipe failed: {result.stderr}"
+
+        return True, "Database schema wiped"
+
+    except subprocess.TimeoutExpired:
+        return False, "Schema wipe timed out"
+    except FileNotFoundError:
+        return False, "psql not found. Ensure PostgreSQL client tools are installed."
+    except Exception as e:
+        return False, f"Schema wipe error: {str(e)}"
 
 
 def run_pg_restore(input_path, clean=True):
@@ -342,9 +412,16 @@ def extract_photos(archive_path, progress_callback=None):
             total = len(members)
 
             for i, member in enumerate(members):
-                # Security: prevent path traversal
+                # Security: prevent path traversal (CVE-2007-4559)
                 member_path = os.path.normpath(member.name)
                 if member_path.startswith('..') or member_path.startswith('/'):
+                    print(f"  Warning: Skipping suspicious path: {member.name}")
+                    continue
+
+                # Double-check resolved path stays within target directory
+                abs_path = os.path.abspath(os.path.join(UPLOADS_DIR, member_path))
+                if not abs_path.startswith(os.path.abspath(UPLOADS_DIR)):
+                    print(f"  Warning: Skipping path traversal attempt: {member.name}")
                     continue
 
                 tar.extract(member, UPLOADS_DIR)
@@ -576,6 +653,45 @@ def is_backup_encryption_configured():
         bool: True if BACKUP_ENCRYPTION_KEY is set
     """
     return bool(os.getenv("BACKUP_ENCRYPTION_KEY"))
+
+
+def run_database_migrations():
+    """Run database migrations after restore.
+
+    This is needed after pg_restore because the restored database may have
+    an older schema. Running migrations brings it up to date with the code.
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    try:
+        # Set up environment for Flask command
+        env = os.environ.copy()
+        env["FLASK_APP"] = "app.py"  # Ensure Flask knows which app to use
+
+        # Get backend directory for cwd
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+
+        result = subprocess.run(
+            ["flask", "db", "upgrade"],
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minutes for large migrations
+            env=env,
+            cwd=backend_dir  # Run from backend directory
+        )
+
+        if result.returncode != 0:
+            return False, f"Failed to run migrations:\nstderr: {result.stderr}\nstdout: {result.stdout}"
+
+        return True, "Database migrations completed"
+
+    except subprocess.TimeoutExpired:
+        return False, "flask db upgrade timed out after 10 minutes"
+    except FileNotFoundError:
+        return False, "flask command not found"
+    except Exception as e:
+        return False, f"migration error: {str(e)}"
 
 
 def generate_backup_filename(backup_type="full"):

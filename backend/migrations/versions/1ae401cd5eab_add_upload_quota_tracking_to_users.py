@@ -19,21 +19,36 @@ depends_on = None
 DEFAULT_QUOTA = 500 * 1024 * 1024
 
 
+def column_exists(table_name, column_name):
+    """Check if a column exists in a table (PostgreSQL)."""
+    bind = op.get_bind()
+    result = bind.execute(sa.text("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = :table AND column_name = :column
+    """), {"table": table_name, "column": column_name})
+    return result.fetchone() is not None
+
+
 def upgrade():
-    # Add upload quota columns to users table
-    with op.batch_alter_table('users', schema=None) as batch_op:
-        batch_op.add_column(sa.Column(
-            'upload_quota_bytes',
-            sa.BigInteger(),
-            nullable=False,
-            server_default=str(DEFAULT_QUOTA)
-        ))
-        batch_op.add_column(sa.Column(
-            'bytes_uploaded',
-            sa.BigInteger(),
-            nullable=False,
-            server_default='0'
-        ))
+    # Add upload quota columns to users table (idempotent - check if exists first)
+    if not column_exists('users', 'upload_quota_bytes'):
+        with op.batch_alter_table('users', schema=None) as batch_op:
+            batch_op.add_column(sa.Column(
+                'upload_quota_bytes',
+                sa.BigInteger(),
+                nullable=False,
+                server_default=str(DEFAULT_QUOTA)
+            ))
+
+    if not column_exists('users', 'bytes_uploaded'):
+        with op.batch_alter_table('users', schema=None) as batch_op:
+            batch_op.add_column(sa.Column(
+                'bytes_uploaded',
+                sa.BigInteger(),
+                nullable=False,
+                server_default='0'
+            ))
 
 
 def downgrade():

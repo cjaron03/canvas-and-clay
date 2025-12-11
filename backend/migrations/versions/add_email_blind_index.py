@@ -72,7 +72,23 @@ WARNING: Proceeding without the correct key will make user lookups FAIL.
 """
 
 
+def column_exists(table_name, column_name):
+    """Check if a column exists in a table (PostgreSQL)."""
+    bind = op.get_bind()
+    result = bind.execute(sa.text("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = :table AND column_name = :column
+    """), {"table": table_name, "column": column_name})
+    return result.fetchone() is not None
+
+
 def upgrade():
+    # Check if email_idx column already exists (idempotent migration)
+    if column_exists('users', 'email_idx'):
+        print("email_idx column already exists, skipping migration")
+        return
+
     # SAFETY CHECK: Ensure we have a stable encryption key
     # Import here to avoid circular imports and ensure fresh check
     import sys

@@ -44,11 +44,15 @@ from backup_utils import (  # noqa: E402
     archive_photos,
     create_manifest,
     compute_sha256,
+    wipe_database_schema,
+    run_database_migrations,
     BACKUPS_DIR,
 )
 from backup_encryption import (  # noqa: E402
     decrypt_backup,
     decrypt_backup_with_env_key,
+    encrypt_backup,
+    encrypt_backup_with_env_key,
     is_encrypted_backup,
     read_encrypted_header,
     DecryptionError,
@@ -102,8 +106,16 @@ def read_manifest_from_archive(archive_path):
         return None, f"Error reading archive: {e}"
 
 
-def create_pre_restore_backup():
-    """Create a backup of current state before restoring.
+def create_pre_restore_backup(passphrase=None, use_env_key=False):
+    """Create an encrypted backup of current state before restoring.
+
+    Uses the same passphrase as the restore operation for encryption.
+    This ensures you can decrypt both the backup you're restoring AND
+    the pre-restore safety backup with the same passphrase.
+
+    Args:
+        passphrase: Encryption passphrase (same as used for restore)
+        use_env_key: Use BACKUP_ENCRYPTION_KEY env var instead
 
     Returns:
         Tuple of (success: bool, backup_path: str or None, message: str)
@@ -111,9 +123,10 @@ def create_pre_restore_backup():
     print("Creating pre-restore safety backup...")
     ensure_backups_dir()
 
-    output_path = os.path.join(
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    unencrypted_path = os.path.join(
         BACKUPS_DIR,
-        f"pre_restore_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.tar.gz"
+        f"pre_restore_{timestamp}.tar.gz"
     )
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -165,7 +178,7 @@ def create_pre_restore_backup():
             json.dump(manifest, f, indent=2)
 
         # Create archive
-        with tarfile.open(output_path, "w:gz") as tar:
+        with tarfile.open(unencrypted_path, "w:gz") as tar:
             tar.add(manifest_path, arcname="manifest.json")
 
             if db_manifest["included"]:
@@ -174,8 +187,31 @@ def create_pre_restore_backup():
             if photos_manifest["included"] and os.path.exists(photos_archive_path):
                 tar.add(photos_archive_path, arcname="uploads.tar.gz")
 
-    print(f"  Pre-restore backup: {output_path}")
-    return True, output_path, "Pre-restore backup created"
+    # Encrypt the backup using the same passphrase as the restore operation
+    encrypted_path = unencrypted_path + ".enc"
+    try:
+        if passphrase:
+            # Use the same passphrase as the backup being restored
+            print("  Encrypting pre-restore backup (using restore passphrase)...")
+            encrypt_backup(unencrypted_path, encrypted_path, passphrase, validate_pass=False)
+            os.remove(unencrypted_path)
+            print(f"  Pre-restore backup (encrypted): {encrypted_path}")
+            return True, encrypted_path, "Pre-restore backup created (encrypted)"
+        elif use_env_key and os.getenv("BACKUP_ENCRYPTION_KEY"):
+            # Fall back to env key if that's what was used for restore
+            print("  Encrypting pre-restore backup (using env key)...")
+            encrypt_backup_with_env_key(unencrypted_path, encrypted_path)
+            os.remove(unencrypted_path)
+            print(f"  Pre-restore backup (encrypted): {encrypted_path}")
+            return True, encrypted_path, "Pre-restore backup created (encrypted)"
+        else:
+            # Restoring an unencrypted backup - pre-restore backup also unencrypted
+            print("  Note: Pre-restore backup is unencrypted (source backup was unencrypted)")
+    except BackupEncryptionError as e:
+        print(f"  Warning: Encryption failed, keeping unencrypted: {e}")
+
+    print(f"  Pre-restore backup: {unencrypted_path}")
+    return True, unencrypted_path, "Pre-restore backup created"
 
 
 def restore_backup(
@@ -340,9 +376,12 @@ def restore_backup(
             cleanup_decrypted()
             return False, "Restore cancelled by user"
 
-    # Create pre-restore backup
+    # Create pre-restore backup (encrypted with same passphrase as restore)
     if not no_pre_backup:
-        success, backup_path, message = create_pre_restore_backup()
+        success, backup_path, message = create_pre_restore_backup(
+            passphrase=passphrase,
+            use_env_key=use_env_key
+        )
         if not success:
             print(f"Warning: {message}")
             if not force:
@@ -355,7 +394,19 @@ def restore_backup(
     print("\nExtracting backup archive...")
     with tempfile.TemporaryDirectory() as temp_dir:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(temp_dir)
+            # Safe extraction - prevent path traversal attacks (CVE-2007-4559)
+            for member in tar.getmembers():
+                member_path = os.path.normpath(member.name)
+                # Reject paths that traverse outside the target directory
+                if member_path.startswith('..') or member_path.startswith('/'):
+                    print(f"  Warning: Skipping suspicious path: {member.name}")
+                    continue
+                # Verify the resolved path is within temp_dir
+                abs_path = os.path.abspath(os.path.join(temp_dir, member_path))
+                if not abs_path.startswith(os.path.abspath(temp_dir)):
+                    print(f"  Warning: Skipping path traversal attempt: {member.name}")
+                    continue
+                tar.extract(member, temp_dir)
 
         # Restore database
         if restore_db:
@@ -374,11 +425,34 @@ def restore_backup(
                     return False, "Database dump checksum mismatch"
                 print("  Checksum verified")
 
-            success, message = run_pg_restore(db_dump_path)
+            # Wipe database schema to handle schema version mismatches
+            # This ensures pg_restore can create tables fresh without conflicts
+            print("  Wiping existing database schema...")
+            success, message = wipe_database_schema()
+            if not success:
+                cleanup_decrypted()
+                return False, f"Schema wipe failed: {message}"
+            print("  Schema wiped")
+
+            success, message = run_pg_restore(db_dump_path, clean=False)
             if not success:
                 cleanup_decrypted()
                 return False, f"Database restore failed: {message}"
             print("  Database restored successfully")
+
+            # Run migrations to bring schema up to date with current code
+            print("  Running database migrations...")
+            success, message = run_database_migrations()
+            if not success:
+                print(f"\n  WARNING: Migration failed!")
+                print(f"  {message}")
+                print("\n  The database has been restored but is NOT at the current schema version.")
+                print("  Before starting the application, run migrations manually:")
+                print("    docker exec canvas_backend flask db upgrade")
+                print("\n  Or restore from the pre-restore backup if you cannot fix migrations.")
+                # Don't fail - data is restored, migrations can be run manually
+            else:
+                print("  Migrations completed")
 
         # Restore photos
         if restore_photos:

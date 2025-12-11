@@ -93,7 +93,23 @@ NOTE: Previously artist_email had no unique constraint. This migration adds one
 """
 
 
+def column_exists(table_name, column_name):
+    """Check if a column exists in a table (PostgreSQL)."""
+    bind = op.get_bind()
+    result = bind.execute(sa.text("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = :table AND column_name = :column
+    """), {"table": table_name, "column": column_name})
+    return result.fetchone() is not None
+
+
 def upgrade():
+    # Check if artist_email_idx column already exists (idempotent migration)
+    if column_exists('artist', 'artist_email_idx'):
+        print("artist_email_idx column already exists, skipping migration")
+        return
+
     # SAFETY CHECK: Ensure we have a stable encryption key
     # Import here to avoid circular imports and ensure fresh check
     import sys
