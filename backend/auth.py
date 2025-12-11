@@ -489,19 +489,22 @@ def log_audit_event(event_type, user_id=None, email=None, details=None):
 
 def check_account_locked(email):
     """check if account is locked due to too many failed login attempts.
-    
+
     Args:
         email: Email address to check
-        
+
     Returns:
         tuple: (is_locked: bool, lockout_expires_at: datetime or None)
     """
     db, _, _, FailedLoginAttempt, _, _, _, _, _ = get_dependencies()
-    
+
+    # Hash email for lookup (privacy protection)
+    email_hash = hash_email_for_audit(email)
+
     # check failed attempts in last 15 minutes
     lockout_window = datetime.now(timezone.utc) - timedelta(minutes=15)
     recent_failures = FailedLoginAttempt.query.filter(
-        FailedLoginAttempt.email == email,
+        FailedLoginAttempt.email_hash == email_hash,
         FailedLoginAttempt.attempted_at >= lockout_window
     ).order_by(FailedLoginAttempt.attempted_at.desc()).all()
     
@@ -516,17 +519,20 @@ def check_account_locked(email):
 
 def record_failed_login(email):
     """record a failed login attempt.
-    
+
     Args:
         email: Email address that failed login
     """
     db, _, _, FailedLoginAttempt, _, _, _, _, _ = get_dependencies()
-    
+
     ip_address = get_remote_address()
     user_agent = request.headers.get('User-Agent', '')
-    
+
+    # Hash email for privacy protection
+    email_hash = hash_email_for_audit(email)
+
     failed_attempt = FailedLoginAttempt(
-        email=email,
+        email_hash=email_hash,
         ip_address=ip_address,
         attempted_at=datetime.now(timezone.utc),
         user_agent=user_agent
@@ -555,8 +561,11 @@ def _maybe_alert_failed_login_spike(email):
     window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
     ip = get_remote_address()
 
+    # Hash email for privacy-preserving lookup
+    email_hash = hash_email_for_audit(email)
+
     email_failures = FailedLoginAttempt.query.filter(
-        FailedLoginAttempt.email == email,
+        FailedLoginAttempt.email_hash == email_hash,
         FailedLoginAttempt.attempted_at >= window_start
     ).count()
 
@@ -592,14 +601,17 @@ def _maybe_alert_failed_login_spike(email):
 
 def clear_failed_login_attempts(email):
     """clear all failed login attempts for an email (on successful login).
-    
+
     Args:
         email: Email address to clear attempts for
     """
     db, _, _, FailedLoginAttempt, _, _, _, _, _ = get_dependencies()
-    
+
+    # Hash email for privacy-preserving lookup
+    email_hash = hash_email_for_audit(email)
+
     try:
-        FailedLoginAttempt.query.filter_by(email=email).delete()
+        FailedLoginAttempt.query.filter_by(email_hash=email_hash).delete()
         db.session.commit()
     except Exception:
         db.session.rollback()

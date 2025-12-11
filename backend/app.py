@@ -163,9 +163,8 @@ ASCII_LOGO = r"""
 if sys.stdout.isatty():
     if KEY_SOURCE == "env-key":
         print(f"{GREEN}**PII ENCRYPTION KEY DETECTED – DECRYPTION SUPPORTED**{RESET}")
-    elif KEY_SOURCE == "secret-key":
-        print(f"{YELLOW}**PII ENCRYPTION USING SECRET_KEY FALLBACK – DECRYPTION SUPPORTED (SET PII_ENCRYPTION_KEY FOR CONSISTENCY)**{RESET}")
     else:
+        # ephemeral key - only valid in dev/test mode
         print(f"{RED}**PII ENCRYPTION USING EPHEMERAL DEV KEY – DECRYPTION WILL FAIL AFTER RESTART. SET PII_ENCRYPTION_KEY.**{RESET}")
 
 # Fail early in production if using ephemeral encryption key (always check, not just TTY)
@@ -173,7 +172,7 @@ if KEY_SOURCE == "ephemeral":
     if not is_test_environment() and not os.getenv('ALLOW_INSECURE_COOKIES', 'False').lower() == 'true':
         raise RuntimeError(
             "Cannot start in production mode with ephemeral encryption key. "
-            "Set PII_ENCRYPTION_KEY or SECRET_KEY environment variable."
+            "Set PII_ENCRYPTION_KEY environment variable, or set FLASK_ENV=development for dev mode."
         )
 
 if sys.stdout.isatty():
@@ -3731,43 +3730,45 @@ def admin_console_audit_log():
                 'user_demoted'
             ]))
         
+        def format_audit_log(log):
+            """Format a single audit log entry, resolving email from user_id when available."""
+            # Try to get email from linked user (if user_id exists)
+            email_display = None
+            if log.user_id:
+                user = User.query.get(log.user_id)
+                if user:
+                    email_display = user.email  # Decrypted by SQLAlchemy
+                else:
+                    email_display = '[deleted user]'
+            elif log.email_hash:
+                # No user_id but we have a hash (e.g., failed login for non-existent user)
+                email_display = f'[hash:{log.email_hash[:12]}...]'
+
+            return {
+                'id': log.id,
+                'event_type': log.event_type,
+                'user_id': log.user_id,
+                'email': email_display,
+                'email_hash': log.email_hash,  # Include hash for correlation searches
+                'ip_address': log.ip_address,
+                'user_agent': log.user_agent,
+                'created_at': log.created_at.isoformat() if log.created_at else None,
+                'details': log.details
+            }
+
         if limit:
             # Return limited results without pagination
             logs = query.limit(limit).all()
             return jsonify({
-                'audit_logs': [
-                    {
-                        'id': log.id,
-                        'event_type': log.event_type,
-                        'user_id': log.user_id,
-                        'email': log.email,
-                        'ip_address': log.ip_address,
-                        'user_agent': log.user_agent,
-                        'created_at': log.created_at.isoformat() if log.created_at else None,
-                        'details': log.details
-                    }
-                    for log in logs
-                ],
+                'audit_logs': [format_audit_log(log) for log in logs],
                 'total': len(logs)
             }), 200
-        
+
         # Paginated results
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-        
+
         return jsonify({
-            'audit_logs': [
-                {
-                    'id': log.id,
-                    'event_type': log.event_type,
-                    'user_id': log.user_id,
-                    'email_hash': log.email_hash,  # SHA256 hash, not plaintext
-                    'ip_address': log.ip_address,
-                    'user_agent': log.user_agent,
-                    'created_at': log.created_at.isoformat() if log.created_at else None,
-                    'details': log.details
-                }
-                for log in pagination.items
-            ],
+            'audit_logs': [format_audit_log(log) for log in pagination.items],
             'pagination': {
                 'page': pagination.page,
                 'per_page': pagination.per_page,

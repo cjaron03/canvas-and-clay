@@ -199,27 +199,27 @@ def init_models(database):
 
         Attributes:
             id: Primary key
-            email: Email address that failed login
+            email_hash: SHA256 hash of the email (protects PII while allowing lookups)
             ip_address: IP address of the failed attempt
             attempted_at: Timestamp of the failed attempt
             user_agent: User agent string from the request
 
-        SECURITY NOTE: email is intentionally NOT encrypted here because:
-        - Rate limiting requires fast, searchable lookups by email
-        - These records have short retention (cleaned up after lockout window)
-        - The threat model prioritizes operational security over data-at-rest protection
+        SECURITY NOTE: email_hash stores SHA256(lowercase(email)) instead of plaintext.
+        This protects user identity if the database is compromised while still allowing:
+        - Fast equality lookups for rate limiting
+        - Short retention (records cleaned after lockout window expires)
         """
         __tablename__ = 'failed_login_attempts'
 
         id = database.Column(database.Integer, primary_key=True)
-        # Intentionally unencrypted - see class docstring for rationale
-        email = database.Column(database.String(120), nullable=False, index=True)
+        # SHA256 hash of email (64 chars) - protects PII while allowing equality searches
+        email_hash = database.Column(database.String(64), nullable=False, index=True)
         ip_address = database.Column(database.String(45), nullable=False, index=True)
         attempted_at = database.Column(database.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
         user_agent = database.Column(database.String(255), nullable=True)
-        
+
         def __repr__(self):
-            return f'<FailedLoginAttempt {self.email}@{self.ip_address} at {self.attempted_at}>'
+            return f'<FailedLoginAttempt {self.email_hash[:8]}...@{self.ip_address} at {self.attempted_at}>'
     
     class AuditLog(database.Model):
         """Model for security audit logging.

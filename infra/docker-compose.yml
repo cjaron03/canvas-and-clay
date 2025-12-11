@@ -71,7 +71,7 @@ services:
     # SECURITY: Port 6379 NOT exposed externally - Redis only accessible via internal network
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy volatile-lru
     networks:
       - canvas-internal
     restart: unless-stopped

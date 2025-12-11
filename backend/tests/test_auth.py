@@ -683,3 +683,64 @@ class TestPasswordResetFlow:
         with app.app_context():
             entry = find_password_reset_by_email(PasswordResetRequest, User, sample_user['email'])
             assert entry.status == 'expired'
+
+
+class TestHashEmailForAudit:
+    """Tests for the hash_email_for_audit utility function."""
+
+    def test_hash_email_returns_64_char_hex(self):
+        """Should return a 64-character hexadecimal string (SHA256)."""
+        from auth import hash_email_for_audit
+        result = hash_email_for_audit("test@example.com")
+        assert len(result) == 64
+        assert all(c in '0123456789abcdef' for c in result)
+
+    def test_hash_email_none_returns_none(self):
+        """Should return None when input is None."""
+        from auth import hash_email_for_audit
+        assert hash_email_for_audit(None) is None
+
+    def test_hash_email_empty_string(self):
+        """Should handle empty string (returns hash of empty string)."""
+        from auth import hash_email_for_audit
+        result = hash_email_for_audit("")
+        assert len(result) == 64
+
+    def test_hash_email_normalizes_case(self):
+        """Should normalize to lowercase before hashing."""
+        from auth import hash_email_for_audit
+        lower = hash_email_for_audit("test@example.com")
+        upper = hash_email_for_audit("TEST@EXAMPLE.COM")
+        mixed = hash_email_for_audit("Test@Example.COM")
+        assert lower == upper == mixed
+
+    def test_hash_email_strips_whitespace(self):
+        """Should strip leading/trailing whitespace before hashing."""
+        from auth import hash_email_for_audit
+        clean = hash_email_for_audit("test@example.com")
+        with_spaces = hash_email_for_audit("  test@example.com  ")
+        with_tabs = hash_email_for_audit("\ttest@example.com\t")
+        assert clean == with_spaces == with_tabs
+
+    def test_hash_email_deterministic(self):
+        """Same email should always produce the same hash."""
+        from auth import hash_email_for_audit
+        email = "consistent@test.com"
+        hash1 = hash_email_for_audit(email)
+        hash2 = hash_email_for_audit(email)
+        hash3 = hash_email_for_audit(email)
+        assert hash1 == hash2 == hash3
+
+    def test_hash_email_different_emails_different_hashes(self):
+        """Different emails should produce different hashes."""
+        from auth import hash_email_for_audit
+        hash1 = hash_email_for_audit("user1@example.com")
+        hash2 = hash_email_for_audit("user2@example.com")
+        assert hash1 != hash2
+
+    def test_hash_email_unicode(self):
+        """Should handle unicode characters in email."""
+        from auth import hash_email_for_audit
+        result = hash_email_for_audit("tëst@exämple.com")
+        assert len(result) == 64
+        assert all(c in '0123456789abcdef' for c in result)

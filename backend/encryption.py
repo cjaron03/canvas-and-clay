@@ -158,6 +158,9 @@ all encrypted PII data.
 def _is_test_environment():
     """Check if running in a test environment (pytest, CI, etc.)."""
     import sys
+    # Check for FLASK_ENV=testing
+    if os.getenv('FLASK_ENV') == 'testing':
+        return True
     # Check for pytest environment variable
     if os.getenv('PYTEST_CURRENT_TEST') is not None:
         return True

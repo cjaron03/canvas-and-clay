@@ -93,5 +93,10 @@ if [ -f "/app/images.zip" ]; then
   fi
 fi
 
+# Clean up orphaned photo records (DB records without actual files)
+# This prevents 404s from stale demo data or Docker volume mismatches
+echo "checking for orphaned photo records..."
+python3 cleanup_orphans.py
+
 echo "starting flask application..."
 exec "$@"
