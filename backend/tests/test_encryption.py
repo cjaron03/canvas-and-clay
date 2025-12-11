@@ -261,13 +261,15 @@ class TestKeySource:
 
     def test_key_source_is_set(self):
         """KEY_SOURCE should be set to a valid value."""
-        assert KEY_SOURCE in ("env-key", "secret-key", "ephemeral")
+        # Valid sources: env-key (PII_ENCRYPTION_KEY set) or ephemeral (dev/test)
+        # Note: secret-key fallback was removed for security
+        assert KEY_SOURCE in ("env-key", "ephemeral")
 
-    def test_key_source_with_secret_key(self):
-        """With SECRET_KEY set, should use secret-key source."""
-        # This test runs in an environment where SECRET_KEY is set
-        # The actual source depends on whether PII_ENCRYPTION_KEY is also set
-        assert KEY_SOURCE in ("env-key", "secret-key")
+    def test_key_source_in_test_environment(self):
+        """In test environment without PII_ENCRYPTION_KEY, should use ephemeral."""
+        # Tests run with FLASK_ENV=testing, so ephemeral key is used
+        # unless PII_ENCRYPTION_KEY is explicitly set
+        assert KEY_SOURCE in ("env-key", "ephemeral")
 
 
 class TestCiphertextLength:
