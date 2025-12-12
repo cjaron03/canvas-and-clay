@@ -29,9 +29,13 @@ The blind index does NOT reveal:
 KEY MANAGEMENT
 ==============
 - Set PII_ENCRYPTION_KEY environment variable in production (minimum 16 characters)
-- Falls back to SECRET_KEY if PII_ENCRYPTION_KEY is not set
-- Generates ephemeral key in development mode only (data lost on restart)
+- App will fail to start in production without PII_ENCRYPTION_KEY (fail secure)
+- Generates ephemeral key in development/test mode only (data lost on restart)
 - Key rotation supported via rotate_encryption_key.py script
+
+SECURITY NOTE: SECRET_KEY fallback was intentionally removed to prevent key reuse
+attacks. If an attacker compromises session cookies, they should NOT be able to
+decrypt PII data. Always use separate keys for sessions and PII encryption.
 
 KEY DERIVATION
 ==============
@@ -111,7 +115,7 @@ ERR_KEY_TOO_SHORT = """
 ERROR: ENCRYPTION KEY TOO SHORT (ERR_KEY_002)
 ================================================================================
 
-The PII_ENCRYPTION_KEY (or SECRET_KEY) must be at least {min_len} characters.
+The PII_ENCRYPTION_KEY must be at least {min_len} characters.
 
 Current key length: {actual_len} characters
 
@@ -125,7 +129,7 @@ To fix:
 3. Restart the application
 
 SECURITY NOTE: Use a unique, randomly generated key. Never reuse keys across
-environments or applications.
+environments or applications. Do NOT reuse SECRET_KEY for PII encryption.
 ================================================================================
 """
 
@@ -134,7 +138,7 @@ ERR_WEAK_KEY = """
 ERROR: WEAK ENCRYPTION KEY DETECTED (ERR_KEY_003)
 ================================================================================
 
-The PII_ENCRYPTION_KEY (or SECRET_KEY) matches a commonly used weak password.
+The PII_ENCRYPTION_KEY matches a commonly used weak password.
 
 To fix:
 1. Generate a strong key:
@@ -154,6 +158,9 @@ all encrypted PII data.
 def _is_test_environment():
     """Check if running in a test environment (pytest, CI, etc.)."""
     import sys
+    # Check for FLASK_ENV=testing
+    if os.getenv('FLASK_ENV') == 'testing':
+        return True
     # Check for pytest environment variable
     if os.getenv('PYTEST_CURRENT_TEST') is not None:
         return True
@@ -245,9 +252,12 @@ def _derive_key():
     """Derive AES keys from environment variables.
 
     Key sources (in priority order):
-    1. PII_ENCRYPTION_KEY - Recommended for production
-    2. SECRET_KEY - Fallback, but not recommended (shared with sessions)
-    3. Ephemeral random key - Development/test only, raises in production
+    1. PII_ENCRYPTION_KEY - Required for production
+    2. Ephemeral random key - Development/test only, raises in production
+
+    SECURITY: SECRET_KEY fallback was removed to prevent key reuse attacks.
+    If an attacker cracks a session cookie (signed with SECRET_KEY), they
+    should NOT be able to decrypt PII data. Use separate keys.
 
     Returns:
         tuple: (primary_key, legacy_key, source identifier string)
@@ -256,11 +266,10 @@ def _derive_key():
                - source: identifier string for logging
 
     Raises:
-        RuntimeError: If no key is configured and not in development/test mode,
+        RuntimeError: If PII_ENCRYPTION_KEY is not set in production,
                      or if key fails validation in production
     """
     key_env = os.getenv("PII_ENCRYPTION_KEY")
-    secret_env = os.getenv("SECRET_KEY")
     flask_env = os.getenv("FLASK_ENV", "production")
     is_dev = flask_env == "development"
     is_test = _is_test_environment()
@@ -268,17 +277,16 @@ def _derive_key():
     if key_env:
         source = "env-key"
         raw = key_env
-    elif secret_env:
-        source = "secret-key"
-        raw = secret_env
-    else:
-        if not is_dev and not is_test:
-            raise RuntimeError(
-                "PII_ENCRYPTION_KEY or SECRET_KEY must be set in production. "
-                "Set FLASK_ENV=development to use ephemeral dev key."
-            )
+    elif is_dev or is_test:
+        # Ephemeral key for development/test only - data lost on restart
         source = "ephemeral"
         raw = secrets.token_urlsafe(32)
+    else:
+        raise RuntimeError(
+            "PII_ENCRYPTION_KEY must be set in production. "
+            "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'\n"
+            "Set FLASK_ENV=development for ephemeral dev key (data lost on restart)."
+        )
 
     # Validate key strength
     _validate_key(raw, source, is_dev, is_test)

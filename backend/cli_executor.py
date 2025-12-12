@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from flask_limiter.util import get_remote_address
 
 from cli_parser import CLIParseError, CLIParser
+from auth import hash_email_for_audit
 
 
 class CLIExecutionError(Exception):
@@ -468,7 +469,7 @@ class CLIExecutor:
             audit_log = AuditLog(
                 event_type=event_type,
                 user_id=user_id,
-                email=email,
+                email_hash=hash_email_for_audit(email),
                 ip_address=ip_address,
                 user_agent=user_agent,
                 details=details_json,

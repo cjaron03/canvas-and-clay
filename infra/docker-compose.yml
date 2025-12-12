@@ -13,6 +13,8 @@ services:
       - AUTO_IMPORT_IMAGES=0  # Set to 1 to auto-import from images.zip
       - SEED_USERS=0          # Set to 1 to seed from SEED_USER_* env vars
       - AUTO_SEED_DEMO=0      # Set to 1 to auto-seed demo data on empty DB
+      # Rate limiting storage (persists across restarts)
+      - RATELIMIT_STORAGE_URI=redis://redis:6379
     volumes:
       - ../backend:/app
       - uploads_data:/app/uploads
@@ -22,9 +24,10 @@ services:
       # - ./images.zip:/app/images.zip:ro
     depends_on:
       - db
+      - redis
     networks:
       - default
-      - canvas-internal  # Access to database
+      - canvas-internal  # Access to database and redis
 
   frontend: 
     build:
@@ -62,6 +65,17 @@ services:
       - canvas-internal
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: canvas_redis
+    # SECURITY: Port 6379 NOT exposed externally - Redis only accessible via internal network
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy volatile-lru
+    networks:
+      - canvas-internal
+    restart: unless-stopped
+
 networks:
   canvas-internal:
     driver: bridge
@@ -73,4 +87,6 @@ volumes:
   postgres_data:
     driver: local
   uploads_data:
+    driver: local
+  redis_data:
     driver: local

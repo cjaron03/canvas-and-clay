@@ -15,6 +15,7 @@ pytest-cov==4.1.0
 flake8==6.0.0
 
 Flask-Limiter==3.5.0         # Rate limiting
+redis>=4.0.0                 # Redis client for persistent rate limiting
 python-magic==0.4.27         # File type validation (magic byte checking)
 Pillow==10.3.0               # Image validation and processing
 bleach>=6.0.0                # HTML sanitization for XSS protection
