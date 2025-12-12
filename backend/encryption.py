@@ -373,15 +373,13 @@ def compute_blind_index(value: str, normalizer=None) -> str:
 
 
 def _encrypt(value: str, normalizer=None, deterministic=False) -> str:
-    """Encrypt a string value using AES-GCM.
+    """Encrypt a string value using AES-GCM with Argon2id-derived key.
 
-    NOTE: Uses _LEGACY_KEY (SHA-256 derived) for backwards compatibility with
-    existing encrypted data. The Argon2id key validation still provides
-    protection against weak keys at startup time.
+    Uses the primary key (Argon2id-derived) for all new encryptions.
+    This provides memory-hard key derivation resistant to GPU/ASIC attacks.
 
-    For deterministic encryption (used for searchable fields like email),
-    the ciphertext must match existing data. Since existing data was encrypted
-    with SHA-256-derived keys, we continue using that for encryption.
+    Legacy data encrypted with SHA-256-derived keys is still readable via
+    _decrypt(), which tries both keys for backwards compatibility.
 
     Args:
         value: Plaintext string to encrypt (None passes through unchanged)
@@ -396,9 +394,9 @@ def _encrypt(value: str, normalizer=None, deterministic=False) -> str:
     if value is None:
         return None
     normalized = normalizer(value) if normalizer else value
-    # Use legacy key for encryption to maintain search compatibility
-    # Key validation (length, weak key check) still happens at startup via Argon2id path
-    aes = AESGCM(_LEGACY_KEY)
+    # Use primary (Argon2id-derived) key for all new writes
+    # Legacy data still decryptable via _decrypt() fallback to _LEGACY_KEY
+    aes = AESGCM(_KEY)
     if deterministic:
         nonce = _deterministic_nonce(normalized)
     else:
@@ -520,8 +518,7 @@ def get_encryption_status():
         dict: Status information including KDF type, key source, and parameters
     """
     return {
-        "kdf_validation": "argon2id",  # Used for key strength validation at startup
-        "kdf_encryption": "sha256",     # Used for actual encryption (backwards compat)
+        "kdf": "argon2id",  # Used for both validation and encryption
         "kdf_params": {
             "memory_kb": ARGON2_MEMORY_KB,
             "time_cost": ARGON2_TIME_COST,
@@ -529,8 +526,8 @@ def get_encryption_status():
         },
         "key_source": KEY_SOURCE,
         "min_key_length": MIN_KEY_LENGTH,
-        "legacy_mode": True,  # Using SHA-256 for encryption compatibility
-        "note": "Key validation uses Argon2id; encryption uses SHA-256 for data compatibility",
+        "legacy_fallback": True,  # Decrypt still tries legacy SHA-256 key for old data
+        "note": "All new data encrypted with Argon2id-derived key; legacy data still readable",
     }
 
 

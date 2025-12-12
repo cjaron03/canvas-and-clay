@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Canvas & Clay Setup Wizard
-# Full-screen TUI for setup and repair
+# Full-screen TUI for setup, repair, and admin recovery
 #
 # Usage:
 #   ./setup.sh                    # Interactive TUI mode
 #   ./setup.sh --non-interactive  # Use defaults, no prompts
 #   ./setup.sh --setup            # Jump directly to setup
 #   ./setup.sh --repair           # Jump directly to repair
+#   ./setup.sh --recover          # Jump directly to admin recovery
 
 set -euo pipefail
 
@@ -50,6 +51,7 @@ for arg in "$@"; do
     --non-interactive) NON_INTERACTIVE=true ;;
     --setup) DIRECT_MODE="setup" ;;
     --repair) DIRECT_MODE="repair" ;;
+    --recover) DIRECT_MODE="recover" ;;
   esac
 done
 
@@ -238,13 +240,14 @@ draw_main_menu() {
   print_centered "artists and collectors." 9
 
   # Menu box
-  draw_box "$menu_top" "$menu_left" 10 60
+  draw_box "$menu_top" "$menu_left" 12 60
 
   print_at "$((menu_top+2))" "$((menu_left+6))" "${BOLD}[1]${RESET}  Setup      ${DIM}Configure environment and start services${RESET}"
   print_at "$((menu_top+4))" "$((menu_left+6))" "${BOLD}[2]${RESET}  Repair     ${DIM}Scan for and fix common issues${RESET}"
-  print_at "$((menu_top+6))" "$((menu_left+6))" "${BOLD}[q]${RESET}  Quit"
+  print_at "$((menu_top+6))" "$((menu_left+6))" "${BOLD}[3]${RESET}  Recover    ${DIM}Reset admin password (emergency)${RESET}"
+  print_at "$((menu_top+8))" "$((menu_left+6))" "${BOLD}[q]${RESET}  Quit"
 
-  print_centered "Press 1, 2, or q" "$((TERM_ROWS-3))"
+  print_centered "Press 1, 2, 3, or q" "$((TERM_ROWS-3))"
 }
 
 # =============================================================================
@@ -1139,6 +1142,92 @@ apply_fixes() {
 }
 
 # =============================================================================
+# Recovery Flow
+# =============================================================================
+
+run_recover_flow() {
+  draw_header "CANVAS & CLAY" "Admin Recovery"
+
+  local row=8
+
+  print_at "$row" 4 "${BOLD}Emergency Admin Password Reset${RESET}"
+  ((row++))
+  draw_hline "$row" 4 "$((TERM_COLS-8))" "─"
+  ((row+=2))
+
+  print_at "$row" 4 "This tool resets the bootstrap admin password."
+  ((row++))
+  print_at "$row" 4 "${DIM}Use this when recovering from a backup where credentials are unknown.${RESET}"
+  ((row+=2))
+
+  # Check if backend container is running
+  print_at "$row" 4 "[${CYAN}/${RESET}] Checking backend container..."
+  sleep 0.3
+
+  local compose_status
+  compose_status=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || echo "")
+
+  if ! echo "$compose_status" | grep -q "backend.*Up"; then
+    ((row++))
+    print_at "$row" 4 ""; print_status fail "Backend container is not running"
+    ((row+=2))
+    print_at "$row" 4 "Start the containers first:"
+    ((row++))
+    print_at "$row" 6 "${DIM}docker compose -f infra/docker-compose.yml up -d${RESET}"
+    ((row++))
+    print_at "$row" 4 "Or run ${BOLD}[1] Setup${RESET} from the main menu."
+    wait_key "Press any key to return to menu..."
+    return 1
+  fi
+
+  ((row++))
+  print_at "$row" 4 ""; print_status ok "Backend container is running"
+  ((row+=2))
+
+  print_at "$row" 4 "${YELLOW}${BOLD}WARNING:${RESET} This will reset the admin password."
+  ((row++))
+  print_at "$row" 4 "Continue? [y/N]: "
+
+  show_cursor
+  local confirm
+  read -rsn1 confirm
+  hide_cursor
+
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    ((row+=2))
+    print_at "$row" 4 "Aborted."
+    wait_key "Press any key to return to menu..."
+    return 0
+  fi
+
+  # Clear screen and run the recovery script
+  draw_header "CANVAS & CLAY" "Admin Recovery"
+  print_at 8 4 "Running recovery script..."
+  print_at 9 4 "${DIM}Follow the prompts below.${RESET}"
+
+  show_cursor
+  move_to 11 0
+
+  # Run the script interactively (it handles its own prompts)
+  docker compose -f "$COMPOSE_FILE" exec backend python3 scripts/reset_admin.py
+
+  local exit_code=$?
+
+  hide_cursor
+
+  if [[ $exit_code -eq 0 ]]; then
+    get_term_size
+    print_at "$((TERM_ROWS-4))" 4 "${GREEN}${BOLD}Password reset complete!${RESET}"
+  else
+    get_term_size
+    print_at "$((TERM_ROWS-4))" 4 "${RED}${BOLD}Password reset failed.${RESET}"
+  fi
+
+  wait_key "Press any key to return to menu..."
+  return $exit_code
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -1177,6 +1266,7 @@ main() {
     case "$DIRECT_MODE" in
       setup) run_setup_flow ;;
       repair) run_repair_flow ;;
+      recover) run_recover_flow ;;
     esac
     exit_fullscreen
     exit 0
@@ -1192,6 +1282,7 @@ main() {
     case "$key" in
       1) run_setup_flow ;;
       2) run_repair_flow ;;
+      3) run_recover_flow ;;
       q|Q) break ;;
     esac
   done

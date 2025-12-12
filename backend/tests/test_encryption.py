@@ -390,18 +390,17 @@ class TestEncryptionStatus:
         """get_encryption_status should return a dict with expected keys."""
         status = get_encryption_status()
         assert isinstance(status, dict)
-        assert "kdf_validation" in status
-        assert "kdf_encryption" in status
+        assert "kdf" in status
         assert "key_source" in status
         assert "min_key_length" in status
-        assert "legacy_mode" in status
+        assert "legacy_fallback" in status
 
-    def test_get_encryption_status_kdf_validation_is_argon2id(self):
-        """Status should show Argon2id for key validation."""
+    def test_get_encryption_status_kdf_is_argon2id(self):
+        """Status should show Argon2id for key derivation."""
         status = get_encryption_status()
-        assert status["kdf_validation"] == "argon2id"
-        # Encryption uses SHA-256 for backwards compatibility
-        assert status["kdf_encryption"] == "sha256"
+        assert status["kdf"] == "argon2id"
+        # Legacy fallback enabled for decrypting old data
+        assert status["legacy_fallback"] is True
 
     def test_get_encryption_status_includes_params(self):
         """Status should include KDF parameters."""
@@ -426,9 +425,9 @@ class TestLegacyEncryptionDetection:
         """Invalid base64 should return False."""
         assert is_legacy_encrypted("not-valid-base64!!!") is False
 
-    def test_is_legacy_encrypted_returns_true_for_current_encryption(self):
-        """Data encrypted with current module uses legacy key for compatibility."""
+    def test_is_legacy_encrypted_returns_false_for_current_encryption(self):
+        """Data encrypted with current module uses primary Argon2id key."""
         encrypted = _encrypt("test@example.com")
-        # Current encryption uses SHA-256-derived key for backwards compatibility
-        # so is_legacy_encrypted returns True
-        assert is_legacy_encrypted(encrypted) is True
+        # Current encryption uses Argon2id-derived key (primary key)
+        # so is_legacy_encrypted returns False
+        assert is_legacy_encrypted(encrypted) is False
