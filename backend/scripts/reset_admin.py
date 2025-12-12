@@ -27,22 +27,28 @@ from app import app, db
 from flask_bcrypt import Bcrypt
 from models import init_models
 from encryption import compute_blind_index, normalize_email
+from auth import is_common_password
 
 
 # Password requirements (same as auth.py)
 MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 128
 
 
 def validate_password(password):
     """Validate password meets security requirements."""
     if len(password) < MIN_PASSWORD_LENGTH:
         return False, f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return False, f"Password must be no more than {MAX_PASSWORD_LENGTH} characters"
     if not re.search(r'[A-Z]', password):
         return False, "Password must contain at least one uppercase letter"
     if not re.search(r'[a-z]', password):
         return False, "Password must contain at least one lowercase letter"
     if not re.search(r'\d', password):
         return False, "Password must contain at least one digit"
+    if is_common_password(password):
+        return False, "Password is too common. Please choose a stronger password."
     return True, None
 
 
