@@ -29,7 +29,7 @@
       <div class="stat-label">Artworks</div>
     </div>
     <div class="stat-card">
-      <div class="stat-value">{data.stats.artistUsers ?? data.stats.totalArtists ?? 0}</div>
+      <div class="stat-value">{data.stats.totalArtists ?? 0}</div>
       <div class="stat-label">Artists</div>
     </div>
     <div class="stat-card">
