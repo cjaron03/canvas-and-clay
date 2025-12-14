@@ -93,10 +93,8 @@ if [ -f "/app/images.zip" ]; then
   fi
 fi
 
-# Clean up orphaned photo records (DB records without actual files)
-# This prevents 404s from stale demo data or Docker volume mismatches
-echo "checking for orphaned photo records..."
-python3 cleanup_orphans.py
+# Orphan cleanup removed - run manually via repair wizard if needed
+# Auto-cleanup was breaking restores by deleting DB records before files could be restored
 
 echo "starting flask application..."
 exec "$@"
