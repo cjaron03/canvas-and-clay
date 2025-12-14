@@ -3637,10 +3637,9 @@ def public_overview_stats():
         return jsonify({
             'counts': {
                 'artworks': total_artworks,
-                # Homepage shows role-based artists (artist-guest users)
-                'artists': artist_role_count,
+                # Homepage shows Artist profile count (matches /artists page)
+                'artists': total_artists,
                 'artist_users': artist_role_count,
-                'artists_db': total_artists,
                 'photos': total_photos
             }
         }), 200
