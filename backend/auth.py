@@ -722,21 +722,28 @@ def login():
     # Create UserSession record for per-device session tracking
     user_session = create_user_session(db, UserSession, user, remember=remember)
 
-    # Login user with remember me option (must be called before session modification)
+    # Regenerate session to prevent session fixation attacks
+    # Save any existing accounts before clearing (for multi-account support)
+    existing_accounts = dict(session.get('accounts', {}))
+
+    # Clear session completely - this forces Flask to generate a new session ID
+    session.clear()
+
+    # Login user with remember me option
     login_user(user, remember=remember)
 
-    # Store session token and account info in Flask session
+    # Set up fresh session with new data
+    session.permanent = True
     session['session_token'] = user_session.session_token
     session['active_account_id'] = user.id
 
-    # Initialize or update accounts dict
-    accounts = session.get('accounts', {})
-    accounts[str(user.id)] = {
+    # Restore existing accounts and add/update current user
+    existing_accounts[str(user.id)] = {
         'session_token': user_session.session_token,
         'email': user.email,
         'role': user.normalized_role
     }
-    session['accounts'] = accounts
+    session['accounts'] = existing_accounts
 
     try:
         db.session.commit()
@@ -744,13 +751,9 @@ def login():
         db.session.rollback()
         return jsonify({'error': 'Login failed, please try again'}), 500
 
-    # Regenerate session to prevent session fixation attacks
-    session.permanent = True
-    session.modified = True
-
     # Return response with all accounts for frontend
     all_accounts = []
-    for account_id, account_data in accounts.items():
+    for account_id, account_data in existing_accounts.items():
         all_accounts.append({
             'id': int(account_id),
             'email': account_data.get('email'),
@@ -808,8 +811,9 @@ def logout():
 
     response = jsonify({'message': 'Logout successful'})
 
-    # Clear the session cookie by setting it to expire
-    response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+    # Clear cookies - session and remember_token (Flask-Login's remember-me cookie)
+    response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax', path='/')
+    response.set_cookie('remember_token', '', expires=0, httponly=True, samesite='Lax', path='/')
 
     return response, 200
 
@@ -836,7 +840,8 @@ def delete_account():
         session.modified = True
 
         response = jsonify({'message': 'Account scheduled for deletion in 30 days'})
-        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax', path='/')
+        response.set_cookie('remember_token', '', expires=0, httponly=True, samesite='Lax', path='/')
         return response, 200
     except Exception:
         db.session.rollback()
@@ -1204,7 +1209,8 @@ def remove_account():
         session.modified = True
 
         response = jsonify({'message': 'Account removed, no accounts remaining'})
-        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax')
+        response.set_cookie('session', '', expires=0, httponly=True, samesite='Lax', path='/')
+        response.set_cookie('remember_token', '', expires=0, httponly=True, samesite='Lax', path='/')
         return response, 200
 
     # Removed a non-active account
