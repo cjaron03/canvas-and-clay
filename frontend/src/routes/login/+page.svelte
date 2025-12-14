@@ -190,7 +190,16 @@
 
 	const handleResetRequest = async () => {
 		_resetRequestError = ''; resetRequestSuccess = ''; _resetRequestLoading = true;
-		let csrfToken = $auth?.csrfToken;
+		let csrfToken;
+		try {
+			const csrfResponse = await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf-token`, { credentials: 'include' });
+			if (csrfResponse.ok) {
+				const csrfData = await csrfResponse.json();
+				csrfToken = csrfData.csrf_token;
+			}
+		} catch (err) {
+			_resetRequestError = 'Failed to connect to server.'; _resetRequestLoading = false; return;
+		}
 		try {
 			const response = await fetch(`${PUBLIC_API_BASE_URL}/auth/password-reset/request`, {
 				method: 'POST',
